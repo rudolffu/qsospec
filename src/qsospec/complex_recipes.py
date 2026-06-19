@@ -222,19 +222,35 @@ _RECIPES = (
         priority=0, backend="generic",
     ),
     ComplexRecipe(
+        id="ciii", aliases=("ciii1909", "ciii]"), label="C III]",
+        fit_window=(1700.0, 1970.0), fit_windows=((1700.0, 1970.0),), mask_windows=(),
+        components=(
+            _component(
+                "CIII_broad", ("ciii_1909",), "broad", multiplicity=2,
+                kinematic_group="ciii_broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 3500.0), (3500.0, 15000.0)),
+            ),
+        ),
+        required_line_ids=("ciii_1909",), qa_labels=("ciii_1909",),
+        auto_enabled=True, priority=80, backend="generic", exclusive_group="ciii",
+    ),
+    ComplexRecipe(
         id="civ", aliases=("civ1549",), label="C IV",
         fit_window=(1450.0, 1700.0), fit_windows=((1450.0, 1700.0),), mask_windows=(),
         components=(
-            _component("CIV_broad", ("civ_blend",), "broad", kinematic_group="civ_broad",
-                       velocity_bounds_kms=(-5000.0, 3000.0), fwhm_bands_kms=((900.0, 20000.0),)),
             _component(
-                "CIV_blue", ("civ_blend",), "wing", enabled=False,
-                kinematic_group="civ_blue", velocity_bounds_kms=(-8000.0, 0.0),
-                fwhm_bands_kms=((900.0, 15000.0),),
-                selection_rule="specialized_outflow_deferred",
+                "CIV_broad", ("civ_blend",), "broad", multiplicity=3,
+                kinematic_group="civ_broad",
+                velocity_bounds_kms=(-5000.0, 3000.0),
+                fwhm_bands_kms=(
+                    (900.0, 2500.0),
+                    (2500.0, 6000.0),
+                    (6000.0, 20000.0),
+                ),
             ),
         ),
-        required_line_ids=("civ_blend",), qa_labels=("civ_blend",), auto_enabled=False,
+        required_line_ids=("civ_blend",), qa_labels=("civ_blend",), auto_enabled=True,
         priority=80, backend="generic", exclusive_group="civ",
     ),
 )

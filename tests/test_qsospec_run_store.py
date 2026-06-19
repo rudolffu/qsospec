@@ -15,8 +15,9 @@ def _continuum_config():
     return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
-        balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            enabled=False
+        ),
         clip_passes=0,
     )
 
@@ -109,6 +110,63 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert Path(rendered["object-1"]["global_plot"]).exists()
 
 
+def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
+    wave = np.linspace(3300.0, 4300.0, 1000)
+    template = qsospec.load_balmer_template(
+        provenance="sh95_k13full_ext"
+    )
+    flux = 2.0 * (wave / 4000.0) ** -1.1
+    flux += 25.0 * qsospec.evaluate_balmer_pseudocontinuum(
+        template, wave, 3200.0, -250.0
+    )
+    data = SpectrumData(
+        wave_obs=wave,
+        flux=flux,
+        error=np.full_like(wave, 0.02),
+        redshift=0.0,
+        object_id="balmer-object",
+        metadata={"input_file": "memory-balmer-object"},
+    )
+    run = tmp_path / "balmer-run"
+    result = qsospec.fit_object_to_store(
+        data,
+        str(run),
+        global_config=qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                amplitude=20.0,
+                fwhm_kms=3000.0,
+            ),
+            continuum_windows=((3300.0, 4300.0),),
+            mask_windows=(),
+            clip_passes=0,
+            blue_absorption_clip_enabled=False,
+        ),
+        complexes=[],
+        write_qa=False,
+    )
+    loaded = qsospec.load_model(str(run), "balmer-object")
+
+    assert set(loaded.continuum.component_models) >= {
+        "balmer_bound_free",
+        "balmer_high_order_series",
+    }
+    np.testing.assert_allclose(
+        loaded.continuum.model,
+        result.continuum.model,
+    )
+    assert loaded.continuum.metadata[
+        "balmer_pseudocontinuum_template_provenance"
+    ] == "sh95_k13full_ext"
+    measurements = qsospec.open_run(str(run)).read_table(
+        "measurements"
+    ).to_pandas()
+    assert "balmer_pseudocontinuum_velocity_kms" in set(
+        measurements["quantity"]
+    )
+
+
 def test_serial_batch_resume_and_configuration_guard(tmp_path):
     source = tmp_path / "spectra.parquet"
     _parquet_input(source)
@@ -141,6 +199,40 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
             global_config=_continuum_config(),
             complexes=["mgii"],
         )
+
+
+def test_duplicate_object_ids_get_row_safe_qa_names(tmp_path):
+    source = tmp_path / "duplicates.parquet"
+    rows = []
+    for index in range(2):
+        spectrum = _spectrum_data("duplicate", 1.0 + 0.1 * index)
+        rows.append(
+            {
+                "TARGETID": "duplicate",
+                "WAVELENGTH": spectrum.wave_obs.tolist(),
+                "FLUX": spectrum.flux.tolist(),
+                "ERROR": spectrum.error.tolist(),
+                "Z": spectrum.redshift,
+            }
+        )
+    pd.DataFrame(rows).to_parquet(source, index=False)
+    run = tmp_path / "duplicate-run"
+    qsospec.fit_batch(
+        str(source),
+        str(run),
+        n_workers=1,
+        global_config=_continuum_config(),
+        complexes=[],
+    )
+    rendered = qsospec.render_qa(str(run))
+    paths = sorted(
+        Path(payload["main_qa"]).name for payload in rendered.values()
+    )
+    assert len(rendered) == 2
+    assert paths == [
+        "main_qa_duplicate_row_0.png",
+        "main_qa_duplicate_row_1.png",
+    ]
 
 
 def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):

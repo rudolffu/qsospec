@@ -241,8 +241,9 @@ def _simple_global_config():
     return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
-        balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            enabled=False
+        ),
         clip_passes=0,
     )
 
@@ -496,15 +497,15 @@ def test_qa_percentiles_and_component_styles():
     assert _COMBINED_BROAD_STYLE["linestyle"] == "-"
     assert _BROAD_COMPONENT_STYLE["linestyle"] == "-"
     assert _NARROW_STYLE["linestyle"] == "-"
-    assert _CONTINUUM_STYLES["balmer_continuum"][0] == "#b8860b"
-    assert _CONTINUUM_STYLES["balmer_continuum"][0] != _NARROW_STYLE["color"]
+    assert _CONTINUUM_STYLES["balmer_bound_free"][0] == "#b8860b"
+    assert _CONTINUUM_STYLES["balmer_bound_free"][0] != _NARROW_STYLE["color"]
     assert _WING_STYLE["color"] == "#b2182b"
     assert _WING_STYLE["color"] != _CONTINUUM_STYLES["uv_iron"][0]
     assert _CONTINUUM_STYLES["uv_iron"] == _CONTINUUM_STYLES["optical_iron"]
     assert _CONTINUUM_STYLES["power_law"][0] == "#cc79a7"
     assert (
-        _CONTINUUM_STYLES["balmer_continuum"]
-        == _CONTINUUM_STYLES["balmer_series"]
+        _CONTINUUM_STYLES["balmer_bound_free"]
+        == _CONTINUUM_STYLES["balmer_high_order_series"]
     )
     assert {
         style[1] for style in _CONTINUUM_STYLES.values()
@@ -540,6 +541,67 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
     )
     assert displayed == ("mgii", "hbeta", "halpha")
     assert omitted == ("civ",)
+
+    fully_covered_blue = type(
+        "BlueFit",
+        (),
+        {"success": True, "metadata": {"qa_all_lines_covered": True}},
+    )()
+    partially_covered_blue = type(
+        "BlueFit",
+        (),
+        {"success": True, "metadata": {"qa_all_lines_covered": False}},
+    )()
+    assert _select_zoom_complexes(
+        {"oii_nev_neiii_hgamma": fully_covered_blue}, 4
+    )[0] == ("oii_nev_neiii_hgamma",)
+    assert _select_zoom_complexes(
+        {"oii_nev_neiii_hgamma": partially_covered_blue}, 4
+    )[0] == ()
+
+
+def test_lya_overview_uses_unsmoothed_data_only_percentile(tmp_path):
+    wave = np.linspace(1100.0, 2000.0, 1800)
+    flux = 2.0 * (wave / 1500.0) ** -1.1
+    flux += 400.0 * np.exp(-0.5 * ((wave - 1215.67) / 2.0) ** 2)
+    valid = np.ones_like(wave, dtype=bool)
+    valid[np.argmin(np.abs(wave - 1215.67))] = False
+    flux[~valid] = 1.0e8
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=np.full_like(wave, 0.05),
+        mask=valid,
+        wave_frame="rest",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                enabled=False
+            ),
+            continuum_windows=((1100.0, 2000.0),),
+            mask_windows=(),
+            clip_passes=0,
+        ),
+        complexes=[],
+    )
+    _plot_qa(
+        result,
+        tmp_path / "lya.png",
+        qsospec.GlobalQAPlotConfig(show_smoothed_data=True),
+    )
+    expected = _percentile_limits(
+        [spectrum.flux[spectrum.valid_mask]],
+        percentiles=(1.0, 99.8),
+    )[1]
+    assert result.metadata["qa_overview_upper_policy"] == "data_only_percentile"
+    assert result.metadata["qa_overview_upper_percentile"] == 99.8
+    assert result.metadata["qa_overview_model_upper_limit"] == pytest.approx(
+        expected
+    )
 
 
 def test_qa_title_smoothing_and_tick_helpers():

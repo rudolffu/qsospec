@@ -333,9 +333,11 @@ def _measurement_rows(
         "covariance",
     )
     for quantity in (
-        "balmer_series_implied_hbeta_flux_input",
-        "balmer_series_implied_hbeta_flux_cgs",
-        "balmer_series_fwhm_kms",
+        "balmer_pseudocontinuum_implied_hbeta_flux_input",
+        "balmer_pseudocontinuum_implied_hbeta_flux_cgs",
+        "balmer_pseudocontinuum_fwhm_kms",
+        "balmer_pseudocontinuum_velocity_kms",
+        "balmer_pseudocontinuum_edge_flux_density_input",
     ):
         if quantity in result.continuum.metadata:
             add(

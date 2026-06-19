@@ -68,8 +68,9 @@ def test_global_fit_kind_runs_without_host(tmp_path):
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
-            balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                enabled=False
+            ),
         ),
         hbeta_config=qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )

@@ -13,12 +13,11 @@ from qsospec.fitting.global_fit import (
     _HbetaContext,
     _gaussian_area_profile,
     _gaussian_unit_profile_with_derivatives,
-    balmer_continuum_basis,
 )
 from qsospec.global_result import GlobalContinuumResult
 from qsospec.templates import (
-    evaluate_balmer_series,
-    evaluate_balmer_series_with_derivative,
+    evaluate_balmer_pseudocontinuum,
+    evaluate_balmer_pseudocontinuum_with_derivatives,
     load_balmer_template,
     load_iron_template,
 )
@@ -73,16 +72,40 @@ def test_iron_width_derivative_matches_centered_difference(template_name, wave):
     assert derivative == pytest.approx(finite, rel=2.0e-5, abs=1.0e-12)
 
 
-def test_balmer_width_derivative_matches_centered_difference():
-    template = load_balmer_template()
-    wave = np.linspace(3500.0, 4260.0, 500)
-    _, derivative = evaluate_balmer_series_with_derivative(template, wave, 2800.0)
-    finite = _centered_difference(
-        lambda width: evaluate_balmer_series(template, wave, width),
+@pytest.mark.parametrize(
+    "wave",
+    [
+        np.linspace(1800.0, 3646.0, 500),
+        np.linspace(3646.0, 4260.0, 500),
+    ],
+)
+def test_balmer_pseudocontinuum_derivatives_match_centered_differences(wave):
+    template = load_balmer_template(provenance="sh95_k13full_ext")
+    _, _, _, derivative_fwhm, derivative_velocity = (
+        evaluate_balmer_pseudocontinuum_with_derivatives(
+            template, wave, 2800.0, 250.0
+        )
+    )
+    finite_fwhm = _centered_difference(
+        lambda width: evaluate_balmer_pseudocontinuum(
+            template, wave, width, 250.0
+        ),
         2800.0,
         0.1,
     )
-    assert derivative == pytest.approx(finite, rel=2.0e-5, abs=1.0e-12)
+    finite_velocity = _centered_difference(
+        lambda velocity: evaluate_balmer_pseudocontinuum(
+            template, wave, 2800.0, velocity
+        ),
+        250.0,
+        0.01,
+    )
+    assert derivative_fwhm == pytest.approx(
+        finite_fwhm, rel=2.0e-5, abs=1.0e-12
+    )
+    assert derivative_velocity == pytest.approx(
+        finite_velocity, rel=2.0e-5, abs=1.0e-12
+    )
 
 
 def test_gaussian_velocity_and_width_derivatives_match_centered_difference():
@@ -188,8 +211,12 @@ def test_continuum_variable_projection_matches_legacy_joint():
     model = 2.5 * (wave / 3000.0) ** -1.25
     model += 70.0 * evaluate_iron_basis(load_iron_template("vw01"), wave, 2600.0)
     model += 55.0 * evaluate_iron_basis(load_iron_template("park22"), wave, 3200.0)
-    model += 0.35 * balmer_continuum_basis(wave)
-    model += 8.0 * evaluate_balmer_series(load_balmer_template(), wave, 2800.0)
+    model += 8.0 * evaluate_balmer_pseudocontinuum(
+        load_balmer_template(provenance="sh95_k13full_ext"),
+        wave,
+        2800.0,
+        200.0,
+    )
     spectrum = qsospec.Spectrum.from_arrays(
         wave,
         model,
@@ -200,8 +227,11 @@ def test_continuum_variable_projection_matches_legacy_joint():
         power_law=qsospec.PowerLawConfig(norm=2.4, slope=-1.1),
         uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_kms=2500.0, amp=60.0),
         optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3400.0, amp=45.0),
-        balmer_continuum=qsospec.BalmerContinuumConfig(amplitude=0.3),
-        balmer_series=qsospec.BalmerSeriesConfig(amplitude=7.0, fwhm_kms=3000.0),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            amplitude=7.0,
+            fwhm_kms=3000.0,
+            velocity_kms=0.0,
+        ),
         clip_passes=0,
     )
     optimized = qsospec.fit_global_continuum(
@@ -223,8 +253,12 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
     wave = np.linspace(3300.0, 5200.0, 1800)
     model = 2.2 * (wave / 3000.0) ** -1.1
     model += 45.0 * evaluate_iron_basis(load_iron_template("park22"), wave, 3100.0)
-    model += 0.3 * balmer_continuum_basis(wave)
-    model += 12.0 * evaluate_balmer_series(load_balmer_template(), wave, 2800.0)
+    model += 12.0 * evaluate_balmer_pseudocontinuum(
+        load_balmer_template(provenance="sh95_k13full_ext"),
+        wave,
+        2800.0,
+        -150.0,
+    )
     flux = model.copy()
     flux[300] += 2.0
     flux[900] -= 2.0
@@ -234,8 +268,10 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
     base = qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3000.0, amp=40.0),
-        balmer_series=qsospec.BalmerSeriesConfig(
-            amplitude=10.0, fixed_fwhm_kms=2800.0
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            amplitude=10.0,
+            fit_fwhm=False,
+            fwhm_kms=2800.0,
         ),
     )
     optimized = qsospec.fit_global_continuum(
@@ -247,7 +283,7 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
 
     assert np.array_equal(optimized.clip_mask, legacy.clip_mask)
     assert optimized.reduced_chi2 <= legacy.reduced_chi2 + 1.0e-5
-    assert optimized.metadata["balmer_series_fwhm_fixed"]
+    assert optimized.metadata["balmer_pseudocontinuum_fwhm_fixed"]
     assert optimized.param_values["power_law.norm"] == pytest.approx(
         legacy.param_values["power_law.norm"], rel=5.0e-3
     )

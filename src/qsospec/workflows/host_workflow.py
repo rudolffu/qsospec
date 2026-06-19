@@ -21,6 +21,23 @@ from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
 from ..result import LocalFitResult
 from ..spectrum import Spectrum
+from ..warnings import FitWarning
+
+
+def _host_decomp_decision(requested: bool, redshift: Optional[float]) -> Tuple[bool, Optional[str]]:
+    """Resolve the object-level pPXF redshift gate."""
+
+    if not requested:
+        return False, None
+    try:
+        value = float(redshift)
+    except (TypeError, ValueError):
+        return False, "missing_redshift"
+    if not np.isfinite(value):
+        return False, "missing_redshift"
+    if value >= 1.2:
+        return False, "redshift_at_or_above_1.2"
+    return True, None
 
 
 @dataclass
@@ -202,11 +219,14 @@ def fit_with_optional_host_decomp(
 
     spectrum_data = read_sparcli_spectrum(input_path, row_index=row_index, redshift=redshift, object_id=object_id)
     source = f"{input_path}:row_index={row_index}"
-    if run_host_decomp:
+    host_decomp_enabled, host_skip_reason = _host_decomp_decision(
+        run_host_decomp, spectrum_data.redshift
+    )
+    if host_decomp_enabled:
         total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, host_subtracted_flux, host_warnings = (
             _host_subtracted_spectrum(
                 spectrum_data,
-                redshift=redshift,
+                redshift=float(spectrum_data.redshift),
                 template_root=template_root,
                 template_file=template_file,
                 fit_range=host_fit_range,
@@ -233,14 +253,16 @@ def fit_with_optional_host_decomp(
         "dec": spectrum_data.dec,
         "redshift": fit_spectrum.z,
         "fit_kind": fit_kind,
-        "host_decomp_enabled": bool(run_host_decomp),
-        "host_model_source": "template_weighted_sed_on_quasar_grid" if run_host_decomp else None,
+        "host_decomp_requested": bool(run_host_decomp),
+        "host_decomp_enabled": host_decomp_enabled,
+        "host_decomp_skip_reason": host_skip_reason,
+        "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
     }
     return HostWorkflowResult(
         total_spectrum=total_spectrum,
         fit_spectrum=fit_spectrum,
         local_result=local_result,
-        host_decomp_enabled=bool(run_host_decomp),
+        host_decomp_enabled=host_decomp_enabled,
         host_fit=host_fit,
         host_sed=host_sed,
         host_model_on_quasar_grid=host_on_grid,
@@ -363,11 +385,14 @@ def fit_global_lines_workflow(
         input_path, row_index=row_index, redshift=redshift, object_id=object_id
     )
     source = f"{input_path}:row_index={row_index}"
-    if run_host_decomp:
+    host_decomp_enabled, host_skip_reason = _host_decomp_decision(
+        run_host_decomp, spectrum_data.redshift
+    )
+    if host_decomp_enabled:
         total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, _, host_warnings = (
             _host_subtracted_spectrum(
                 spectrum_data,
-                redshift=redshift,
+                redshift=float(spectrum_data.redshift),
                 template_root=template_root,
                 template_file=template_file,
                 fit_range=host_fit_range,
@@ -399,7 +424,7 @@ def fit_global_lines_workflow(
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
-    workflow.host_decomp_enabled = bool(run_host_decomp)
+    workflow.host_decomp_enabled = host_decomp_enabled
     workflow.total_spectrum = total_spectrum
     workflow.host_fit = host_fit
     workflow.host_sed = host_sed
@@ -415,11 +440,26 @@ def fit_global_lines_workflow(
             "dec": spectrum_data.dec,
             "redshift": fit_spectrum.z,
             "fit_kind": "global",
-            "host_decomp_enabled": bool(run_host_decomp),
-            "host_model_source": "template_weighted_sed_on_quasar_grid" if run_host_decomp else None,
+            "host_decomp_requested": bool(run_host_decomp),
+            "host_decomp_enabled": host_decomp_enabled,
+            "host_decomp_skip_reason": host_skip_reason,
+            "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
         }
     )
-    if run_host_decomp and uncertainty.monte_carlo_trials > 0 and uncertainty.refit_host_in_mc:
+    if run_host_decomp and not host_decomp_enabled:
+        workflow.warnings.append(
+            FitWarning(
+                code="host_decomp_skipped_redshift",
+                message="Host decomposition was requested but skipped by the redshift gate.",
+                severity="info",
+                context={
+                    "redshift": spectrum_data.redshift,
+                    "threshold": 1.2,
+                    "reason": host_skip_reason,
+                },
+            )
+        )
+    if host_decomp_enabled and uncertainty.monte_carlo_trials > 0 and uncertainty.refit_host_in_mc:
         workflow.monte_carlo = _run_host_refit_mc(
             spectrum_data,
             n_trials=uncertainty.monte_carlo_trials,

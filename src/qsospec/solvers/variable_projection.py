@@ -185,6 +185,7 @@ def solve_variable_projection(
             nonlinear_initial,
             bounds=(nonlinear_lower, nonlinear_upper),
             jac=problem.jacobian if jacobian_method == "semi_analytic" else "2-point",
+            x_scale="jac",
             max_nfev=max_nfev,
         )
         if not nonlinear_result.success:

@@ -24,7 +24,11 @@ from ..config import (
 from ..fitting.global_fit import fit_global_lines
 from ..io.products import GlobalQAPlotConfig, write_global_line_products
 from ..global_result import WorkflowResult
-from .host_workflow import _host_subtracted_spectrum, _spectrum_from_spectrum_data
+from .host_workflow import (
+    _host_decomp_decision,
+    _host_subtracted_spectrum,
+    _spectrum_from_spectrum_data,
+)
 from ..io.readers import (
     SpectrumInput,
     discover_fits_inputs,
@@ -34,6 +38,7 @@ from ..io.readers import (
 )
 from ..io.run_store import RunStore, finalize_run, workflow_payload
 from ..spectrum import Spectrum
+from ..warnings import FitWarning
 
 
 @dataclass
@@ -113,7 +118,10 @@ def _fit_spectrum_data(
         f"{descriptor.source}:row_index={descriptor.row_index}"
         if descriptor.row_index is not None else descriptor.source
     )
-    if run_host_decomp:
+    host_decomp_enabled, host_skip_reason = _host_decomp_decision(
+        run_host_decomp, spectrum_data.redshift
+    )
+    if host_decomp_enabled:
         (
             total_spectrum,
             fit_spectrum,
@@ -124,7 +132,7 @@ def _fit_spectrum_data(
             host_warnings,
         ) = _host_subtracted_spectrum(
             spectrum_data,
-            redshift=descriptor.redshift,
+            redshift=float(spectrum_data.redshift),
             template_root=template_root,
             template_file=template_file,
             fit_range=host_fit_range,
@@ -150,7 +158,7 @@ def _fit_spectrum_data(
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
-    result.host_decomp_enabled = bool(run_host_decomp)
+    result.host_decomp_enabled = host_decomp_enabled
     result.total_spectrum = total_spectrum
     result.host_fit = host_fit
     result.host_sed = host_sed
@@ -172,13 +180,28 @@ def _fit_spectrum_data(
             "dec": spectrum_data.dec,
             "redshift": fit_spectrum.z,
             "fit_kind": "global",
-            "host_decomp_enabled": bool(run_host_decomp),
+            "host_decomp_requested": bool(run_host_decomp),
+            "host_decomp_enabled": host_decomp_enabled,
+            "host_decomp_skip_reason": host_skip_reason,
             "host_model_source": (
                 "template_weighted_sed_on_quasar_grid"
-                if run_host_decomp else None
+                if host_decomp_enabled else None
             ),
         }
     )
+    if run_host_decomp and not host_decomp_enabled:
+        result.warnings.append(
+            FitWarning(
+                code="host_decomp_skipped_redshift",
+                message="Host decomposition was requested but skipped by the redshift gate.",
+                severity="info",
+                context={
+                    "redshift": spectrum_data.redshift,
+                    "threshold": 1.2,
+                    "reason": host_skip_reason,
+                },
+            )
+        )
     return result, str(object_id)
 
 

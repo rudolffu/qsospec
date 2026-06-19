@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import warnings as _warnings
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -208,61 +207,67 @@ class PowerLawConfig:
 
 
 @dataclass(frozen=True)
-class BalmerContinuumConfig:
-    """Dietrich-style Balmer continuum with fixed physical shape."""
+class BalmerPseudoContinuumConfig:
+    """Continuous Kovačević-style Balmer pseudo-continuum."""
 
     enabled: bool = True
     edge: float = 3646.0
-    min_wave: float = 2000.0
     temperature_k: float = 15000.0
     tau_edge: float = 1.0
-    amplitude: float = 0.1
-    amplitude_bounds: Bounds = (0.0, None)
-
-
-@dataclass(frozen=True)
-class BalmerSeriesConfig:
-    """High-order Balmer-series template selection and broadening."""
-
-    enabled: bool = True
     log10_ne: int = 9
     n_min: int = 6
-    provenance: str = "sh95"
+    provenance: str = "sh95_k13full_ext"
     amplitude: float = 1.0
     amplitude_bounds: Bounds = (0.0, None)
     fit_fwhm: bool = True
     fwhm_kms: float = 5000.0
     fwhm_bounds: Bounds = (500.0, 15000.0)
+    velocity_kms: float = 0.0
+    velocity_bounds: Bounds = (-2000.0, 2000.0)
     sync_with_hbeta: str = "auto"
     sync_min_fwhm_snr: Optional[float] = 3.0
-    fixed_fwhm_kms: Optional[float] = None
 
     def __post_init__(self) -> None:
+        if self.edge <= 0 or self.temperature_k <= 0 or self.tau_edge <= 0:
+            raise ValueError(
+                "Balmer pseudo-continuum edge, temperature, and optical depth "
+                "must be positive."
+            )
         if self.log10_ne not in (9, 10):
-            raise ValueError("BalmerSeriesConfig.log10_ne must be 9 or 10.")
+            raise ValueError("BalmerPseudoContinuumConfig.log10_ne must be 9 or 10.")
         if self.n_min not in (6, 7):
-            raise ValueError("BalmerSeriesConfig.n_min must be 6 or 7.")
+            raise ValueError("BalmerPseudoContinuumConfig.n_min must be 6 or 7.")
         if self.provenance not in ("sh95", "sh95_k13full_ext", "sh95_asymptotic_ext"):
-            raise ValueError("Unsupported Balmer-series provenance.")
+            raise ValueError("Unsupported Balmer pseudo-continuum provenance.")
         if not np.isfinite(self.fwhm_kms) or self.fwhm_kms <= 0:
-            raise ValueError("BalmerSeriesConfig.fwhm_kms must be positive and finite.")
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.fwhm_kms must be positive and finite."
+            )
         fwhm_lo, fwhm_hi = self.fwhm_bounds
         if fwhm_lo is None or fwhm_hi is None or fwhm_lo <= 0 or fwhm_hi <= fwhm_lo:
-            raise ValueError("BalmerSeriesConfig.fwhm_bounds must be finite, positive, and increasing.")
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.fwhm_bounds must be finite, "
+                "positive, and increasing."
+            )
+        velocity_lo, velocity_hi = self.velocity_bounds
+        if (
+            velocity_lo is None
+            or velocity_hi is None
+            or not np.isfinite(self.velocity_kms)
+            or velocity_hi <= velocity_lo
+        ):
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.velocity_bounds must be finite and increasing."
+            )
         if self.sync_with_hbeta not in ("auto", "never", "require"):
             raise ValueError(
-                "BalmerSeriesConfig.sync_with_hbeta must be 'auto', 'never', or 'require'."
+                "BalmerPseudoContinuumConfig.sync_with_hbeta must be "
+                "'auto', 'never', or 'require'."
             )
         if self.sync_min_fwhm_snr is not None and self.sync_min_fwhm_snr < 0:
-            raise ValueError("BalmerSeriesConfig.sync_min_fwhm_snr must be non-negative or None.")
-        if self.fixed_fwhm_kms is not None and self.fixed_fwhm_kms <= 0:
-            raise ValueError("fixed_fwhm_kms must be positive.")
-        if self.fixed_fwhm_kms is not None:
-            _warnings.warn(
-                "BalmerSeriesConfig.fixed_fwhm_kms is deprecated; use "
-                "fit_fwhm=False with fwhm_kms instead.",
-                DeprecationWarning,
-                stacklevel=2,
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.sync_min_fwhm_snr must be "
+                "non-negative or None."
             )
 
 
@@ -277,11 +282,15 @@ class GlobalContinuumConfig:
     optical_iron: Optional[IronTemplateConfig] = field(
         default_factory=lambda: IronTemplateConfig.park22(fwhm_kms=3000.0)
     )
-    balmer_continuum: BalmerContinuumConfig = field(default_factory=BalmerContinuumConfig)
-    balmer_series: BalmerSeriesConfig = field(default_factory=BalmerSeriesConfig)
+    balmer_pseudocontinuum: BalmerPseudoContinuumConfig = field(
+        default_factory=BalmerPseudoContinuumConfig
+    )
     continuum_windows: Tuple[Window, ...] = LEGACY_CONTINUUM_WINDOWS
     mask_windows: Tuple[Window, ...] = ((3710.0, 3745.0), (3855.0, 3880.0))
     min_component_pixels: int = 20
+    blue_absorption_clip_enabled: bool = True
+    blue_absorption_clip_max_wave: float = 3500.0
+    blue_absorption_clip_sigma: float = 3.0
     clip_passes: int = 2
     clip_low_sigma: float = 3.0
     clip_high_sigma: float = 5.0
@@ -302,6 +311,14 @@ class GlobalContinuumConfig:
             raise ValueError("balmer_width_sync_tolerance_kms must be positive.")
         if self.balmer_width_sync_max_iterations < 1:
             raise ValueError("balmer_width_sync_max_iterations must be at least one.")
+        if self.blue_absorption_clip_max_wave <= 0:
+            raise ValueError("blue_absorption_clip_max_wave must be positive.")
+        if self.blue_absorption_clip_sigma <= 0:
+            raise ValueError("blue_absorption_clip_sigma must be positive.")
+        if self.clip_passes < 0:
+            raise ValueError("clip_passes must be non-negative.")
+        if self.clip_low_sigma <= 0 or self.clip_high_sigma <= 0:
+            raise ValueError("clip sigma thresholds must be positive.")
 
 
 @dataclass(frozen=True)

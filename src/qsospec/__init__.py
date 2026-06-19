@@ -13,8 +13,7 @@ from .complex_recipes import ComponentRecipe, ComplexRecipe
 from .fitting.local import fit_line_complex, fit_local
 from .workflows.batch import BatchResult, fit_batch, fit_object_to_store
 from .config import (
-    BalmerContinuumConfig,
-    BalmerSeriesConfig,
+    BalmerPseudoContinuumConfig,
     GaussianComponent,
     GlobalContinuumConfig,
     HalphaComplexConfig,
@@ -28,7 +27,6 @@ from .config import (
     UncertaintyConfig,
 )
 from .fitting.global_fit import (
-    balmer_continuum_basis,
     fit_global_continuum,
     fit_global_hbeta,
     fit_global_lines,
@@ -77,6 +75,9 @@ from .spectrum import Spectrum
 from .templates import (
     BalmerSeriesTemplate,
     IronTemplate,
+    balmer_bound_free_shape,
+    evaluate_balmer_pseudocontinuum,
+    evaluate_balmer_pseudocontinuum_with_derivatives,
     list_balmer_templates,
     list_iron_templates,
     load_balmer_template,
@@ -85,8 +86,7 @@ from .templates import (
 from .warnings import FitWarning
 
 __all__ = [
-    "BalmerContinuumConfig",
-    "BalmerSeriesConfig",
+    "BalmerPseudoContinuumConfig",
     "BalmerSeriesTemplate",
     "BatchResult",
     "ComponentRecipe",
@@ -117,7 +117,7 @@ __all__ = [
     "SpectrumInput",
     "SpectrumMetadata",
     "UncertaintyConfig",
-    "balmer_continuum_basis",
+    "balmer_bound_free_shape",
     "build_science_catalog",
     "compute_derived_quantities",
     "detect_fits_reader",
@@ -136,6 +136,8 @@ __all__ = [
     "fit_local",
     "fit_object_to_store",
     "fit_with_optional_host_decomp",
+    "evaluate_balmer_pseudocontinuum",
+    "evaluate_balmer_pseudocontinuum_with_derivatives",
     "list_balmer_templates",
     "list_iron_templates",
     "lines",

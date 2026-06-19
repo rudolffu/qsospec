@@ -84,7 +84,11 @@ def list_balmer_templates() -> Dict[str, str]:
         for n_min in (6, 7):
             for provenance in ("sh95", "sh95_k13full_ext", "sh95_asymptotic_ext"):
                 name = Path(_filename(logne, n_min, provenance)).stem
-                out[name] = "production" if provenance == "sh95" else "systematics"
+                out[name] = (
+                    "production"
+                    if provenance == "sh95_k13full_ext"
+                    else "systematics"
+                )
     return out
 
 
@@ -115,7 +119,10 @@ def load_balmer_template(
         warnings.append(
             FitWarning(
                 code="balmer_high_n_extension_model_dependent",
-                message="The n=51-400 Balmer extension is model-dependent and intended for systematics fits.",
+                message=(
+                    "The n=51-400 Balmer extension is model-dependent; its "
+                    "provenance is recorded for scientific interpretation."
+                ),
                 context={"provenance": canonical},
             )
         )
@@ -176,3 +183,162 @@ def evaluate_balmer_series_with_derivative(
         basis += profile
         derivative += profile * (u * u - 1.0) / float(fwhm_kms)
     return basis, derivative
+
+
+def evaluate_balmer_series_with_derivatives(
+    template: BalmerSeriesTemplate,
+    wave_rest: np.ndarray,
+    fwhm_kms: float,
+    velocity_kms: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return a shifted Balmer series and FWHM/velocity derivatives."""
+
+    wave_rest = np.asarray(wave_rest, dtype=float)
+    if not np.isfinite(fwhm_kms) or fwhm_kms <= 0:
+        raise ValueError("Balmer-series FWHM must be positive and finite.")
+    if not np.isfinite(velocity_kms):
+        raise ValueError("Balmer-series velocity must be finite.")
+    centers = template.wavelength_vacuum * np.exp(float(velocity_kms) / C_KMS)
+    sigma = (float(fwhm_kms) / C_KMS) * centers / FWHM_TO_SIGMA
+    basis = np.zeros_like(wave_rest)
+    derivative_fwhm = np.zeros_like(wave_rest)
+    derivative_velocity = np.zeros_like(wave_rest)
+    sorted_wave = bool(
+        wave_rest.size < 2 or np.all(np.diff(wave_rest) >= 0)
+    )
+    for center, area, width in zip(
+        centers, template.rel_flux_hbeta, sigma
+    ):
+        if sorted_wave:
+            start = int(np.searchsorted(wave_rest, center - 10.0 * width))
+            stop = int(
+                np.searchsorted(
+                    wave_rest, center + 10.0 * width, side="right"
+                )
+            )
+            if start >= stop:
+                continue
+            view = slice(start, stop)
+            local_wave = wave_rest[view]
+        else:
+            view = np.abs(wave_rest - center) <= 10.0 * width
+            if not np.any(view):
+                continue
+            local_wave = wave_rest[view]
+        u = (local_wave - center) / width
+        profile = area * np.exp(-0.5 * u * u) / (
+            np.sqrt(2.0 * np.pi) * width
+        )
+        basis[view] += profile
+        derivative_fwhm[view] += (
+            profile * (u * u - 1.0) / float(fwhm_kms)
+        )
+        derivative_velocity[view] += (
+            profile * (u * u - 1.0 + u * center / width) / C_KMS
+        )
+    return basis, derivative_fwhm, derivative_velocity
+
+
+def balmer_bound_free_shape(
+    wave_rest: np.ndarray,
+    *,
+    temperature_k: float = 15000.0,
+    tau_edge: float = 1.0,
+    edge: float = 3646.0,
+) -> np.ndarray:
+    """Return the unit-edge bound-free shape at all positive blue wavelengths."""
+
+    wave = np.asarray(wave_rest, dtype=float)
+    if temperature_k <= 0 or tau_edge <= 0 or edge <= 0:
+        raise ValueError(
+            "Balmer bound-free temperature, optical depth, and edge must be positive."
+        )
+    h = 6.62607015e-27
+    c = 2.99792458e18
+    k = 1.380649e-16
+
+    def planck_lambda(lam):
+        x = h * c / (lam * k * temperature_k)
+        return lam**-5 / np.expm1(np.clip(x, 1.0e-8, 700.0))
+
+    edge_value = planck_lambda(edge) * (1.0 - np.exp(-tau_edge))
+    out = np.zeros_like(wave)
+    active = (wave > 0) & (wave <= edge)
+    tau = tau_edge * (wave[active] / edge) ** 3
+    out[active] = (
+        planck_lambda(wave[active]) * (1.0 - np.exp(-tau)) / edge_value
+    )
+    return out
+
+
+def evaluate_balmer_pseudocontinuum_with_derivatives(
+    template: BalmerSeriesTemplate,
+    wave_rest: np.ndarray,
+    fwhm_kms: float,
+    velocity_kms: float,
+    *,
+    temperature_k: float = 15000.0,
+    tau_edge: float = 1.0,
+    edge: float = 3646.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate the continuous KD13 basis, branches, and derivatives."""
+
+    wave = np.asarray(wave_rest, dtype=float)
+    series, derivative_fwhm, derivative_velocity = (
+        evaluate_balmer_series_with_derivatives(
+            template, wave, fwhm_kms, velocity_kms
+        )
+    )
+    edge_series, edge_fwhm, edge_velocity = (
+        evaluate_balmer_series_with_derivatives(
+            template,
+            np.asarray([edge], dtype=float),
+            fwhm_kms,
+            velocity_kms,
+        )
+    )
+    bound_free_shape = balmer_bound_free_shape(
+        wave,
+        temperature_k=temperature_k,
+        tau_edge=tau_edge,
+        edge=edge,
+    )
+    blue = wave <= edge
+    red = wave > edge
+    bound_free = np.zeros_like(wave)
+    high_order = np.zeros_like(wave)
+    combined = np.zeros_like(wave)
+    out_fwhm = np.zeros_like(wave)
+    out_velocity = np.zeros_like(wave)
+    bound_free[blue] = edge_series[0] * bound_free_shape[blue]
+    high_order[red] = series[red]
+    combined[blue] = bound_free[blue]
+    combined[red] = high_order[red]
+    out_fwhm[blue] = edge_fwhm[0] * bound_free_shape[blue]
+    out_fwhm[red] = derivative_fwhm[red]
+    out_velocity[blue] = edge_velocity[0] * bound_free_shape[blue]
+    out_velocity[red] = derivative_velocity[red]
+    return combined, bound_free, high_order, out_fwhm, out_velocity
+
+
+def evaluate_balmer_pseudocontinuum(
+    template: BalmerSeriesTemplate,
+    wave_rest: np.ndarray,
+    fwhm_kms: float,
+    velocity_kms: float = 0.0,
+    *,
+    temperature_k: float = 15000.0,
+    tau_edge: float = 1.0,
+    edge: float = 3646.0,
+) -> np.ndarray:
+    """Evaluate the continuous Kovačević Balmer pseudo-continuum basis."""
+
+    return evaluate_balmer_pseudocontinuum_with_derivatives(
+        template,
+        wave_rest,
+        fwhm_kms,
+        velocity_kms,
+        temperature_k=temperature_k,
+        tau_edge=tau_edge,
+        edge=edge,
+    )[0]

@@ -28,6 +28,8 @@ class RecipeCoverage:
     coverage_fraction: float
     n_valid_pixels: int
     fit_windows: Tuple[Tuple[float, float], ...]
+    covered_line_ids: Tuple[str, ...]
+    qa_all_lines_covered: bool
     warnings: Tuple[FitWarning, ...]
 
     @property
@@ -55,7 +57,7 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
         )
         return RecipeCoverage(
             "not_covered", recipe, (), tuple(item.id for item in recipe.components),
-            recipe.required_line_ids, 0.0, 0, (), (warning,)
+            recipe.required_line_ids, 0.0, 0, (), (), False, (warning,)
         )
     valid_min, valid_max = float(valid_wave.min()), float(valid_wave.max())
     lo, hi = recipe.fit_window
@@ -98,12 +100,24 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
     missing_required = tuple(
         line_id for line_id in recipe.required_line_ids if line_id not in covered_lines
     )
-    if recipe.coverage_mode == "full":
+    qa_line_ids = tuple(
+        member
+        for qa_label in recipe.qa_labels
+        for member in (lines.get(qa_label).blend_members or (lines.resolve(qa_label),))
+    )
+    qa_all_lines_covered = bool(qa_line_ids) and all(
+        line_id in covered_lines for line_id in qa_line_ids
+    )
+    below_window_threshold = coverage_fraction < recipe.min_coverage_fraction
+    if below_window_threshold:
+        active = ()
+        disabled = tuple(item.id for item in recipe.components)
+        status = "not_covered"
+    elif recipe.coverage_mode == "full":
         active = tuple(item.id for item in recipe.components if item.enabled)
         disabled = tuple(item.id for item in recipe.components if not item.enabled)
         covered = (
-            coverage_fraction >= recipe.min_coverage_fraction
-            and n_valid_pixels >= recipe.min_valid_pixels
+            n_valid_pixels >= recipe.min_valid_pixels
             and not missing_required
         )
         status = "covered" if covered else (
@@ -140,7 +154,11 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
                 code="complex_not_covered",
                 message=f"{recipe.id} is outside usable wavelength coverage.",
                 severity="info",
-                context={"recipe": recipe.id},
+                context={
+                    "recipe": recipe.id,
+                    "coverage_fraction": float(coverage_fraction),
+                    "minimum_coverage_fraction": float(recipe.min_coverage_fraction),
+                },
             )
         )
     elif status == "missing_required":
@@ -151,7 +169,7 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
                 context={"recipe": recipe.id, "line_ids": missing_required},
             )
         )
-    if disabled:
+    if disabled and status == "partially_covered":
         warnings.append(
             FitWarning(
                 code="complex_partially_covered",
@@ -171,7 +189,8 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
             )
     return RecipeCoverage(
         status, recipe, active, disabled, missing_required, float(coverage_fraction),
-        n_valid_pixels, fit_windows, tuple(warnings)
+        n_valid_pixels, fit_windows, tuple(sorted(covered_lines)),
+        qa_all_lines_covered, tuple(warnings)
     )
 
 
@@ -439,6 +458,9 @@ def _failed_result(
         {}, mask, list(coverage.warnings), {
             **spectrum.metadata.to_dict(), "recipe_id": recipe.id,
             "coverage_status": coverage.status,
+            "coverage_fraction": coverage.coverage_fraction,
+            "covered_line_ids": coverage.covered_line_ids,
+            "qa_all_lines_covered": coverage.qa_all_lines_covered,
         }
     )
 
@@ -753,6 +775,8 @@ def fit_generic_complex(
         "active_components": tuple(effective_component_ids),
         "disabled_components": coverage.disabled_component_ids,
         "fit_windows": coverage.fit_windows,
+        "covered_line_ids": coverage.covered_line_ids,
+        "qa_all_lines_covered": coverage.qa_all_lines_covered,
         "optimizer_requested": "auto",
         "optimizer_used": optimizer_used,
         "jacobian_method": "semi_analytic" if optimizer_used == "variable_projection" else "2-point",

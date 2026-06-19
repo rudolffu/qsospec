@@ -111,6 +111,8 @@ The dimensions are:
 - direct Storey & Hummer 1995 lines through `n=50`
 - K13-full and asymptotic systematics extensions through `n=400`
 
-Pure SH95 is the fitting default. Extended products carry
-`balmer_high_n_extension_model_dependent`; the diagnostic energy-only
-extension is deliberately excluded.
+The continuous Kovačević pseudo-continuum uses the K13-full extension through
+`n=400` by default. Extended products carry
+`balmer_high_n_extension_model_dependent`; pure SH95 remains available for
+systematics comparisons, and the diagnostic energy-only extension is
+deliberately excluded.

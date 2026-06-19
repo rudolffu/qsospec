@@ -27,8 +27,8 @@ from ..global_result import (
 )
 from ..spectrum import Spectrum
 from ..templates import (
-    evaluate_balmer_series,
-    evaluate_balmer_series_with_derivative,
+    evaluate_balmer_pseudocontinuum,
+    evaluate_balmer_pseudocontinuum_with_derivatives,
     load_balmer_template,
     load_iron_template,
 )
@@ -71,34 +71,6 @@ def _cached_balmer_template(log10_ne, n_min, provenance):
         n_min=n_min,
         provenance=provenance,
     )
-
-
-def balmer_continuum_basis(
-    wave_rest: np.ndarray,
-    temperature_k: float = 15000.0,
-    tau_edge: float = 1.0,
-    edge: float = 3646.0,
-    min_wave: float = 2000.0,
-) -> np.ndarray:
-    """Return a unit-edge Dietrich-style Balmer-continuum basis."""
-
-    wave = np.asarray(wave_rest, dtype=float)
-    if temperature_k <= 0 or tau_edge <= 0:
-        raise ValueError("Balmer-continuum temperature and tau_edge must be positive.")
-    h = 6.62607015e-27
-    c = 2.99792458e18
-    k = 1.380649e-16
-
-    def planck_lambda(lam):
-        x = h * c / (lam * k * temperature_k)
-        return lam**-5 / np.expm1(np.clip(x, 1.0e-8, 700.0))
-
-    edge_value = planck_lambda(edge) * (1.0 - np.exp(-tau_edge))
-    out = np.zeros_like(wave)
-    active = (wave >= min_wave) & (wave <= edge)
-    tau = tau_edge * (wave[active] / edge) ** 3
-    out[active] = planck_lambda(wave[active]) * (1.0 - np.exp(-tau)) / edge_value
-    return out
 
 
 def _window_mask(wave: np.ndarray, windows: Sequence[Tuple[float, float]]) -> np.ndarray:
@@ -167,6 +139,14 @@ class _ContinuumContext:
         self.balmer_template = None
 
         valid = spectrum.valid_mask
+        valid_wave = self.wave[valid]
+        self.maximum_valid_rest_wavelength = (
+            float(np.max(valid_wave)) if valid_wave.size else np.nan
+        )
+        self.balmer_disabled_short_coverage = bool(
+            np.isfinite(self.maximum_valid_rest_wavelength)
+            and self.maximum_valid_rest_wavelength <= 3600.0
+        )
         self.base_fit_mask = valid & _window_mask(self.wave, config.continuum_windows)
         self.base_fit_mask &= ~_window_mask(self.wave, config.mask_windows)
         self._configure_parameters()
@@ -217,35 +197,64 @@ class _ContinuumContext:
             self._add(f"{label}.amp", iron_cfg.amp, iron_cfg.amp_bounds)
             self._add(f"{label}.fwhm_kms", iron_cfg.fwhm_kms, iron_cfg.fwhm_bounds)
 
-        bc = cfg.balmer_continuum
-        bc_pixels = self.base_fit_mask & (self.wave >= bc.min_wave) & (self.wave <= bc.edge)
-        if bc.enabled and np.count_nonzero(bc_pixels) >= cfg.min_component_pixels:
-            self._add("balmer_continuum.amp", bc.amplitude, bc.amplitude_bounds)
-        elif bc.enabled:
+        balmer = cfg.balmer_pseudocontinuum
+        red_edge_pixels = (
+            self.base_fit_mask
+            & (self.wave > balmer.edge)
+            & (self.wave <= 4260.0)
+        )
+        if self.balmer_disabled_short_coverage and balmer.enabled:
             self.warnings.append(
                 FitWarning(
-                    code="global_component_disabled_no_coverage",
-                    message="Balmer continuum was disabled because its wavelength range is not sufficiently covered.",
-                    context={"component": "balmer_continuum"},
+                    code="balmer_components_disabled_short_coverage",
+                    message=(
+                        "The Balmer pseudo-continuum was disabled "
+                        "because valid rest-frame coverage does not extend beyond 3600 Angstrom."
+                    ),
+                    severity="info",
+                    context={
+                        "maximum_valid_rest_wavelength": self.maximum_valid_rest_wavelength,
+                        "threshold": 3600.0,
+                    },
                 )
             )
-
-        bs = cfg.balmer_series
-        bs_pixels = self.base_fit_mask & (self.wave >= 3500.0) & (self.wave <= 4260.0)
-        if bs.enabled and np.count_nonzero(bs_pixels) >= cfg.min_component_pixels:
+        if (
+            balmer.enabled
+            and not self.balmer_disabled_short_coverage
+            and np.count_nonzero(red_edge_pixels) >= cfg.min_component_pixels
+        ):
             self.balmer_template = _cached_balmer_template(
-                bs.log10_ne, bs.n_min, bs.provenance
+                balmer.log10_ne, balmer.n_min, balmer.provenance
             )
             self.warnings.extend(self.balmer_template.warnings)
-            self._add("balmer_series.amp", bs.amplitude, bs.amplitude_bounds)
+            self._add(
+                "balmer_pseudocontinuum.amp",
+                balmer.amplitude,
+                balmer.amplitude_bounds,
+            )
             if self._balmer_fixed_fwhm() is None:
-                self._add("balmer_series.fwhm_kms", bs.fwhm_kms, bs.fwhm_bounds)
-        elif bs.enabled:
+                self._add(
+                    "balmer_pseudocontinuum.fwhm_kms",
+                    balmer.fwhm_kms,
+                    balmer.fwhm_bounds,
+                )
+            self._add(
+                "balmer_pseudocontinuum.velocity_kms",
+                balmer.velocity_kms,
+                balmer.velocity_bounds,
+            )
+        elif balmer.enabled and not self.balmer_disabled_short_coverage:
             self.warnings.append(
                 FitWarning(
                     code="global_component_disabled_no_coverage",
-                    message="High-order Balmer series was disabled because 3500-4260 Angstrom is not sufficiently covered.",
-                    context={"component": "balmer_series"},
+                    message=(
+                        "The Balmer pseudo-continuum was disabled because the "
+                        "red-side 3646-4260 Angstrom region is not sufficiently covered."
+                    ),
+                    context={
+                        "component": "balmer_pseudocontinuum",
+                        "coverage": (balmer.edge, 4260.0),
+                    },
                 )
             )
 
@@ -256,9 +265,7 @@ class _ContinuumContext:
         self._initialize_linear_amplitudes()
 
     def _balmer_fixed_fwhm(self) -> Optional[float]:
-        config = self.config.balmer_series
-        if config.fixed_fwhm_kms is not None:
-            return float(config.fixed_fwhm_kms)
+        config = self.config.balmer_pseudocontinuum
         if not config.fit_fwhm:
             return float(config.fwhm_kms)
         return None
@@ -284,16 +291,28 @@ class _ContinuumContext:
             fwhm = self._get(self.initial, "optical_iron.fwhm_kms")
             columns.append(evaluate_iron_basis(self.opt_template, wave, fwhm))
             names.append("optical_iron.amp")
-        if "balmer_continuum.amp" in self.index:
-            bc = self.config.balmer_continuum
-            columns.append(balmer_continuum_basis(wave, bc.temperature_k, bc.tau_edge, bc.edge, bc.min_wave))
-            names.append("balmer_continuum.amp")
-        if "balmer_series.amp" in self.index:
+        if "balmer_pseudocontinuum.amp" in self.index:
+            balmer = self.config.balmer_pseudocontinuum
             fwhm = self._balmer_fixed_fwhm()
             if fwhm is None:
-                fwhm = self._get(self.initial, "balmer_series.fwhm_kms")
-            columns.append(evaluate_balmer_series(self.balmer_template, wave, fwhm))
-            names.append("balmer_series.amp")
+                fwhm = self._get(
+                    self.initial, "balmer_pseudocontinuum.fwhm_kms"
+                )
+            velocity = self._get(
+                self.initial, "balmer_pseudocontinuum.velocity_kms"
+            )
+            columns.append(
+                evaluate_balmer_pseudocontinuum(
+                    self.balmer_template,
+                    wave,
+                    fwhm,
+                    velocity,
+                    temperature_k=balmer.temperature_k,
+                    tau_edge=balmer.tau_edge,
+                    edge=balmer.edge,
+                )
+            )
+            names.append("balmer_pseudocontinuum.amp")
         if not columns:
             return
         design = np.column_stack(columns)
@@ -382,24 +401,43 @@ class _ContinuumContext:
                 basis,
                 {"optical_iron.fwhm_kms": derivative} if derivative is not None else None,
             )
-        if "balmer_continuum.amp" in self.index:
-            bc = self.config.balmer_continuum
-            append_column(
-                balmer_continuum_basis(
-                    wave, bc.temperature_k, bc.tau_edge, bc.edge, bc.min_wave
-                )
-            )
-        if "balmer_series.amp" in self.index:
+        if "balmer_pseudocontinuum.amp" in self.index:
+            balmer = self.config.balmer_pseudocontinuum
             fwhm = self._balmer_fixed_fwhm()
             if fwhm is None:
-                fwhm = nonlinear_values["balmer_series.fwhm_kms"]
-            if need_derivatives and "balmer_series.fwhm_kms" in nonlinear_values:
-                basis, derivative = evaluate_balmer_series_with_derivative(
-                    self.balmer_template, wave, fwhm
+                fwhm = nonlinear_values["balmer_pseudocontinuum.fwhm_kms"]
+            velocity = nonlinear_values[
+                "balmer_pseudocontinuum.velocity_kms"
+            ]
+            if need_derivatives:
+                basis, _, _, derivative_fwhm, derivative_velocity = (
+                    evaluate_balmer_pseudocontinuum_with_derivatives(
+                        self.balmer_template,
+                        wave,
+                        fwhm,
+                        velocity,
+                        temperature_k=balmer.temperature_k,
+                        tau_edge=balmer.tau_edge,
+                        edge=balmer.edge,
+                    )
                 )
-                derivatives = {"balmer_series.fwhm_kms": derivative}
+                derivatives = {
+                    "balmer_pseudocontinuum.velocity_kms": derivative_velocity
+                }
+                if "balmer_pseudocontinuum.fwhm_kms" in nonlinear_values:
+                    derivatives[
+                        "balmer_pseudocontinuum.fwhm_kms"
+                    ] = derivative_fwhm
             else:
-                basis = evaluate_balmer_series(self.balmer_template, wave, fwhm)
+                basis = evaluate_balmer_pseudocontinuum(
+                    self.balmer_template,
+                    wave,
+                    fwhm,
+                    velocity,
+                    temperature_k=balmer.temperature_k,
+                    tau_edge=balmer.tau_edge,
+                    edge=balmer.edge,
+                )
                 derivatives = None
             append_column(basis, derivatives)
 
@@ -444,18 +482,30 @@ class _ContinuumContext:
             components["optical_iron"] = self._get(theta, "optical_iron.amp") * evaluate_iron_basis(
                 self.opt_template, wave, self._get(theta, "optical_iron.fwhm_kms")
             )
-        if "balmer_continuum.amp" in self.index:
-            bc = self.config.balmer_continuum
-            components["balmer_continuum"] = self._get(theta, "balmer_continuum.amp") * balmer_continuum_basis(
-                wave, bc.temperature_k, bc.tau_edge, bc.edge, bc.min_wave
-            )
         if self.balmer_template is not None:
+            balmer = self.config.balmer_pseudocontinuum
             fwhm = self._balmer_fixed_fwhm()
             if fwhm is None:
-                fwhm = self._get(theta, "balmer_series.fwhm_kms")
-            components["balmer_series"] = self._get(theta, "balmer_series.amp") * evaluate_balmer_series(
-                self.balmer_template, wave, fwhm
+                fwhm = self._get(
+                    theta, "balmer_pseudocontinuum.fwhm_kms"
+                )
+            velocity = self._get(
+                theta, "balmer_pseudocontinuum.velocity_kms"
             )
+            _, bound_free, high_order, _, _ = (
+                evaluate_balmer_pseudocontinuum_with_derivatives(
+                    self.balmer_template,
+                    wave,
+                    fwhm,
+                    velocity,
+                    temperature_k=balmer.temperature_k,
+                    tau_edge=balmer.tau_edge,
+                    edge=balmer.edge,
+                )
+            )
+            amplitude = self._get(theta, "balmer_pseudocontinuum.amp")
+            components["balmer_bound_free"] = amplitude * bound_free
+            components["balmer_high_order_series"] = amplitude * high_order
         return components
 
     def model(self, theta: np.ndarray, wave: np.ndarray) -> np.ndarray:
@@ -573,6 +623,7 @@ def _solve_legacy_once(context, wave, flux, err, start, max_nfev):
         start,
         bounds=(context.lower, context.upper),
         jac="2-point",
+        x_scale="jac",
         max_nfev=max_nfev,
     )
 
@@ -625,6 +676,35 @@ def fit_global_continuum(
     total_nfev = 0
     total_njev = 0
     total_linear_solves = 0
+    blue_absorption_rejected = np.zeros_like(context.base_fit_mask)
+    if cfg.blue_absorption_clip_enabled:
+        wave = context.wave[clip_mask]
+        flux = spectrum.flux[clip_mask]
+        err = spectrum.err[clip_mask]
+        result, method, fallback_reason = _solve_once_with_fallback(
+            context, wave, flux, err, context.initial, cfg
+        )
+        optimizer_used = method if method == "legacy_joint" else optimizer_used
+        if fallback_reason is not None:
+            fallback_reasons.append(fallback_reason)
+        total_nfev += int(getattr(result, "nfev", 0) or 0)
+        total_njev += int(getattr(result, "njev", 0) or 0)
+        total_linear_solves += int(
+            getattr(result, "linear_solve_count", 0) or 0
+        )
+        base_wave = context.wave[context.base_fit_mask]
+        standardized = (
+            spectrum.flux[context.base_fit_mask]
+            - context.model(result.x, base_wave)
+        ) / spectrum.err[context.base_fit_mask]
+        reject = (
+            (base_wave < cfg.blue_absorption_clip_max_wave)
+            & (standardized < -cfg.blue_absorption_clip_sigma)
+        )
+        blue_absorption_rejected[context.base_fit_mask] = reject
+        clip_mask &= ~blue_absorption_rejected
+
+    clipping_base_mask = clip_mask.copy()
     for _ in range(max(int(cfg.clip_passes), 0)):
         wave = context.wave[clip_mask]
         flux = spectrum.flux[clip_mask]
@@ -639,11 +719,14 @@ def fit_global_continuum(
         total_nfev += int(getattr(result, "nfev", 0) or 0)
         total_njev += int(getattr(result, "njev", 0) or 0)
         total_linear_solves += int(getattr(result, "linear_solve_count", 0) or 0)
-        standardized = (spectrum.flux[context.base_fit_mask] - context.model(result.x, context.wave[context.base_fit_mask]))
-        standardized /= spectrum.err[context.base_fit_mask]
+        standardized = (
+            spectrum.flux[clipping_base_mask]
+            - context.model(result.x, context.wave[clipping_base_mask])
+        )
+        standardized /= spectrum.err[clipping_base_mask]
         keep = (standardized >= -cfg.clip_low_sigma) & (standardized <= cfg.clip_high_sigma)
-        updated = context.base_fit_mask.copy()
-        updated[context.base_fit_mask] = keep
+        updated = clipping_base_mask.copy()
+        updated[clipping_base_mask] = keep
         if np.array_equal(updated, clip_mask):
             break
         clip_mask = updated
@@ -692,7 +775,28 @@ def fit_global_continuum(
             "balmer_template_source": (
                 context.balmer_template.source_path if context.balmer_template is not None else None
             ),
-            "balmer_series_fwhm_fixed": context._balmer_fixed_fwhm() is not None,
+            "balmer_pseudocontinuum_fwhm_fixed": (
+                context._balmer_fixed_fwhm() is not None
+            ),
+            "maximum_valid_rest_wavelength": context.maximum_valid_rest_wavelength,
+            "balmer_components_disabled_short_coverage": (
+                context.balmer_disabled_short_coverage
+            ),
+            "blue_absorption_clip_enabled": bool(
+                cfg.blue_absorption_clip_enabled
+            ),
+            "blue_absorption_clip_max_wave": float(
+                cfg.blue_absorption_clip_max_wave
+            ),
+            "blue_absorption_clip_sigma": float(
+                cfg.blue_absorption_clip_sigma
+            ),
+            "blue_absorption_clip_iterations": (
+                1 if cfg.blue_absorption_clip_enabled else 0
+            ),
+            "blue_absorption_clip_rejected_pixels": int(
+                np.count_nonzero(blue_absorption_rejected)
+            ),
             "optimizer_requested": cfg.optimizer_method,
             "optimizer_used": optimizer_used,
             "jacobian_method": (
@@ -706,20 +810,55 @@ def fit_global_continuum(
             "linear_solve_count": total_linear_solves,
         }
     )
-    if "balmer_series.amp" in context.index:
-        balmer_amp = float(result.x[context.index["balmer_series.amp"]])
+    if "balmer_pseudocontinuum.amp" in context.index:
+        balmer = cfg.balmer_pseudocontinuum
+        balmer_amp = float(
+            result.x[context.index["balmer_pseudocontinuum.amp"]]
+        )
         balmer_fwhm = context._balmer_fixed_fwhm()
         if balmer_fwhm is None:
-            balmer_fwhm = float(result.x[context.index["balmer_series.fwhm_kms"]])
+            balmer_fwhm = float(
+                result.x[
+                    context.index["balmer_pseudocontinuum.fwhm_kms"]
+                ]
+            )
+        balmer_velocity = float(
+            result.x[
+                context.index["balmer_pseudocontinuum.velocity_kms"]
+            ]
+        )
+        unit_basis, _, _, _, _ = (
+            evaluate_balmer_pseudocontinuum_with_derivatives(
+                context.balmer_template,
+                np.asarray([balmer.edge]),
+                balmer_fwhm,
+                balmer_velocity,
+                temperature_k=balmer.temperature_k,
+                tau_edge=balmer.tau_edge,
+                edge=balmer.edge,
+            )
+        )
         scale = spectrum.flux_density_scale_to_cgs
         metadata.update(
             {
-                "balmer_series_implied_hbeta_flux_input": balmer_amp,
-                "balmer_series_implied_hbeta_flux_cgs": (
+                "balmer_pseudocontinuum_implied_hbeta_flux_input": balmer_amp,
+                "balmer_pseudocontinuum_implied_hbeta_flux_cgs": (
                     balmer_amp * (1.0 + spectrum.z) * float(scale) if scale is not None else np.nan
                 ),
-                "balmer_series_fwhm_kms": float(balmer_fwhm),
-                "balmer_series_amplitude_definition": (
+                "balmer_pseudocontinuum_fwhm_kms": float(balmer_fwhm),
+                "balmer_pseudocontinuum_velocity_kms": balmer_velocity,
+                "balmer_pseudocontinuum_edge_flux_density_input": (
+                    balmer_amp * float(unit_basis[0])
+                ),
+                "balmer_pseudocontinuum_template_provenance": (
+                    context.balmer_template.provenance
+                ),
+                "balmer_pseudocontinuum_n_min": context.balmer_template.n_min,
+                "balmer_pseudocontinuum_n_max": context.balmer_template.n_max,
+                "balmer_pseudocontinuum_edge_angstrom": balmer.edge,
+                "balmer_pseudocontinuum_temperature_k": balmer.temperature_k,
+                "balmer_pseudocontinuum_tau_edge": balmer.tau_edge,
+                "balmer_pseudocontinuum_amplitude_definition": (
                     "Integrated Hbeta flux implied by the template's Hbeta-relative line ratios"
                 ),
             }
@@ -2126,21 +2265,30 @@ def fit_global_lines(
             }
         )
 
-    bs_config = global_cfg.balmer_series
+    balmer_config = global_cfg.balmer_pseudocontinuum
     balmer_available = continuum_initial.metadata.get("balmer_template") is not None
-    initial_width = continuum_initial.metadata.get("balmer_series_fwhm_kms", np.nan)
+    balmer_disabled_short_coverage = bool(
+        continuum_initial.metadata.get(
+            "balmer_components_disabled_short_coverage", False
+        )
+    )
+    initial_width = continuum_initial.metadata.get(
+        "balmer_pseudocontinuum_fwhm_kms", np.nan
+    )
     width_source = (
-        "disabled"
-        if not bs_config.enabled
+        "disabled_short_coverage"
+        if balmer_disabled_short_coverage
+        else "disabled"
+        if not balmer_config.enabled
         else "fixed_config"
-        if bs_config.fixed_fwhm_kms is not None or not bs_config.fit_fwhm
+        if not balmer_config.fit_fwhm
         else "free_global_fit"
         if balmer_available and np.isfinite(initial_width)
         else "failed_or_unconstrained"
     )
     warning_codes: List[str] = []
-    sync_policy = bs_config.sync_with_hbeta
-    width_is_free = bs_config.fit_fwhm and bs_config.fixed_fwhm_kms is None
+    sync_policy = balmer_config.sync_with_hbeta
+    width_is_free = balmer_config.fit_fwhm
     sync_requested = (
         sync_policy in ("auto", "require")
         and balmer_available
@@ -2150,7 +2298,7 @@ def fit_global_lines(
     hbeta_reliable, hbeta_snr, reliability_reason = _hbeta_sync_reliability(
         hbeta_initial,
         uncertainty_cfg,
-        bs_config.sync_min_fwhm_snr,
+        balmer_config.sync_min_fwhm_snr,
     )
     refinement_iterations = 0
     width_difference = np.nan
@@ -2161,7 +2309,7 @@ def fit_global_lines(
     continuum_width_snr = np.nan
     if balmer_available and width_is_free:
         width_index = list(continuum_initial.param_values).index(
-            "balmer_series.fwhm_kms"
+            "balmer_pseudocontinuum.fwhm_kms"
         )
         active_mask = np.asarray(
             getattr(
@@ -2172,10 +2320,10 @@ def fit_global_lines(
             dtype=int,
         )
         free_width = continuum_initial.param_values.get(
-            "balmer_series.fwhm_kms", np.nan
+            "balmer_pseudocontinuum.fwhm_kms", np.nan
         )
         free_width_error = continuum_initial.param_errors.get(
-            "balmer_series.fwhm_kms", np.nan
+            "balmer_pseudocontinuum.fwhm_kms", np.nan
         )
         if np.isfinite(free_width_error) and free_width_error > 0:
             continuum_width_snr = float(free_width / free_width_error)
@@ -2183,8 +2331,8 @@ def fit_global_lines(
             _append_workflow_warning(
                 warnings,
                 warning_codes,
-                "balmer_series_fwhm_weakly_constrained",
-                "The freely fitted Balmer-series width is weakly constrained.",
+                "balmer_pseudocontinuum_fwhm_weakly_constrained",
+                "The freely fitted Balmer pseudo-continuum width is weakly constrained.",
                 {"fwhm_snr": continuum_width_snr},
                 severity="info",
             )
@@ -2193,8 +2341,8 @@ def fit_global_lines(
             _append_workflow_warning(
                 warnings,
                 warning_codes,
-                "balmer_series_fwhm_at_bound",
-                "The freely fitted Balmer-series width is active on an optimizer bound.",
+                "balmer_pseudocontinuum_fwhm_at_bound",
+                "The freely fitted Balmer pseudo-continuum width is active on an optimizer bound.",
                 {"bound_side": int(active_mask[width_index])},
             )
     if sync_requested and hbeta_reliable and hbeta_initial is not None:
@@ -2204,13 +2352,15 @@ def fit_global_lines(
         hbeta = hbeta_initial
         series_width = float(measured_width)
         for iteration in range(max(int(global_cfg.balmer_width_sync_max_iterations), 1)):
-            refined_series = replace(
-                global_cfg.balmer_series,
+            refined_balmer = replace(
+                global_cfg.balmer_pseudocontinuum,
                 fit_fwhm=False,
                 fwhm_kms=series_width,
-                fixed_fwhm_kms=None,
             )
-            refined_config = replace(global_cfg, balmer_series=refined_series)
+            refined_config = replace(
+                global_cfg,
+                balmer_pseudocontinuum=refined_balmer,
+            )
             candidate_continuum = fit_global_continuum(
                 spectrum, refined_config, compute_covariance=uncertainty_cfg.covariance
             )
@@ -2248,7 +2398,7 @@ def fit_global_lines(
             hbeta = hbeta_initial
             width_source = (
                 "fixed_config"
-                if bs_config.fixed_fwhm_kms is not None or not bs_config.fit_fwhm
+                if not balmer_config.fit_fwhm
                 else "free_global_fit"
             )
             if "hbeta_sync_failed" not in warning_codes:
@@ -2264,12 +2414,16 @@ def fit_global_lines(
                     },
                 )
     else:
-        if bs_config.enabled and not balmer_available:
+        if (
+            balmer_config.enabled
+            and not balmer_available
+            and not balmer_disabled_short_coverage
+        ):
             _append_workflow_warning(
                 warnings,
                 warning_codes,
-                "balmer_series_region_not_covered",
-                "The high-order Balmer-series region is not sufficiently covered.",
+                "balmer_pseudocontinuum_region_not_covered",
+                "The red-side Balmer pseudo-continuum region is not sufficiently covered.",
             )
         elif (
             sync_policy in ("auto", "require")
@@ -2283,12 +2437,12 @@ def fit_global_lines(
                 "Hβ synchronization was skipped because its recipe is not covered.",
                 severity="info",
             )
-            if bs_config.fit_fwhm and bs_config.fixed_fwhm_kms is None:
+            if balmer_config.fit_fwhm:
                 _append_workflow_warning(
                     warnings,
                     warning_codes,
-                    "balmer_series_fwhm_free_no_hbeta_anchor",
-                    "The Balmer-series width remains the freely fitted continuum value.",
+                    "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor",
+                    "The Balmer pseudo-continuum width remains freely fitted.",
                     severity="info",
                 )
         elif sync_policy in ("auto", "require") and not hbeta_reliable:
@@ -2344,15 +2498,49 @@ def fit_global_lines(
     samples = {}
     for wavelength in (3000.0, 5100.0):
         samples.update(_continuum_sample(spectrum, continuum, wavelength, host_model_on_grid))
-    final_width = continuum.metadata.get("balmer_series_fwhm_kms", np.nan)
+    final_width = continuum.metadata.get(
+        "balmer_pseudocontinuum_fwhm_kms", np.nan
+    )
     metadata = {
         "refinement_performed": continuum is not continuum_initial,
-        "balmer_series_fwhm_kms": float(final_width),
-        "balmer_series_fwhm_source": width_source,
-        "balmer_series_fwhm_synced_to_hbeta": bool(width_converged),
-        "balmer_series_fwhm_warning_codes": tuple(warning_codes),
-        "balmer_series_fwhm_snr": float(hbeta_snr),
-        "balmer_series_free_fwhm_snr": float(continuum_width_snr),
+        "balmer_pseudocontinuum_fwhm_kms": float(final_width),
+        "balmer_pseudocontinuum_fwhm_source": width_source,
+        "balmer_pseudocontinuum_fwhm_synced_to_hbeta": bool(width_converged),
+        "balmer_pseudocontinuum_fwhm_warning_codes": tuple(warning_codes),
+        "balmer_pseudocontinuum_fwhm_snr": float(hbeta_snr),
+        "balmer_pseudocontinuum_free_fwhm_snr": float(continuum_width_snr),
+        "balmer_pseudocontinuum_velocity_kms": continuum.metadata.get(
+            "balmer_pseudocontinuum_velocity_kms", np.nan
+        ),
+        "balmer_pseudocontinuum_implied_hbeta_flux_input": (
+            continuum.metadata.get(
+                "balmer_pseudocontinuum_implied_hbeta_flux_input"
+            )
+        ),
+        "balmer_pseudocontinuum_implied_hbeta_flux_cgs": (
+            continuum.metadata.get(
+                "balmer_pseudocontinuum_implied_hbeta_flux_cgs"
+            )
+        ),
+        "balmer_pseudocontinuum_edge_flux_density_input": (
+            continuum.metadata.get(
+                "balmer_pseudocontinuum_edge_flux_density_input"
+            )
+        ),
+        "balmer_pseudocontinuum_template_provenance": (
+            continuum.metadata.get(
+                "balmer_pseudocontinuum_template_provenance"
+            )
+        ),
+        "balmer_pseudocontinuum_n_min": continuum.metadata.get(
+            "balmer_pseudocontinuum_n_min"
+        ),
+        "balmer_pseudocontinuum_n_max": continuum.metadata.get(
+            "balmer_pseudocontinuum_n_max"
+        ),
+        "balmer_pseudocontinuum_edge_angstrom": continuum.metadata.get(
+            "balmer_pseudocontinuum_edge_angstrom"
+        ),
         "hbeta_sync_requested": bool(sync_requested),
         "hbeta_sync_attempted": bool(sync_attempted),
         "hbeta_sync_converged": bool(width_converged),
@@ -2361,6 +2549,14 @@ def fit_global_lines(
         "balmer_width_sync_tolerance_kms": float(global_cfg.balmer_width_sync_tolerance_kms),
         "continuum_samples": samples,
         "continuum_sample_flux_density_unit": spectrum.flux_density_unit,
+        "maximum_valid_rest_wavelength": continuum.metadata.get(
+            "maximum_valid_rest_wavelength"
+        ),
+        "balmer_components_disabled_short_coverage": bool(
+            continuum.metadata.get(
+                "balmer_components_disabled_short_coverage", False
+            )
+        ),
         "uncertainty_mode": "covariance",
         "complex_statuses": dict(complex_statuses),
         "line_complex_status": dict(complex_statuses),
@@ -2371,11 +2567,12 @@ def fit_global_lines(
         {
             key: metadata[key]
             for key in (
-                "balmer_series_fwhm_kms",
-                "balmer_series_fwhm_source",
-                "balmer_series_fwhm_synced_to_hbeta",
-                "balmer_series_fwhm_warning_codes",
-                "balmer_series_fwhm_snr",
+                "balmer_pseudocontinuum_fwhm_kms",
+                "balmer_pseudocontinuum_fwhm_source",
+                "balmer_pseudocontinuum_fwhm_synced_to_hbeta",
+                "balmer_pseudocontinuum_fwhm_warning_codes",
+                "balmer_pseudocontinuum_fwhm_snr",
+                "balmer_pseudocontinuum_velocity_kms",
                 "hbeta_sync_requested",
                 "hbeta_sync_attempted",
                 "hbeta_sync_converged",

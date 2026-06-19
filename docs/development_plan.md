@@ -251,8 +251,8 @@ The currently exported science-facing names include:
 - local configuration/results: `GaussianComponent`, `LorentzianComponent`,
   `IronTemplateConfig`, `LineComplexConfig`, `LocalFitConfig`, `FitResult`,
   `LocalFitResult`;
-- global configuration/results: `PowerLawConfig`, `BalmerContinuumConfig`,
-  `BalmerSeriesConfig`, `GlobalContinuumConfig`, `HbetaComplexConfig`,
+- global configuration/results: `PowerLawConfig`,
+  `BalmerPseudoContinuumConfig`, `GlobalContinuumConfig`, `HbetaComplexConfig`,
   `MgIIComplexConfig`, `HalphaComplexConfig`, `UncertaintyConfig`,
   `GlobalContinuumResult`, `EmissionComplexResult`, `WorkflowResult`;
 - registries: `qsospec.lines`, `qsospec.recipes`, `LineDefinition`,

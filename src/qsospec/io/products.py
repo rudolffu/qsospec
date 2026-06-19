@@ -166,9 +166,9 @@ def _plot_global(
         if name in ("uv_iron", "optical_iron"):
             label = "iron" if not iron_label_used else "_nolegend_"
             iron_label_used = True
-        elif name in ("balmer_continuum", "balmer_series"):
+        elif name in ("balmer_bound_free", "balmer_high_order_series"):
             label = (
-                "Balmer continuum &\nhigh-order series"
+                "Balmer pseudo-continuum"
                 if not balmer_label_used
                 else "_nolegend_"
             )
@@ -224,8 +224,8 @@ _CONTINUUM_STYLES = {
     "power_law": ("#cc79a7", "-"),
     "uv_iron": _IRON_STYLE,
     "optical_iron": _IRON_STYLE,
-    "balmer_continuum": _BALMER_STYLE,
-    "balmer_series": _BALMER_STYLE,
+    "balmer_bound_free": _BALMER_STYLE,
+    "balmer_high_order_series": _BALMER_STYLE,
 }
 _COMBINED_BROAD_STYLE = {"color": "#1f77b4", "linestyle": "-", "linewidth": 1.6}
 _BROAD_COMPONENT_STYLE = {"color": "#17becf", "linestyle": "-", "linewidth": 0.9}
@@ -233,6 +233,7 @@ _NARROW_STYLE = {"color": "#2ca02c", "linestyle": "-", "linewidth": 1.15}
 _WING_STYLE = {"color": "#b2182b", "linestyle": "-", "linewidth": 1.0}
 _HOST_STYLE = {"color": "#8c564b", "linestyle": "-", "linewidth": 1.25}
 _MAJOR_EMISSION_LINES = (
+    (1549.06, r"C IV"),
     (1908.73, r"C III]"),
     (2798.75, r"Mg II"),
     (3728.47, r"[O II] 3728"),
@@ -335,6 +336,14 @@ def _select_zoom_complexes(
         name
         for name, fit in line_complexes.items()
         if name in _COMPLEX_WINDOWS and bool(getattr(fit, "success", False))
+        and not (
+            name == "oii_nev_neiii_hgamma"
+            and not bool(
+                getattr(fit, "metadata", {}).get(
+                    "qa_all_lines_covered", False
+                )
+            )
+        )
     ]
     priority_order = [
         name for name in _ZOOM_PRIORITY if name in available
@@ -827,9 +836,12 @@ def _plot_qa(
             if component_name in ("uv_iron", "optical_iron"):
                 label = "iron" if not iron_label_used else "_nolegend_"
                 iron_label_used = True
-            elif component_name in ("balmer_continuum", "balmer_series"):
+            elif component_name in (
+                "balmer_bound_free",
+                "balmer_high_order_series",
+            ):
                 label = (
-                    "Balmer continuum &\nhigh-order series"
+                    "Balmer pseudo-continuum"
                     if not balmer_label_used
                     else "_nolegend_"
                 )
@@ -915,9 +927,32 @@ def _plot_qa(
                 y_fraction=0.82,
             )
         )
-    overview_upper = _rounded_model_upper_limit(
-        overview_full_model[overview_valid]
+    valid_overview_wave = wave[overview_valid]
+    lya_in_coverage = bool(
+        valid_overview_wave.size
+        and float(np.min(valid_overview_wave)) <= 1215.67
+        and float(np.max(valid_overview_wave)) >= 1215.67
     )
+    lya_model_fitted = any(
+        "lya" in str(name).lower() or "lyalpha" in str(name).lower()
+        for name in result.line_complexes
+    )
+    if lya_in_coverage and not lya_model_fitted:
+        data_limits = _percentile_limits(
+            [overview_data[overview_valid]],
+            percentiles=(1.0, 99.8),
+        )
+        overview_upper = data_limits[1] if data_limits is not None else None
+        result.metadata["qa_overview_upper_policy"] = "data_only_percentile"
+        result.metadata["qa_overview_upper_percentile"] = 99.8
+    else:
+        overview_upper = _rounded_model_upper_limit(
+            overview_full_model[overview_valid]
+        )
+        result.metadata["qa_overview_upper_policy"] = "rounded_model"
+        result.metadata["qa_overview_upper_percentile"] = None
+    result.metadata["qa_lya_in_valid_coverage"] = lya_in_coverage
+    result.metadata["qa_lya_model_fitted"] = lya_model_fitted
     if overview_upper is not None:
         overview_axis.set_ylim(
             0.0,
@@ -1241,13 +1276,18 @@ def write_global_line_products(
     continuum_row.update({f"{key}_err": value for key, value in result.continuum.param_errors.items()})
     continuum_row.update(result.metadata.get("continuum_samples", {}))
     for key in (
-        "balmer_series_implied_hbeta_flux_input",
-        "balmer_series_implied_hbeta_flux_cgs",
-        "balmer_series_fwhm_kms",
-        "balmer_series_fwhm_source",
-        "balmer_series_fwhm_synced_to_hbeta",
-        "balmer_series_fwhm_warning_codes",
-        "balmer_series_fwhm_snr",
+        "balmer_pseudocontinuum_implied_hbeta_flux_input",
+        "balmer_pseudocontinuum_implied_hbeta_flux_cgs",
+        "balmer_pseudocontinuum_fwhm_kms",
+        "balmer_pseudocontinuum_velocity_kms",
+        "balmer_pseudocontinuum_edge_flux_density_input",
+        "balmer_pseudocontinuum_template_provenance",
+        "balmer_pseudocontinuum_n_min",
+        "balmer_pseudocontinuum_n_max",
+        "balmer_pseudocontinuum_fwhm_source",
+        "balmer_pseudocontinuum_fwhm_synced_to_hbeta",
+        "balmer_pseudocontinuum_fwhm_warning_codes",
+        "balmer_pseudocontinuum_fwhm_snr",
         "hbeta_sync_requested",
         "hbeta_sync_attempted",
         "hbeta_sync_converged",

@@ -60,13 +60,28 @@ def render_qa(
     destination = Path(output_dir).expanduser() if output_dir else store.path / "qa"
     destination.mkdir(parents=True, exist_ok=True)
     outputs: Dict[str, Dict[str, str]] = {}
+    object_id_counts = objects["object_id"].astype(str).value_counts()
+    inputs = store.read_table("inputs").to_pandas()
+    row_indices = (
+        inputs.set_index("object_key")["row_index"].to_dict()
+        if not inputs.empty
+        else {}
+    )
     for row in objects.sort_values("object_key").to_dict("records"):
         result = load_model(store, row["object_key"])
+        object_id = str(row["object_id"])
+        duplicate_id = int(object_id_counts.get(object_id, 0)) > 1
+        row_index = row_indices.get(row["object_key"])
+        file_object_name = (
+            f"{object_id}_row_{row_index}"
+            if duplicate_id
+            else object_id
+        )
         if config.object_name in (None, ""):
             object_config = GlobalQAPlotConfig(
                 **{
                     **asdict(config),
-                    "object_name": row["object_id"],
+                    "object_name": file_object_name,
                 }
             )
         else:
@@ -78,7 +93,8 @@ def render_qa(
             object_config,
         )
         primary = saved.get("png", next(iter(saved.values())))
-        outputs[str(row["object_id"])] = {
+        output_key = str(row["object_key"]) if duplicate_id else object_id
+        outputs[output_key] = {
             **saved,
             **{f"main_qa_{key}": value for key, value in saved.items()},
             "main_qa": primary,

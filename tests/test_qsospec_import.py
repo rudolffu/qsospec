@@ -8,6 +8,9 @@ def test_qsospec_public_imports_work():
     assert qsospec.Spectrum is Spectrum
     assert fit_line_complex is qsospec.fit_line_complex
     assert qsospec.__version__ == "0.1.0"
+    assert hasattr(qsospec, "BalmerPseudoContinuumConfig")
+    assert not hasattr(qsospec, "BalmerContinuumConfig")
+    assert not hasattr(qsospec, "BalmerSeriesConfig")
 
 
 def test_bundled_data_loads_from_qsospec_namespace():
