@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qsospec"
+version = "0.1.0"
+description = "Standalone NumPy/SciPy tools for fitting quasar spectra"
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [
+    {name = "Yuming Fu", email = "fuympku@outlook.com"},
+]
+maintainers = [
+    {name = "Yuming Fu", email = "fuympku@outlook.com"},
+]
+keywords = ["astronomy", "quasar", "spectroscopy", "spectral fitting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "astropy",
+    "pandas",
+    "pyarrow>=12",
+]
+
+[project.optional-dependencies]
+host = ["ppxf>=9"]
+dev = [
+    "build",
+    "coverage",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "twine",
+]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+]
+
+[project.urls]
+Homepage = "https://github.com/rudolffu/qsospec"
+Repository = "https://github.com/rudolffu/qsospec"
+Issues = "https://github.com/rudolffu/qsospec/issues"
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+qsospec = ["data/**/*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120

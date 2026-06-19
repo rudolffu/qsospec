@@ -1,0 +1,178 @@
+"""Standalone quasar spectral fitting with NumPy and SciPy."""
+
+from importlib.metadata import PackageNotFoundError, version
+import warnings as _warnings
+
+try:
+    __version__ = version("qsospec")
+except PackageNotFoundError:  # source checkout without installation
+    __version__ = "0.1.0"
+
+from . import lines, recipes
+from .lines import LineDefinition
+from .complex_recipes import ComponentRecipe, ComplexRecipe
+from .api import fit_line_complex, fit_local
+from .batch import BatchResult, fit_batch, fit_object_to_store
+from .config import (
+    BalmerContinuumConfig,
+    BalmerSeriesConfig,
+    GaussianComponent,
+    GlobalContinuumConfig,
+    HalphaComplexConfig,
+    HbetaComplexConfig,
+    IronTemplateConfig,
+    LineComplexConfig,
+    LocalFitConfig,
+    LorentzianComponent,
+    MgIIComplexConfig,
+    PowerLawConfig,
+    UncertaintyConfig,
+)
+from .global_fit import (
+    balmer_continuum_basis,
+    fit_global_continuum,
+    fit_global_hbeta,
+    fit_global_lines,
+    fit_halpha_complex,
+    fit_hbeta_complex,
+    fit_mgii_complex,
+)
+from .global_io import (
+    GlobalQAPlotConfig,
+    write_global_hbeta_products,
+    write_global_line_products,
+)
+from .global_result import (
+    EmissionComplexResult,
+    GlobalContinuumResult,
+    HbetaComplexResult,
+    WorkflowResult,
+)
+from .host_workflow import (
+    HostWorkflowResult,
+    fit_global_hbeta_workflow,
+    fit_global_lines_workflow,
+    fit_with_optional_host_decomp,
+)
+from .metadata import SpectrumMetadata, resolve_spectrum_metadata
+from .qa_archive import render_qa
+from .readers import (
+    SpectrumInput,
+    detect_fits_reader,
+    discover_fits_inputs,
+    read_input_manifest,
+    read_spectrum,
+    scan_parquet_spectra,
+)
+from .plotting import plot_line_result, plot_local_result, save_local_window_plots
+from .result import FitResult, LocalFitResult
+from .run_store import (
+    RunStore,
+    build_science_catalog,
+    compute_derived_quantities,
+    finalize_run,
+    load_model,
+    open_run,
+)
+from .spectrum import Spectrum
+from .templates import (
+    BalmerSeriesTemplate,
+    IronTemplate,
+    list_balmer_templates,
+    list_iron_templates,
+    load_balmer_template,
+    load_iron_template,
+)
+from .warnings import FitWarning
+
+__all__ = [
+    "BalmerContinuumConfig",
+    "BalmerSeriesConfig",
+    "BalmerSeriesTemplate",
+    "BatchResult",
+    "ComponentRecipe",
+    "ComplexRecipe",
+    "FitResult",
+    "EmissionComplexResult",
+    "GaussianComponent",
+    "GlobalContinuumConfig",
+    "GlobalContinuumResult",
+    "GlobalQAPlotConfig",
+    "HalphaComplexConfig",
+    "HbetaComplexConfig",
+    "HbetaComplexResult",
+    "IronTemplate",
+    "IronTemplateConfig",
+    "LineComplexConfig",
+    "LineDefinition",
+    "LocalFitConfig",
+    "LocalFitResult",
+    "LorentzianComponent",
+    "MgIIComplexConfig",
+    "FitWarning",
+    "HostWorkflowResult",
+    "WorkflowResult",
+    "NeoFitWarning",
+    "NeoFitHostWorkflowResult",
+    "NeoFitWorkflowResult",
+    "PowerLawConfig",
+    "RunStore",
+    "Spectrum",
+    "SpectrumInput",
+    "SpectrumMetadata",
+    "UncertaintyConfig",
+    "balmer_continuum_basis",
+    "build_science_catalog",
+    "compute_derived_quantities",
+    "detect_fits_reader",
+    "discover_fits_inputs",
+    "finalize_run",
+    "fit_batch",
+    "fit_global_continuum",
+    "fit_global_hbeta",
+    "fit_global_hbeta_workflow",
+    "fit_global_lines",
+    "fit_global_lines_workflow",
+    "fit_halpha_complex",
+    "fit_hbeta_complex",
+    "fit_mgii_complex",
+    "fit_line_complex",
+    "fit_local",
+    "fit_object_to_store",
+    "fit_with_optional_host_decomp",
+    "list_balmer_templates",
+    "list_iron_templates",
+    "lines",
+    "load_balmer_template",
+    "load_iron_template",
+    "load_model",
+    "open_run",
+    "plot_line_result",
+    "plot_local_result",
+    "recipes",
+    "read_input_manifest",
+    "read_spectrum",
+    "render_qa",
+    "resolve_spectrum_metadata",
+    "save_local_window_plots",
+    "scan_parquet_spectra",
+    "write_global_hbeta_products",
+    "write_global_line_products",
+]
+
+
+def __getattr__(name: str):
+    aliases = {
+        "NeoFitWarning": (FitWarning, "FitWarning"),
+        "NeoFitHostWorkflowResult": (HostWorkflowResult, "HostWorkflowResult"),
+        "NeoFitWorkflowResult": (WorkflowResult, "WorkflowResult"),
+    }
+    if name in aliases:
+        value, replacement = aliases[name]
+        _warnings.warn(
+            f"{name} is deprecated; use {replacement}.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return value
+    raise AttributeError(name)
