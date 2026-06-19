@@ -483,9 +483,8 @@ def _solve_separable_once(context, wave, flux, err, start, max_nfev, jacobian_me
     nonlinear_initial = np.array(
         [start[context.index[name]] for name in context.nonlinear_names], dtype=float
     )
-    evaluator = lambda nonlinear, need_derivatives: context.separable_design(
-        nonlinear, wave, need_derivatives
-    )
+    def evaluator(nonlinear, need_derivatives):
+        return context.separable_design(nonlinear, wave, need_derivatives)
     result = solve_variable_projection(
         flux,
         err,
@@ -1664,16 +1663,17 @@ def _fit_separable_emission_complex(
         np.interp(reference_wave, continuum_result.wave_rest, continuum_result.model)
     )
     grid = np.linspace(metric_grid[0], metric_grid[1], 7201)
-    metric_function = lambda theta: _broad_complex_metrics(
-        theta,
-        context,
-        metric_prefix=metric_prefix,
-        reference_wave=reference_wave,
-        grid=grid,
-        continuum_at_line=continuum_at_line,
-        z=spectrum.z,
-        flux_scale_to_cgs=spectrum.flux_density_scale_to_cgs,
-    )
+    def metric_function(theta):
+        return _broad_complex_metrics(
+            theta,
+            context,
+            metric_prefix=metric_prefix,
+            reference_wave=reference_wave,
+            grid=grid,
+            continuum_at_line=continuum_at_line,
+            z=spectrum.z,
+            flux_scale_to_cgs=spectrum.flux_density_scale_to_cgs,
+        )
     metrics = metric_function(result.x)
     metric_errors = _metric_errors(result.x, covariance, metric_function)
     metadata = spectrum.metadata.to_dict()
@@ -1844,9 +1844,10 @@ def _fit_hbeta_candidate(
             )
         )
     continuum_at_hbeta = float(np.interp(HBETA_WAVE, continuum_result.wave_rest, continuum_result.model))
-    metric_function = lambda theta: _hbeta_metrics(
-        theta, context, continuum_at_hbeta, spectrum.z, spectrum.flux_density_scale_to_cgs
-    )
+    def metric_function(theta):
+        return _hbeta_metrics(
+            theta, context, continuum_at_hbeta, spectrum.z, spectrum.flux_density_scale_to_cgs
+        )
     metrics = metric_function(result.x)
     metric_errors = _metric_errors(result.x, covariance, metric_function)
     metadata = spectrum.metadata.to_dict()

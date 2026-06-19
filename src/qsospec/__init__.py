@@ -1,11 +1,11 @@
 """Standalone quasar spectral fitting with NumPy and SciPy."""
 
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError, version as _version
 import warnings as _warnings
 
 try:
-    __version__ = version("qsospec")
-except PackageNotFoundError:  # source checkout without installation
+    __version__ = _version("qsospec")
+except _PackageNotFoundError:  # source checkout without installation
     __version__ = "0.1.0"
 
 from . import lines, recipes
