@@ -1,4 +1,4 @@
-"""Model assembly and weighted residuals for neofit."""
+"""Model assembly and weighted residuals for qsospec."""
 
 from __future__ import annotations
 

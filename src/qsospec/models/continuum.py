@@ -1,4 +1,4 @@
-"""Local continuum primitives for neofit."""
+"""Local continuum primitives for qsospec."""
 
 from __future__ import annotations
 

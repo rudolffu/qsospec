@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.models.lorentzian import lorentzian, lorentzian_partials
 
 
@@ -27,11 +27,11 @@ def test_local_hbeta_lorentzian_recovers_profile_and_measurements():
     wave = np.linspace(4700.0, 5100.0, 600)
     flux = 1.2 + lorentzian(wave, 4.0, 4863.0, 15.0)
     err = np.full_like(wave, 0.03)
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, wave_frame="rest")
 
-    result = neofit.fit_line_complex(
+    result = qsospec.fit_line_complex(
         spectrum,
-        neofit.recipes.local_hbeta(profile="lorentzian"),
+        qsospec.recipes.local_hbeta(profile="lorentzian"),
     )
     row = result.to_table().query("name == 'Hb_broad'").iloc[0]
 

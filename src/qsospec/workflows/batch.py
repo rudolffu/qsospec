@@ -1,4 +1,4 @@
-"""Single-object and resumable process-parallel neofit execution."""
+"""Single-object and resumable process-parallel qsospec execution."""
 
 from __future__ import annotations
 

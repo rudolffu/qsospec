@@ -1,4 +1,4 @@
-"""Iron-template objects and grid preparation for neofit."""
+"""Iron-template objects and grid preparation for qsospec."""
 
 from __future__ import annotations
 

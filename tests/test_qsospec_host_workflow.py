@@ -1,14 +1,14 @@
-"""Tests for optional host subtraction orchestration before neofit."""
+"""Tests for optional host subtraction orchestration before qsospec."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-import qsospec as neofit
+import qsospec
 
 
 def _local_config():
-    return neofit.LocalFitConfig(windows=[neofit.recipes.local_hbeta()])
+    return qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()])
 
 
 def test_fit_with_optional_host_decomp_without_ppxf_path(tmp_path):
@@ -29,7 +29,7 @@ def test_fit_with_optional_host_decomp_without_ppxf_path(tmp_path):
         }
     ).to_parquet(path)
 
-    result = neofit.fit_with_optional_host_decomp(
+    result = qsospec.fit_with_optional_host_decomp(
         str(path),
         _local_config(),
         row_index=0,
@@ -61,17 +61,17 @@ def test_global_fit_kind_runs_without_host(tmp_path):
         }
     ).to_parquet(path)
 
-    result = neofit.fit_with_optional_host_decomp(
+    result = qsospec.fit_with_optional_host_decomp(
         str(path),
         fit_kind="global",
         row_index=0,
-        global_config=neofit.GlobalContinuumConfig(
+        global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-            balmer_series=neofit.BalmerSeriesConfig(enabled=False),
+            balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+            balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
         ),
-        hbeta_config=neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        hbeta_config=qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
 
     assert result.continuum_success

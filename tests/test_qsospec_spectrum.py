@@ -1,4 +1,4 @@
-"""Tests for neofit spectrum handling."""
+"""Tests for qsospec spectrum handling."""
 
 import numpy as np
 import pytest

@@ -1,4 +1,4 @@
-"""Output products and diagnostic plots for the global neofit workflow."""
+"""Output products and diagnostic plots for the global qsospec workflow."""
 
 from __future__ import annotations
 
@@ -1220,8 +1220,8 @@ def write_global_line_products(
         plot_config.write_other_diagnostics
     )
 
-    summary_path = out / "neofit_global_lines_summary.json"
-    compatibility_summary_path = out / "neofit_global_hbeta_summary.json"
+    summary_path = out / "qsospec_global_lines_summary.json"
+    compatibility_summary_path = out / "qsospec_global_hbeta_summary.json"
     summary_payload = json.dumps(
         result.summary(), indent=2, sort_keys=True, default=_json_default
     )
@@ -1291,10 +1291,10 @@ def write_global_line_products(
         grid[f"fit_used_{complex_name}"] = fit.fit_mask.astype(int)
         for component_name, component in fit.component_models.items():
             grid[f"line_{complex_name}_{component_name}"] = component
-    grid_path = out / "neofit_global_lines_full_grid.csv"
+    grid_path = out / "qsospec_global_lines_full_grid.csv"
     pd.DataFrame(grid).to_csv(grid_path, index=False)
     files["full_grid_csv"] = str(grid_path)
-    compatibility_grid_path = out / "neofit_global_hbeta_full_grid.csv"
+    compatibility_grid_path = out / "qsospec_global_hbeta_full_grid.csv"
     pd.DataFrame(grid).to_csv(compatibility_grid_path, index=False)
     files["compatibility_full_grid_csv"] = str(compatibility_grid_path)
 
