@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError, replace
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.fitting.complexes import (
     GenericComplexContext,
     resolve_recipe_coverage,
@@ -12,10 +12,10 @@ from qsospec.templates import evaluate_balmer_series, load_balmer_template
 
 
 def _continuum_config(balmer_series):
-    return neofit.GlobalContinuumConfig(
+    return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
+        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
         balmer_series=balmer_series,
         clip_passes=0,
     )
@@ -28,7 +28,7 @@ def _spectrum(lo=3300.0, hi=4500.0):
         flux += 12.0 * evaluate_balmer_series(
             load_balmer_template(), wave, 3200.0
         )
-    return neofit.Spectrum.from_arrays(
+    return qsospec.Spectrum.from_arrays(
         wave,
         flux,
         err=np.full_like(wave, 0.05),
@@ -38,18 +38,18 @@ def _spectrum(lo=3300.0, hi=4500.0):
 
 
 def test_line_registry_resolves_vacuum_and_historical_aliases():
-    assert neofit.lines.resolve("OIII5007") == "oiii_5008"
-    assert neofit.lines.resolve("Hβ") == "hbeta"
-    assert neofit.lines.get("oiii_5008").vacuum_wavelength == pytest.approx(
+    assert qsospec.lines.resolve("OIII5007") == "oiii_5008"
+    assert qsospec.lines.resolve("Hβ") == "hbeta"
+    assert qsospec.lines.get("oiii_5008").vacuum_wavelength == pytest.approx(
         5008.24
     )
-    assert neofit.lines.get("pabeta").reference is not None
+    assert qsospec.lines.get("pabeta").reference is not None
     with pytest.raises(ValueError, match="unknown_line_id"):
-        neofit.lines.get("definitely-not-a-line")
+        qsospec.lines.get("definitely-not-a-line")
 
 
 def test_recipe_registry_is_immutable_and_overrides_by_copy():
-    recipe = neofit.recipes.get("civ")
+    recipe = qsospec.recipes.get("civ")
     changed = recipe.with_component(
         "CIV_blue", enabled=True, velocity_bounds_kms=(-8000.0, 0.0)
     )
@@ -60,13 +60,13 @@ def test_recipe_registry_is_immutable_and_overrides_by_copy():
     with pytest.raises(FrozenInstanceError):
         recipe.label = "changed"
     with pytest.raises(ValueError, match="unknown_complex_recipe"):
-        neofit.recipes.get("unknown")
+        qsospec.recipes.get("unknown")
 
 
 def test_continuum_only_has_no_hbeta_or_aggregate_summary_verdict():
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _spectrum(),
-        _continuum_config(neofit.BalmerSeriesConfig(amplitude=12.0)),
+        _continuum_config(qsospec.BalmerSeriesConfig(amplitude=12.0)),
         complexes=[],
     )
     assert result.continuum_success
@@ -81,9 +81,9 @@ def test_continuum_only_has_no_hbeta_or_aggregate_summary_verdict():
 
 
 def test_hbeta_absent_auto_keeps_free_width_and_warns():
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _spectrum(),
-        _continuum_config(neofit.BalmerSeriesConfig(amplitude=12.0)),
+        _continuum_config(qsospec.BalmerSeriesConfig(amplitude=12.0)),
         complexes=None,
     )
     assert result.hbeta is None
@@ -94,19 +94,19 @@ def test_hbeta_absent_auto_keeps_free_width_and_warns():
 
 
 def test_never_and_fixed_balmer_width_policies_do_not_synchronize():
-    never = neofit.fit_global_lines(
+    never = qsospec.fit_global_lines(
         _spectrum(),
         _continuum_config(
-            neofit.BalmerSeriesConfig(
+            qsospec.BalmerSeriesConfig(
                 amplitude=12.0, sync_with_hbeta="never"
             )
         ),
         complexes=[],
     )
-    fixed = neofit.fit_global_lines(
+    fixed = qsospec.fit_global_lines(
         _spectrum(),
         _continuum_config(
-            neofit.BalmerSeriesConfig(
+            qsospec.BalmerSeriesConfig(
                 amplitude=12.0, fit_fwhm=False, fwhm_kms=4100.0
             )
         ),
@@ -120,10 +120,10 @@ def test_never_and_fixed_balmer_width_policies_do_not_synchronize():
 
 
 def test_require_without_hbeta_warns_and_continues():
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _spectrum(),
         _continuum_config(
-            neofit.BalmerSeriesConfig(
+            qsospec.BalmerSeriesConfig(
                 amplitude=12.0, sync_with_hbeta="require"
             )
         ),
@@ -134,7 +134,7 @@ def test_require_without_hbeta_warns_and_continues():
 
 def test_component_adaptive_coverage_and_nir_blend_metadata():
     spectrum = _spectrum(10700.0, 11060.0)
-    recipe = neofit.recipes.get("paschen_nir")
+    recipe = qsospec.recipes.get("paschen_nir")
     coverage = resolve_recipe_coverage(spectrum, recipe)
     assert coverage.status == "partially_covered"
     assert set(coverage.active_component_ids) == {
@@ -145,7 +145,7 @@ def test_component_adaptive_coverage_and_nir_blend_metadata():
 
 
 def test_generic_fixed_ratio_compilation():
-    recipe = neofit.recipes.get("halpha_nii_sii")
+    recipe = qsospec.recipes.get("halpha_nii_sii")
     context = GenericComplexContext(
         recipe,
         tuple(component.id for component in recipe.components if component.enabled),
@@ -162,7 +162,7 @@ def test_generic_fixed_ratio_compilation():
 
 @pytest.mark.parametrize("profile", ["gaussian", "lorentzian"])
 def test_generic_profile_derivatives_match_centered_differences(profile):
-    recipe = neofit.recipes.get("civ")
+    recipe = qsospec.recipes.get("civ")
     recipe = replace(
         recipe,
         components=(replace(recipe.components[0], profile=profile),),

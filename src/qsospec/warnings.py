@@ -1,15 +1,14 @@
-"""Structured warnings for neofit."""
+"""Structured warnings for qsospec."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict
-import warnings as _warnings
 
 
 @dataclass(frozen=True)
 class FitWarning:
-    """Stable warning/status message for science-facing neofit results."""
+    """Stable warning/status message for science-facing qsospec results."""
 
     code: str
     message: str
@@ -25,14 +24,3 @@ class FitWarning:
             "severity": self.severity,
             "context": dict(self.context),
         }
-
-
-def __getattr__(name: str):
-    if name == "NeoFitWarning":
-        _warnings.warn(
-            "NeoFitWarning is deprecated; use FitWarning.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return FitWarning
-    raise AttributeError(name)

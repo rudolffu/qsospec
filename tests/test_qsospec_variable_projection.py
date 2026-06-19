@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.fitting import global_fit
 from qsospec.fitting.global_fit import (
     C_KMS,
@@ -110,13 +110,13 @@ def test_gaussian_velocity_and_width_derivatives_match_centered_difference():
 
 def test_continuum_design_derivatives_match_centered_differences():
     wave = np.linspace(1900.0, 5600.0, 1600)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         2.0 * (wave / 3000.0) ** -1.2,
         err=np.full_like(wave, 0.05),
         wave_frame="rest",
     )
-    context = _ContinuumContext(spectrum, neofit.GlobalContinuumConfig())
+    context = _ContinuumContext(spectrum, qsospec.GlobalContinuumConfig())
     _, _, nonlinear, _ = context.separable_initial_and_bounds()
     design, derivatives = context.separable_design(nonlinear, wave, True)
     assert design.shape[1] == len(context.linear_names)
@@ -134,7 +134,7 @@ def test_continuum_design_derivatives_match_centered_differences():
 
 def test_hbeta_design_derivatives_match_centered_differences():
     wave = np.linspace(4640.0, 5100.0, 900)
-    context = _HbetaContext(neofit.HbetaComplexConfig(), include_wing=True, flux_scale=100.0)
+    context = _HbetaContext(qsospec.HbetaComplexConfig(), include_wing=True, flux_scale=100.0)
     _, _, nonlinear, _ = context.separable_initial_and_bounds()
     design, derivatives = context.separable_design(nonlinear, wave, True)
     assert design.shape[1] == len(context.linear_names)
@@ -190,24 +190,24 @@ def test_continuum_variable_projection_matches_legacy_joint():
     model += 55.0 * evaluate_iron_basis(load_iron_template("park22"), wave, 3200.0)
     model += 0.35 * balmer_continuum_basis(wave)
     model += 8.0 * evaluate_balmer_series(load_balmer_template(), wave, 2800.0)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         model,
         err=np.full_like(wave, 0.03),
         wave_frame="rest",
     )
-    base = neofit.GlobalContinuumConfig(
-        power_law=neofit.PowerLawConfig(norm=2.4, slope=-1.1),
-        uv_iron=neofit.IronTemplateConfig.vw01(fwhm_kms=2500.0, amp=60.0),
-        optical_iron=neofit.IronTemplateConfig.park22(fwhm_kms=3400.0, amp=45.0),
-        balmer_continuum=neofit.BalmerContinuumConfig(amplitude=0.3),
-        balmer_series=neofit.BalmerSeriesConfig(amplitude=7.0, fwhm_kms=3000.0),
+    base = qsospec.GlobalContinuumConfig(
+        power_law=qsospec.PowerLawConfig(norm=2.4, slope=-1.1),
+        uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_kms=2500.0, amp=60.0),
+        optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3400.0, amp=45.0),
+        balmer_continuum=qsospec.BalmerContinuumConfig(amplitude=0.3),
+        balmer_series=qsospec.BalmerSeriesConfig(amplitude=7.0, fwhm_kms=3000.0),
         clip_passes=0,
     )
-    optimized = neofit.fit_global_continuum(
+    optimized = qsospec.fit_global_continuum(
         spectrum, replace(base, optimizer_method="variable_projection")
     )
-    legacy = neofit.fit_global_continuum(
+    legacy = qsospec.fit_global_continuum(
         spectrum, replace(base, optimizer_method="legacy_joint")
     )
 
@@ -228,20 +228,20 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
     flux = model.copy()
     flux[300] += 2.0
     flux[900] -= 2.0
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, flux, err=np.full_like(wave, 0.04), wave_frame="rest"
     )
-    base = neofit.GlobalContinuumConfig(
+    base = qsospec.GlobalContinuumConfig(
         uv_iron=None,
-        optical_iron=neofit.IronTemplateConfig.park22(fwhm_kms=3000.0, amp=40.0),
-        balmer_series=neofit.BalmerSeriesConfig(
+        optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3000.0, amp=40.0),
+        balmer_series=qsospec.BalmerSeriesConfig(
             amplitude=10.0, fixed_fwhm_kms=2800.0
         ),
     )
-    optimized = neofit.fit_global_continuum(
+    optimized = qsospec.fit_global_continuum(
         spectrum, replace(base, optimizer_method="variable_projection")
     )
-    legacy = neofit.fit_global_continuum(
+    legacy = qsospec.fit_global_continuum(
         spectrum, replace(base, optimizer_method="legacy_joint")
     )
 
@@ -266,22 +266,22 @@ def test_hbeta_variable_projection_matches_legacy_wing_selection():
     line += _gaussian_area_profile(
         wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0
     )
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
     )
     continuum_result = _known_continuum(spectrum, continuum)
-    optimized = neofit.fit_hbeta_complex(
+    optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        neofit.HbetaComplexConfig(optimizer_method="variable_projection"),
+        qsospec.HbetaComplexConfig(optimizer_method="variable_projection"),
     )
-    legacy = neofit.fit_hbeta_complex(
+    legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        neofit.HbetaComplexConfig(optimizer_method="legacy_joint"),
+        qsospec.HbetaComplexConfig(optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "wing"
@@ -302,24 +302,24 @@ def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
     line += _gaussian_area_profile(wave, 30.0, 5008.24, 350.0)
     line += _gaussian_area_profile(wave, 30.0 / 2.98, 4960.30, 350.0)
     line += _gaussian_area_profile(wave, 12.0, 4687.02, 1800.0)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
     )
     continuum_result = _known_continuum(spectrum, continuum)
-    optimized = neofit.fit_hbeta_complex(
+    optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        neofit.HbetaComplexConfig(
+        qsospec.HbetaComplexConfig(
             heii_enabled=True, optimizer_method="variable_projection"
         ),
     )
-    legacy = neofit.fit_hbeta_complex(
+    legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        neofit.HbetaComplexConfig(
+        qsospec.HbetaComplexConfig(
             heii_enabled=True, optimizer_method="legacy_joint"
         ),
     )
@@ -336,7 +336,7 @@ def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
 def test_auto_optimizer_falls_back_and_required_variable_projection_raises(monkeypatch):
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest"
     )
 
@@ -344,29 +344,29 @@ def test_auto_optimizer_falls_back_and_required_variable_projection_raises(monke
         raise VariableProjectionError("forced failure")
 
     monkeypatch.setattr(global_fit, "_solve_separable_once", fail)
-    automatic = neofit.fit_global_continuum(
-        spectrum, neofit.GlobalContinuumConfig(optimizer_method="auto")
+    automatic = qsospec.fit_global_continuum(
+        spectrum, qsospec.GlobalContinuumConfig(optimizer_method="auto")
     )
     assert automatic.metadata["optimizer_used"] == "legacy_joint"
     assert automatic.metadata["optimizer_fallback"]
     assert "optimizer_fallback_legacy" in automatic.warning_codes()
 
     with pytest.raises(VariableProjectionError, match="forced failure"):
-        neofit.fit_global_continuum(
+        qsospec.fit_global_continuum(
             spectrum,
-            neofit.GlobalContinuumConfig(optimizer_method="variable_projection"),
+            qsospec.GlobalContinuumConfig(optimizer_method="variable_projection"),
         )
 
 
 def test_reduced_two_point_jacobian_mode_is_available():
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest"
     )
-    result = neofit.fit_global_continuum(
+    result = qsospec.fit_global_continuum(
         spectrum,
-        neofit.GlobalContinuumConfig(
+        qsospec.GlobalContinuumConfig(
             optimizer_method="variable_projection",
             jacobian_method="2-point",
         ),

@@ -1,4 +1,4 @@
-"""Parquet-backed immutable run bundles for neofit results."""
+"""Parquet-backed immutable run bundles for qsospec results."""
 
 from __future__ import annotations
 

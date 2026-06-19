@@ -1,4 +1,4 @@
-"""Configuration dataclasses for neofit."""
+"""Configuration dataclasses for qsospec."""
 
 from __future__ import annotations
 
@@ -268,7 +268,7 @@ class BalmerSeriesConfig:
 
 @dataclass(frozen=True)
 class GlobalContinuumConfig:
-    """Configuration for the first neofit global AGN continuum."""
+    """Configuration for the first qsospec global AGN continuum."""
 
     power_law: PowerLawConfig = field(default_factory=PowerLawConfig)
     uv_iron: Optional[IronTemplateConfig] = field(

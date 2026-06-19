@@ -1,4 +1,4 @@
-"""Spectrum container for neofit."""
+"""Spectrum container for qsospec."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .metadata import SpectrumMetadata, resolve_spectrum_metadata
 
 @dataclass(frozen=True)
 class Spectrum:
-    """Array-only spectrum input for neofit."""
+    """Array-only spectrum input for qsospec."""
 
     wave_obs: np.ndarray
     flux: np.ndarray

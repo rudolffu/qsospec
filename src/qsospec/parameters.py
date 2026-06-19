@@ -1,4 +1,4 @@
-"""Packed parameter-vector helpers for neofit."""
+"""Packed parameter-vector helpers for qsospec."""
 
 from __future__ import annotations
 

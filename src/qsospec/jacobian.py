@@ -1,4 +1,4 @@
-"""Analytic Jacobians for neofit residual functions."""
+"""Analytic Jacobians for qsospec residual functions."""
 
 from __future__ import annotations
 

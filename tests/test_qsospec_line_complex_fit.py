@@ -1,8 +1,8 @@
-"""Synthetic line-complex fitting tests for neofit."""
+"""Synthetic line-complex fitting tests for qsospec."""
 
 import numpy as np
 
-import qsospec as neofit
+import qsospec
 
 
 def _synthetic_spectrum(local_continuum="linear", z=0.12):
@@ -13,15 +13,15 @@ def _synthetic_spectrum(local_continuum="linear", z=0.12):
     line = 8.0 * np.exp(-0.5 * ((wave_rest - 4862.2) / 24.0) ** 2)
     err = np.full_like(wave_rest, 0.08)
     flux = continuum + line + rng.normal(0.0, err)
-    return neofit.Spectrum.from_arrays(wave_rest * (1.0 + z), flux, err=err, z=z), wave_rest
+    return qsospec.Spectrum.from_arrays(wave_rest * (1.0 + z), flux, err=err, z=z), wave_rest
 
 
 def _config(local_continuum="linear", jacobian="analytic_dense"):
-    return neofit.LineComplexConfig(
+    return qsospec.LineComplexConfig(
         center=4861.33,
         window=(4700.0, 5100.0),
         components=[
-            neofit.GaussianComponent(
+            qsospec.GaussianComponent(
                 name="Hb_broad",
                 center=4858.0,
                 amp=6.0,
@@ -40,7 +40,7 @@ def _config(local_continuum="linear", jacobian="analytic_dense"):
 
 def test_synthetic_gaussian_recovery_with_linear_continuum():
     spec, _ = _synthetic_spectrum(local_continuum="linear")
-    result = neofit.fit_line_complex(spec, _config(local_continuum="linear"))
+    result = qsospec.fit_line_complex(spec, _config(local_continuum="linear"))
 
     assert result.success
     assert result.dof > 0
@@ -54,8 +54,8 @@ def test_synthetic_gaussian_recovery_with_linear_continuum():
 
 def test_constant_and_no_continuum_modes_run():
     spec, _ = _synthetic_spectrum(local_continuum="constant")
-    constant = neofit.fit_line_complex(spec, _config(local_continuum="constant"))
-    no_cont = neofit.fit_line_complex(spec, _config(local_continuum=None))
+    constant = qsospec.fit_line_complex(spec, _config(local_continuum="constant"))
+    no_cont = qsospec.fit_line_complex(spec, _config(local_continuum=None))
 
     assert constant.success
     assert no_cont.success
@@ -65,7 +65,7 @@ def test_constant_and_no_continuum_modes_run():
 
 def test_sparse_jacobian_mode_runs():
     spec, _ = _synthetic_spectrum(local_continuum="linear")
-    result = neofit.fit_line_complex(spec, _config(local_continuum="linear", jacobian="analytic_sparse"))
+    result = qsospec.fit_line_complex(spec, _config(local_continuum="linear", jacobian="analytic_sparse"))
 
     assert result.success
     assert abs(result.param_values["Hb_broad.center"] - 4862.2) < 0.5
@@ -79,9 +79,9 @@ def test_invalid_pixels_are_ignored():
     err[20] = -1.0
     mask = np.ones_like(flux, dtype=bool)
     mask[30] = False
-    spec = neofit.Spectrum.from_arrays(wave_rest * (1.0 + spec.z), flux, err=err, z=spec.z, mask=mask)
+    spec = qsospec.Spectrum.from_arrays(wave_rest * (1.0 + spec.z), flux, err=err, z=spec.z, mask=mask)
 
-    result = neofit.fit_line_complex(spec, _config(local_continuum="linear"))
+    result = qsospec.fit_line_complex(spec, _config(local_continuum="linear"))
 
     assert result.success
     assert result.wave_rest_fit.size == wave_rest.size - 3
@@ -92,14 +92,14 @@ def test_fit_windows_and_mask_windows_select_fitted_pixels():
     line = 5.0 * np.exp(-0.5 * ((wave - 4861.33) / 18.0) ** 2)
     flux = 1.0 + line
     err = np.full_like(wave, 0.05)
-    spec = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
-    config = neofit.LineComplexConfig(
+    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    config = qsospec.LineComplexConfig(
         center=4861.33,
         window=(4800.0, 4920.0),
         fit_windows=[(4800.0, 4850.0), (4860.0, 4920.0)],
         mask_windows=[(4880.0, 4890.0)],
         components=[
-            neofit.GaussianComponent(
+            qsospec.GaussianComponent(
                 name="Hb_broad",
                 center=4861.33,
                 amp=4.0,
@@ -110,7 +110,7 @@ def test_fit_windows_and_mask_windows_select_fitted_pixels():
         local_continuum="constant",
     )
 
-    result = neofit.fit_line_complex(spec, config)
+    result = qsospec.fit_line_complex(spec, config)
 
     assert result.success
     assert np.all((result.wave_rest_fit <= 4850.0) | (result.wave_rest_fit >= 4860.0))

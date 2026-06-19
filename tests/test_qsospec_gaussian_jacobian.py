@@ -1,4 +1,4 @@
-"""Finite-difference checks for neofit analytic Gaussian derivatives."""
+"""Finite-difference checks for qsospec analytic Gaussian derivatives."""
 
 import numpy as np
 

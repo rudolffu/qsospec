@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.fitting.global_fit import (
     C_KMS,
     FWHM_TO_SIGMA,
@@ -42,19 +42,19 @@ def test_global_continuum_recovers_full_synthetic_model():
     bc = 0.35 * balmer_continuum_basis(wave)
     series = 8.0 * evaluate_balmer_series(load_balmer_template(), wave, 2800.0)
     err = np.full_like(wave, 0.03)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, power + uv + optical + bc + series, err=err, wave_frame="rest", survey="desi"
     )
-    config = neofit.GlobalContinuumConfig(
-        power_law=neofit.PowerLawConfig(norm=2.5, slope=-1.25),
-        uv_iron=neofit.IronTemplateConfig.vw01(fwhm_kms=2600.0, amp=70.0),
-        optical_iron=neofit.IronTemplateConfig.park22(fwhm_kms=3200.0, amp=55.0),
-        balmer_continuum=neofit.BalmerContinuumConfig(amplitude=0.35),
-        balmer_series=neofit.BalmerSeriesConfig(amplitude=8.0, fwhm_kms=2800.0),
+    config = qsospec.GlobalContinuumConfig(
+        power_law=qsospec.PowerLawConfig(norm=2.5, slope=-1.25),
+        uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_kms=2600.0, amp=70.0),
+        optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3200.0, amp=55.0),
+        balmer_continuum=qsospec.BalmerContinuumConfig(amplitude=0.35),
+        balmer_series=qsospec.BalmerSeriesConfig(amplitude=8.0, fwhm_kms=2800.0),
         clip_passes=0,
     )
 
-    result = neofit.fit_global_continuum(spectrum, config)
+    result = qsospec.fit_global_continuum(spectrum, config)
 
     assert result.success
     assert result.param_values["power_law.norm"] == pytest.approx(2.5, rel=0.01)
@@ -72,9 +72,9 @@ def test_global_continuum_recovers_full_synthetic_model():
 def test_global_continuum_disables_uncovered_components():
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest")
 
-    result = neofit.fit_global_continuum(spectrum)
+    result = qsospec.fit_global_continuum(spectrum)
 
     assert result.success
     assert "uv_iron" not in result.component_models
@@ -91,14 +91,14 @@ def test_hbeta_core_ties_oiii_ratio_and_narrow_kinematics():
     oiii5007 = _gaussian_area_profile(wave, 45.0, 5008.24, 350.0)
     oiii4959 = _gaussian_area_profile(wave, 45.0 / 2.98, 4960.30, 350.0)
     err = np.full_like(wave, 0.025)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum + broad + narrow + oiii5007 + oiii4959, err=err, wave_frame="rest", survey="desi"
     )
 
-    result = neofit.fit_hbeta_complex(
+    result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
 
     assert result.success
@@ -127,9 +127,9 @@ def test_hbeta_wing_selection_accepts_strong_broad_wing():
         wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0
     )
     err = np.full_like(wave, 0.02)
-    spectrum = neofit.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
 
-    result = neofit.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum))
+    result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum))
 
     assert result.success
     assert result.selected_model == "wing"
@@ -144,12 +144,12 @@ def test_hbeta_wing_selection_rejects_absent_wing_and_can_fit_heii():
     line += _gaussian_area_profile(wave, 30.0 / 2.98, 4960.30, 350.0)
     line += _gaussian_area_profile(wave, 12.0, 4687.02, 1800.0)
     err = np.full_like(wave, 0.02)
-    spectrum = neofit.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
 
-    result = neofit.fit_hbeta_complex(
+    result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        neofit.HbetaComplexConfig(heii_enabled=True),
+        qsospec.HbetaComplexConfig(heii_enabled=True),
     )
 
     assert result.success
@@ -163,24 +163,24 @@ def test_global_workflow_refines_balmer_width_and_writes_products(tmp_path):
     continuum = 2.0 * (wave / 3000.0) ** -1.2
     line = _gaussian_area_profile(wave, 100.0, 4862.68, 2800.0)
     err = np.full_like(wave, 0.04)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum + line, err=err, wave_frame="rest", survey="desi"
     )
-    result = neofit.fit_global_hbeta(
+    result = qsospec.fit_global_hbeta(
         spectrum,
-        neofit.GlobalContinuumConfig(
+        qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-            balmer_series=neofit.BalmerSeriesConfig(enabled=False),
+            balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+            balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
         ),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
 
-    files = neofit.write_global_hbeta_products(
+    files = qsospec.write_global_hbeta_products(
         result,
         str(tmp_path),
-        neofit.GlobalQAPlotConfig(write_other_diagnostics=True),
+        qsospec.GlobalQAPlotConfig(write_other_diagnostics=True),
     )
 
     assert result.legacy_hbeta_success
@@ -201,18 +201,18 @@ def test_balmer_series_width_converges_to_summed_broad_hbeta_fwhm():
     series = 25.0 * evaluate_balmer_series(load_balmer_template(), wave, 2800.0)
     line = _gaussian_area_profile(wave, 100.0, 4862.68, 2800.0)
     err = np.full_like(wave, 0.04)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum + series + line, err=err, wave_frame="rest", survey="desi"
     )
-    result = neofit.fit_global_hbeta(
+    result = qsospec.fit_global_hbeta(
         spectrum,
-        neofit.GlobalContinuumConfig(
+        qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-            balmer_series=neofit.BalmerSeriesConfig(amplitude=25.0, fwhm_kms=2600.0),
+            balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+            balmer_series=qsospec.BalmerSeriesConfig(amplitude=25.0, fwhm_kms=2600.0),
         ),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
 
     assert result.legacy_hbeta_success
@@ -228,19 +228,19 @@ def test_global_workflow_monte_carlo_reports_percentiles():
     continuum = 2.0 * (wave / 3000.0) ** -1.2
     line = _gaussian_area_profile(wave, 80.0, 4862.68, 2400.0)
     err = np.full_like(wave, 0.05)
-    spectrum = neofit.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
-    config = neofit.GlobalContinuumConfig(
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    config = qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-        balmer_series=neofit.BalmerSeriesConfig(enabled=False),
+        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+        balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
     )
 
-    result = neofit.fit_global_hbeta(
+    result = qsospec.fit_global_hbeta(
         spectrum,
         config,
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
-        neofit.UncertaintyConfig(monte_carlo_trials=2, random_seed=8),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.UncertaintyConfig(monte_carlo_trials=2, random_seed=8),
     )
 
     assert result.monte_carlo["n_requested"] == 2

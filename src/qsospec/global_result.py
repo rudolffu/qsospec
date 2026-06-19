@@ -1,10 +1,9 @@
-"""Result containers for the neofit global continuum and H-beta workflow."""
+"""Result containers for the qsospec global continuum and H-beta workflow."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-import warnings as _warnings
 
 import numpy as np
 
@@ -183,14 +182,3 @@ class WorkflowResult:
         if self.metadata.get("compatibility_hbeta_mode", False):
             payload["legacy_hbeta_success"] = self.legacy_hbeta_success
         return payload
-
-
-def __getattr__(name: str):
-    if name == "NeoFitWorkflowResult":
-        _warnings.warn(
-            "NeoFitWorkflowResult is deprecated; use WorkflowResult.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return WorkflowResult
-    raise AttributeError(name)

@@ -1,4 +1,4 @@
-"""Public neofit fitting API."""
+"""Public qsospec fitting API."""
 
 from __future__ import annotations
 
