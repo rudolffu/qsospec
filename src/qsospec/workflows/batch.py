@@ -21,18 +21,18 @@ from ..config import (
     MgIIComplexConfig,
     UncertaintyConfig,
 )
-from ..global_fit import fit_global_lines
-from ..global_io import GlobalQAPlotConfig, write_global_line_products
+from ..fitting.global_fit import fit_global_lines
+from ..io.products import GlobalQAPlotConfig, write_global_line_products
 from ..global_result import WorkflowResult
-from ..host_workflow import _host_subtracted_spectrum, _spectrum_from_spectrum_data
-from ..readers import (
+from .host_workflow import _host_subtracted_spectrum, _spectrum_from_spectrum_data
+from ..io.readers import (
     SpectrumInput,
     discover_fits_inputs,
     read_input_manifest,
     read_spectrum,
     scan_parquet_spectra,
 )
-from ..run_store import RunStore, finalize_run, workflow_payload
+from ..io.run_store import RunStore, finalize_run, workflow_payload
 from ..spectrum import Spectrum
 
 
@@ -498,7 +498,7 @@ def fit_object_to_store(
         )
         result.output_files.update(files)
     elif write_qa:
-        from ..qa_archive import render_qa
+        from ..io.qa import render_qa
 
         rendered = render_qa(
             store,

@@ -8,7 +8,7 @@ from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 
-from ..global_io import (
+from .products import (
     GlobalQAPlotConfig,
     _plot_paths,
     _plot_qa,
@@ -16,7 +16,7 @@ from ..global_io import (
     _save_figure,
     _normalized_file_label,
 )
-from ..run_store import RunStore, load_model, open_run
+from .run_store import RunStore, load_model, open_run
 
 
 def render_qa(

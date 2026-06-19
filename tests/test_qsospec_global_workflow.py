@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import qsospec as neofit
-from qsospec.global_fit import (
+from qsospec.fitting.global_fit import (
     C_KMS,
     FWHM_TO_SIGMA,
     _gaussian_area_profile,

@@ -8,7 +8,7 @@ import warnings as _warnings
 
 import numpy as np
 
-from ..api import fit_local
+from ..fitting.local import fit_local
 from ..config import (
     GlobalContinuumConfig,
     HalphaComplexConfig,
@@ -17,7 +17,7 @@ from ..config import (
     MgIIComplexConfig,
     UncertaintyConfig,
 )
-from ..global_fit import fit_global_lines
+from ..fitting.global_fit import fit_global_lines
 from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
 from ..result import LocalFitResult

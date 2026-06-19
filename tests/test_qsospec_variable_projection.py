@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 import qsospec as neofit
-from qsospec import global_fit
-from qsospec.global_fit import (
+from qsospec.fitting import global_fit
+from qsospec.fitting.global_fit import (
     C_KMS,
     _ContinuumContext,
     _HbetaContext,
@@ -26,7 +26,7 @@ from qsospec.templates.iron import (
     evaluate_iron_basis,
     evaluate_iron_basis_with_derivative,
 )
-from qsospec.variable_projection import (
+from qsospec.solvers.variable_projection import (
     VariableProjectionError,
     _VariableProjectionProblem,
 )

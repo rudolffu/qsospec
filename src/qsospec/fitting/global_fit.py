@@ -18,7 +18,7 @@ from ..config import (
 )
 from ..complex_recipes import ComplexRecipe
 from .. import complex_recipes
-from ..generic_complex import fit_generic_complex, resolve_recipe_coverage
+from .complexes import fit_generic_complex, resolve_recipe_coverage
 from ..global_result import (
     EmissionComplexResult,
     GlobalContinuumResult,
@@ -33,7 +33,7 @@ from ..templates import (
     load_iron_template,
 )
 from ..templates.iron import evaluate_iron_basis, evaluate_iron_basis_with_derivative
-from ..variable_projection import (
+from ..solvers.variable_projection import (
     VariableProjectionError,
     evaluate_profile_chi2,
     optimizer_result_adapter,
