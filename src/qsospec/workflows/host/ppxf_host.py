@@ -1,4 +1,4 @@
-"""Optional DESI pPXF host fitting plus qsofitmore handoff."""
+"""Optional DESI pPXF host fitting plus qsospec handoff."""
 
 from __future__ import annotations
 
@@ -84,14 +84,14 @@ class HostSED:
 
 @dataclass
 class HostDecompWorkflowResult:
-    """Combined pPXF + qsofitmore decomposition result."""
+    """Combined pPXF + qsospec decomposition result."""
 
     spectrum: SpectrumData
     ppxf_result: PPXFHostFitResult
     host_sed: HostSED
     host_subtracted_flux: np.ndarray
-    qsofitmore_status: str
-    qsofitmore_result_path: Optional[str]
+    qsospec_status: str
+    qsospec_result_path: Optional[str]
     output_files: Dict[str, str]
     summary: Dict[str, Any]
 
@@ -102,7 +102,7 @@ def _require_ppxf():
     except Exception as exc:
         raise RuntimeError(
             "pPXF is required for host decomposition but is not importable. "
-            "Install it locally with `pip install ppxf` and keep template data outside qsofitmore."
+            "Install it locally with `pip install ppxf` and keep template data outside qsospec."
         ) from exc
     return ppxf
 
@@ -436,8 +436,8 @@ def _summary_dict(
     sed: HostSED,
     input_file: str,
     output_dir: Path,
-    qsofitmore_status: str,
-    qsofitmore_result_path: Optional[str],
+    qsospec_status: str,
+    qsospec_result_path: Optional[str],
 ) -> Dict[str, Any]:
     summary = {
         "object_id": spectrum.object_id or spectrum.targetid,
@@ -453,12 +453,12 @@ def _summary_dict(
         "desi_fit_range_min": float(np.nanmin(fit.preprocessed.wave_log)),
         "desi_fit_range_max": float(np.nanmax(fit.preprocessed.wave_log)),
         "ppxf_status": fit.status,
-        "qsofitmore_status": qsofitmore_status,
-        "qsofitmore_result_path": qsofitmore_result_path,
+        "qsospec_status": qsospec_status,
+        "qsospec_result_path": qsospec_result_path,
         "stellar_velocity": fit.stellar_velocity,
         "stellar_velocity_dispersion": fit.stellar_sigma,
         "ppxf_reduced_chi2": fit.reduced_chi2,
-        "qsofitmore_reduced_chi2": np.nan,
+        "qsospec_reduced_chi2": np.nan,
         "fAGN_5100": _interp_no_extrapolate(5100.0, fit.preprocessed.wave_rest, fit.agn_model),
         "broad_Halpha_detected": False,
         "broad_Hbeta_detected": False,
@@ -479,8 +479,8 @@ def write_host_decomp_outputs(
     fit: PPXFHostFitResult,
     sed: HostSED,
     host_subtracted_flux: np.ndarray,
-    qsofitmore_status: str = "not_run",
-    qsofitmore_result_path: Optional[str] = None,
+    qsospec_status: str = "not_run",
+    qsospec_result_path: Optional[str] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Any]]:
     """Write standard host-decomposition products."""
 
@@ -529,8 +529,8 @@ def write_host_decomp_outputs(
         sed,
         spectrum.metadata.get("input_file", ""),
         out,
-        qsofitmore_status,
-        qsofitmore_result_path,
+        qsospec_status,
+        qsospec_result_path,
     )
     summary_json = out / "host_decomp_summary.json"
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
@@ -538,7 +538,7 @@ def write_host_decomp_outputs(
     summary_csv = out / "host_decomp_summary.csv"
     pd.DataFrame([summary]).to_csv(summary_csv, index=False)
     files["host_decomp_summary_csv"] = str(summary_csv)
-    qsofitmore_model = out / "qsofitmore_model.csv"
-    if qsofitmore_model.exists():
-        files["qsofitmore_model"] = str(qsofitmore_model)
+    qsospec_model = out / "qsospec_model.csv"
+    if qsospec_model.exists():
+        files["qsospec_model"] = str(qsospec_model)
     return files, summary

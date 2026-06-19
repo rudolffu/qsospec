@@ -59,7 +59,7 @@ class HostDecompConfig:
     multiplicative_polynomial_degree: int = 0
     use_regularization: bool = False
     agn_powerlaw_slopes: Sequence[float] = (-2.0, -1.5, -1.0, -0.5, 0.0)
-    run_qsofitmore: bool = False
+    run_qsospec: bool = False
     n_iterations: int = 1
     euclid_scaling_mode: str = "free_scale"
     continuum_windows: List[Tuple[float, float]] = field(
