@@ -367,7 +367,7 @@ def _masked_running_median(
         window=window_pixels,
         center=True,
         min_periods=1,
-    ).median().to_numpy()
+    ).median().to_numpy(copy=True)
     smoothed[~np.asarray(valid, dtype=bool)] = np.nan
     return smoothed
 
