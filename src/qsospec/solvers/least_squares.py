@@ -23,16 +23,21 @@ def run_least_squares(
     """Run SciPy least-squares for a packed local line-complex model."""
 
     if jacobian == "analytic_dense":
-        jac = lambda theta: residual_jacobian_dense(theta, packed, wave, err)
+        def jac(theta):
+            return residual_jacobian_dense(theta, packed, wave, err)
     elif jacobian == "analytic_sparse":
-        jac = lambda theta: residual_jacobian_sparse(theta, packed, wave, err)
+        def jac(theta):
+            return residual_jacobian_sparse(theta, packed, wave, err)
     elif jacobian == "finite_difference":
         jac = "2-point"
     else:
         raise ValueError("jacobian must be 'analytic_dense', 'analytic_sparse', or 'finite_difference'.")
 
+    def _residual(theta):
+        return weighted_residual(theta, packed, wave, flux, err)
+
     return least_squares(
-        lambda theta: weighted_residual(theta, packed, wave, flux, err),
+        _residual,
         packed.initial,
         bounds=(packed.lower, packed.upper),
         jac=jac,
