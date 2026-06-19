@@ -1,4 +1,4 @@
-"""Spectrum metadata and unit/survey preset handling for neofit."""
+"""Spectrum metadata and unit/survey preset handling for qsospec."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _normalize_survey(survey: Optional[str]) -> Optional[str]:
         return None
     key = str(survey).strip().lower().replace(" ", "").replace(".", "")
     if key not in _SURVEY_ALIASES:
-        raise ValueError(f"Unknown neofit survey preset: {survey!r}")
+        raise ValueError(f"Unknown qsospec survey preset: {survey!r}")
     return _SURVEY_ALIASES[key]
 
 
@@ -64,7 +64,7 @@ def _normalize_unit_preset(unit_preset: Optional[str]) -> Optional[str]:
         return None
     key = str(unit_preset).strip().lower()
     if key not in _UNIT_ALIASES:
-        raise ValueError(f"Unknown neofit unit preset: {unit_preset!r}")
+        raise ValueError(f"Unknown qsospec unit preset: {unit_preset!r}")
     return _UNIT_ALIASES[key]
 
 

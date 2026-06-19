@@ -1,4 +1,4 @@
-"""Optimizer wrappers for neofit."""
+"""Optimizer wrappers for qsospec."""
 
 from __future__ import annotations
 

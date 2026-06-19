@@ -1,4 +1,4 @@
-"""Lorentzian model primitives for neofit."""
+"""Lorentzian model primitives for qsospec."""
 
 from __future__ import annotations
 

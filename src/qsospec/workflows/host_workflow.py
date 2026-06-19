@@ -1,10 +1,9 @@
-"""Optional pPXF host subtraction before neofit fitting."""
+"""Optional pPXF host subtraction before qsospec fitting."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
-import warnings as _warnings
 
 import numpy as np
 
@@ -26,7 +25,7 @@ from ..spectrum import Spectrum
 
 @dataclass
 class HostWorkflowResult:
-    """Result of optional host subtraction followed by a neofit fit."""
+    """Result of optional host subtraction followed by a qsospec fit."""
 
     total_spectrum: Spectrum
     fit_spectrum: Spectrum
@@ -38,17 +37,6 @@ class HostWorkflowResult:
     host_subtracted_flux: Optional[np.ndarray] = None
     host_warnings: Optional[list] = None
     metadata: Optional[Dict[str, Any]] = None
-
-
-def __getattr__(name: str):
-    if name == "NeoFitHostWorkflowResult":
-        _warnings.warn(
-            "NeoFitHostWorkflowResult is deprecated; use HostWorkflowResult.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return HostWorkflowResult
-    raise AttributeError(name)
 
 
 def _good_mask_from_spectrum_data(spectrum_data: Any, extra_mask: Optional[np.ndarray] = None) -> np.ndarray:
@@ -182,7 +170,7 @@ def fit_with_optional_host_decomp(
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ):
-    """Read a spectrum, optionally subtract a pPXF host, then run neofit.
+    """Read a spectrum, optionally subtract a pPXF host, then run qsospec.
 
     ``fit_kind`` may be ``"local"`` or ``"global"``.
     """
@@ -366,7 +354,7 @@ def fit_global_lines_workflow(
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> WorkflowResult:
-    """Read one spectrum and run optional pPXF plus global multi-line neofit."""
+    """Read one spectrum and run optional pPXF plus global multi-line qsospec."""
 
     from .host.io import read_sparcli_spectrum
 

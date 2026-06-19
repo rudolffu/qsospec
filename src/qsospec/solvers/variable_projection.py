@@ -246,7 +246,7 @@ def optimizer_result_adapter(
     full_active_mask: np.ndarray,
     result: VariableProjectionResult,
 ):
-    """Return the subset of ``OptimizeResult`` attributes used by neofit."""
+    """Return the subset of ``OptimizeResult`` attributes used by qsospec."""
 
     return SimpleNamespace(
         x=np.asarray(full_x, dtype=float),

@@ -7,16 +7,16 @@ import pyarrow.dataset as pads
 import pytest
 from astropy.io import fits
 
-import qsospec as neofit
+import qsospec
 from qsospec.workflows.host.io import SpectrumData
 
 
 def _continuum_config():
-    return neofit.GlobalContinuumConfig(
+    return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-        balmer_series=neofit.BalmerSeriesConfig(enabled=False),
+        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+        balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
         clip_passes=0,
     )
 
@@ -56,7 +56,7 @@ def _parquet_input(path, count=2):
 
 def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     run = tmp_path / "single"
-    result = neofit.fit_object_to_store(
+    result = qsospec.fit_object_to_store(
         _spectrum_data(),
         str(run),
         global_config=_continuum_config(),
@@ -66,14 +66,14 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
 
     assert Path(result.output_files["manifest"]).exists()
     assert Path(result.output_files["compact_models"]).exists()
-    store = neofit.open_run(str(run))
-    loaded = neofit.load_model(store, "object-1")
+    store = qsospec.open_run(str(run))
+    loaded = qsospec.load_model(store, "object-1")
     np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
     np.testing.assert_allclose(loaded.continuum.model, result.continuum.model)
     assert store.read_table("objects").num_rows == 1
     assert store.read_table("models").num_rows == 1
 
-    catalog = neofit.build_science_catalog(
+    catalog = qsospec.build_science_catalog(
         store,
         {
             "power_norm": {
@@ -85,7 +85,7 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert np.isfinite(catalog.loc[0, "power_norm"])
 
     before = store.read_table("models").num_rows
-    derived = neofit.compute_derived_quantities(
+    derived = qsospec.compute_derived_quantities(
         store,
         {
             "test-calibration": lambda context: {
@@ -101,10 +101,10 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert derived.loc[0, "value"] == pytest.approx(42.0)
     assert store.read_table("models").num_rows == before
 
-    rendered = neofit.render_qa(
+    rendered = qsospec.render_qa(
         store,
         object_ids=["object-1"],
-        plot_config=neofit.GlobalQAPlotConfig(output_format="png"),
+        plot_config=qsospec.GlobalQAPlotConfig(output_format="png"),
     )
     assert Path(rendered["object-1"]["global_plot"]).exists()
 
@@ -113,7 +113,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
     source = tmp_path / "spectra.parquet"
     _parquet_input(source)
     run = tmp_path / "run"
-    first = neofit.fit_batch(
+    first = qsospec.fit_batch(
         str(source),
         str(run),
         n_workers=1,
@@ -124,7 +124,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
     assert first.n_failed == 0
     assert Path(first.compact_outputs["objects"]).exists()
 
-    resumed = neofit.fit_batch(
+    resumed = qsospec.fit_batch(
         str(source),
         str(run),
         n_workers=1,
@@ -134,7 +134,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
     assert resumed.n_submitted == 0
     assert resumed.n_skipped == 2
     with pytest.raises(ValueError, match="immutable manifest"):
-        neofit.fit_batch(
+        qsospec.fit_batch(
             str(source),
             str(run),
             n_workers=1,
@@ -147,7 +147,7 @@ def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
     source = tmp_path / "spectra.parquet"
     _parquet_input(source, count=4)
     parallel_run = tmp_path / "parallel"
-    output = neofit.fit_batch(
+    output = qsospec.fit_batch(
         str(source),
         str(parallel_run),
         n_workers=2,
@@ -156,12 +156,12 @@ def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
         complexes=[],
     )
     assert output.n_completed == 4
-    assert neofit.open_run(str(parallel_run)).read_table("models").num_rows == 4
+    assert qsospec.open_run(str(parallel_run)).read_table("models").num_rows == 4
 
     sharded_run = tmp_path / "sharded"
     counts = []
     for shard_index in (0, 1):
-        shard = neofit.fit_batch(
+        shard = qsospec.fit_batch(
             str(source),
             str(sharded_run),
             n_workers=1,
@@ -173,18 +173,18 @@ def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
         )
         counts.append(shard.n_completed)
     assert sum(counts) == 4
-    compact = neofit.finalize_run(str(sharded_run))
+    compact = qsospec.finalize_run(str(sharded_run))
     assert len(pd.read_parquet(compact["objects"])) == 4
 
 
 def test_failure_archive_keeps_input_locator(tmp_path):
-    missing = neofit.SpectrumInput(
+    missing = qsospec.SpectrumInput(
         source=str(tmp_path / "missing.fits"),
         object_id="missing",
         redshift=1.0,
     )
     run = tmp_path / "failed"
-    output = neofit.fit_batch(
+    output = qsospec.fit_batch(
         [missing],
         str(run),
         n_workers=1,
@@ -192,7 +192,7 @@ def test_failure_archive_keeps_input_locator(tmp_path):
         complexes=[],
     )
     assert output.n_failed == 1
-    store = neofit.open_run(str(run))
+    store = qsospec.open_run(str(run))
     assert store.read_table("failures").num_rows == 1
     assert store.read_table("inputs").to_pylist()[0]["source"] == missing.source
 
@@ -203,7 +203,7 @@ def test_parquet_scanner_projects_case_insensitive_vector_columns(tmp_path):
     _parquet_input(first, count=2)
     _parquet_input(second, count=1)
     records = list(
-        neofit.scan_parquet_spectra(
+        qsospec.scan_parquet_spectra(
             [str(first), str(second)],
             row_indices={str(first): [1], str(second): [0]},
             batch_size=1,
@@ -229,9 +229,9 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     fits.HDUList(
         [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]
     ).writeto(sdss)
-    assert neofit.detect_fits_reader(str(sdss)) == "sdss"
+    assert qsospec.detect_fits_reader(str(sdss)) == "sdss"
     np.testing.assert_allclose(
-        neofit.read_spectrum(str(sdss), redshift=0.2).wave_obs, wave
+        qsospec.read_spectrum(str(sdss), redshift=0.2).wave_obs, wave
     )
 
     lamost = tmp_path / "lamost.fits"
@@ -243,9 +243,9 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     fits.HDUList(
         [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]
     ).writeto(lamost)
-    assert neofit.detect_fits_reader(str(lamost)) == "lamost"
+    assert qsospec.detect_fits_reader(str(lamost)) == "lamost"
     np.testing.assert_allclose(
-        neofit.read_spectrum(str(lamost), redshift=0.2).flux, flux
+        qsospec.read_spectrum(str(lamost), redshift=0.2).flux, flux
     )
 
     iraf = tmp_path / "iraf.fits"
@@ -253,15 +253,15 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     header["CRVAL1"] = wave[0]
     header["CDELT1"] = wave[1] - wave[0]
     fits.PrimaryHDU(flux, header=header).writeto(iraf)
-    assert neofit.detect_fits_reader(str(iraf)) == "iraf"
+    assert qsospec.detect_fits_reader(str(iraf)) == "iraf"
     np.testing.assert_allclose(
-        neofit.read_spectrum(str(iraf), redshift=0.2).wave_obs, wave
+        qsospec.read_spectrum(str(iraf), redshift=0.2).wave_obs, wave
     )
 
 
 def test_manifest_records_schema_and_shard_state(tmp_path):
     run = tmp_path / "manifest"
-    neofit.fit_object_to_store(
+    qsospec.fit_object_to_store(
         _spectrum_data(),
         str(run),
         global_config=_continuum_config(),

@@ -1,7 +1,6 @@
 """Standalone quasar spectral fitting with NumPy and SciPy."""
 
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError, version as _version
-import warnings as _warnings
 
 try:
     __version__ = _version("qsospec")
@@ -112,9 +111,6 @@ __all__ = [
     "FitWarning",
     "HostWorkflowResult",
     "WorkflowResult",
-    "NeoFitWarning",
-    "NeoFitHostWorkflowResult",
-    "NeoFitWorkflowResult",
     "PowerLawConfig",
     "RunStore",
     "Spectrum",
@@ -159,20 +155,3 @@ __all__ = [
     "write_global_hbeta_products",
     "write_global_line_products",
 ]
-
-
-def __getattr__(name: str):
-    aliases = {
-        "NeoFitWarning": (FitWarning, "FitWarning"),
-        "NeoFitHostWorkflowResult": (HostWorkflowResult, "HostWorkflowResult"),
-        "NeoFitWorkflowResult": (WorkflowResult, "WorkflowResult"),
-    }
-    if name in aliases:
-        value, replacement = aliases[name]
-        _warnings.warn(
-            f"{name} is deprecated; use {replacement}.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return value
-    raise AttributeError(name)

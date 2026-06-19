@@ -1,4 +1,4 @@
-"""Gaussian model primitives for neofit."""
+"""Gaussian model primitives for qsospec."""
 
 from __future__ import annotations
 

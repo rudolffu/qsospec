@@ -148,6 +148,6 @@ def local_broad_lines(lines: Iterable[str]) -> LocalFitConfig:
     for line in lines:
         key = str(line).strip().lower()
         if key not in lookup:
-            raise ValueError(f"Unknown neofit local broad-line recipe: {line!r}")
+            raise ValueError(f"Unknown qsospec local broad-line recipe: {line!r}")
         windows.append(lookup[key]())
     return LocalFitConfig(windows=windows)

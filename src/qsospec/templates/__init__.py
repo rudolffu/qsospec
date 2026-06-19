@@ -1,4 +1,4 @@
-"""Template loading and normalization helpers for neofit."""
+"""Template loading and normalization helpers for qsospec."""
 
 from .balmer import (
     BalmerSeriesTemplate,

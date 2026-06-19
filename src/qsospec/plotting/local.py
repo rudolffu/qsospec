@@ -1,4 +1,4 @@
-"""Lightweight plotting helpers for neofit result objects."""
+"""Lightweight plotting helpers for qsospec result objects."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def save_local_window_plots(
     for window, fit in result.window_results.items():
         files[window] = plot_line_result(
             fit,
-            output_path=str(out / f"{window}_neofit.png"),
+            output_path=str(out / f"{window}_qsospec.png"),
             show_components=show_components,
             title=window,
         )

@@ -1,4 +1,4 @@
-"""Normalization and parsing utilities for neofit iron templates."""
+"""Normalization and parsing utilities for qsospec iron templates."""
 
 from __future__ import annotations
 

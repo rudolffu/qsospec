@@ -1,9 +1,9 @@
-"""Iron-template loading and local fitting tests for neofit."""
+"""Iron-template loading and local fitting tests for qsospec."""
 
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.jacobian import model_jacobian_dense
 from qsospec.parameters import pack_line_complex_parameters
 from qsospec.residuals import model_vector
@@ -26,12 +26,12 @@ def _iron_template_file(tmp_path):
 
 
 def _hb_config(iron=None):
-    return neofit.LineComplexConfig(
+    return qsospec.LineComplexConfig(
         name="Hb_test",
         center=4861.33,
         window=(4700.0, 5100.0),
         components=[
-            neofit.GaussianComponent(
+            qsospec.GaussianComponent(
                 name="Hb_broad",
                 center=4860.0,
                 amp=4.0,
@@ -99,7 +99,7 @@ def test_iron_amplitude_and_fwhm_jacobian_match_finite_difference(tmp_path):
     template = load_iron_template("external", template_path=str(_iron_template_file(tmp_path)))
     basis = prepare_iron_template(template, wave, (4700.0, 5100.0), fwhm_kms=1400.0).basis
     config = _hb_config(
-        iron=neofit.IronTemplateConfig(
+        iron=qsospec.IronTemplateConfig(
             template="external",
             template_path="unused.txt",
             fwhm_kms=1400.0,
@@ -139,9 +139,9 @@ def test_fit_line_complex_recovers_external_iron_amplitude(tmp_path):
     continuum = 1.2 + 0.0004 * (wave - 4900.0)
     flux = continuum + line + true_iron_amp * prepared.basis
     err = np.full_like(wave, 0.03)
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", survey="desi")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", survey="desi")
     config = _hb_config(
-        iron=neofit.IronTemplateConfig(
+        iron=qsospec.IronTemplateConfig(
             template="external",
             template_path=str(path),
             amp=1000.0,
@@ -151,7 +151,7 @@ def test_fit_line_complex_recovers_external_iron_amplitude(tmp_path):
         )
     )
 
-    result = neofit.fit_line_complex(spectrum, config)
+    result = qsospec.fit_line_complex(spectrum, config)
     table = result.to_table()
     iron_row = table[table["component_type"] == "iron"].iloc[0]
 
@@ -170,8 +170,8 @@ def test_bundled_template_aliases_work_in_recipes():
         wave = np.linspace(4700.0, 5100.0, 220)
         flux = 1.0 + 5.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
         err = np.full_like(wave, 0.05)
-        spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
-        result = neofit.fit_line_complex(spectrum, neofit.recipes.local_hbeta(iron_template=template_name))
+        spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+        result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_hbeta(iron_template=template_name))
         assert result.success
         assert "iron.amp" in result.param_values
         assert result.metadata["iron"]["template"] in {"bg92_optical", "park22_optical", "veron04_optical"}
@@ -179,8 +179,8 @@ def test_bundled_template_aliases_work_in_recipes():
     wave = np.linspace(2700.0, 2900.0, 180)
     flux = 1.0 + 4.0 * np.exp(-0.5 * ((wave - 2798.75) / 18.0) ** 2)
     err = np.full_like(wave, 0.05)
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
-    result = neofit.fit_line_complex(spectrum, neofit.recipes.local_mgii(iron_template="vw01"))
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_mgii(iron_template="vw01"))
 
     assert result.success
     assert result.metadata["iron"]["template"] == "vw01_uv"
@@ -190,9 +190,9 @@ def test_no_overlap_warns_and_drops_iron_parameter():
     wave = np.linspace(4700.0, 5100.0, 160)
     flux = 1.0 + 4.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
     err = np.full_like(wave, 0.05)
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
 
-    result = neofit.fit_line_complex(spectrum, neofit.recipes.local_hbeta(iron_template="vw01"))
+    result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_hbeta(iron_template="vw01"))
 
     assert result.success
     assert "iron_template_no_overlap" in result.warning_codes()
@@ -206,15 +206,15 @@ def test_fit_local_no_overlap_warning_does_not_crash_other_windows():
     hb = 4.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
     flux = 1.0 + mgii + hb
     err = np.full_like(wave, 0.05)
-    spectrum = neofit.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
-    config = neofit.LocalFitConfig(
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    config = qsospec.LocalFitConfig(
         windows=[
-            neofit.recipes.local_hbeta(iron_template="vw01"),
-            neofit.recipes.local_mgii(iron_template="vw01"),
+            qsospec.recipes.local_hbeta(iron_template="vw01"),
+            qsospec.recipes.local_mgii(iron_template="vw01"),
         ]
     )
 
-    result = neofit.fit_local(spectrum, config)
+    result = qsospec.fit_local(spectrum, config)
 
     assert result.success
     assert result.window_results["Hb_OIII"].success

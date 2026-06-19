@@ -10,22 +10,6 @@ def test_qsospec_public_imports_work():
     assert qsospec.__version__ == "0.1.0"
 
 
-def test_deprecated_neofit_names_warn():
-    import pytest
-    import qsospec
-
-    with pytest.deprecated_call(match="NeoFitWorkflowResult"):
-        workflow_type = qsospec.NeoFitWorkflowResult
-    with pytest.deprecated_call(match="NeoFitHostWorkflowResult"):
-        host_type = qsospec.NeoFitHostWorkflowResult
-    with pytest.deprecated_call(match="NeoFitWarning"):
-        warning_type = qsospec.NeoFitWarning
-
-    assert workflow_type is qsospec.WorkflowResult
-    assert host_type is qsospec.HostWorkflowResult
-    assert warning_type is qsospec.FitWarning
-
-
 def test_bundled_data_loads_from_qsospec_namespace():
     import qsospec
 

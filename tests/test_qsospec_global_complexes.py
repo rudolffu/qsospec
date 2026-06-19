@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.workflows.host.io import SpectrumData
 from qsospec.fitting import global_fit
 from qsospec.io import products as global_io
@@ -64,8 +64,8 @@ def _centered_difference(function, value, step=0.01):
 @pytest.mark.parametrize(
     "context",
     [
-        _MgIIContext(neofit.MgIIComplexConfig(), 100.0),
-        _HalphaContext(neofit.HalphaComplexConfig(), 150.0),
+        _MgIIContext(qsospec.MgIIComplexConfig(), 100.0),
+        _HalphaContext(qsospec.HalphaComplexConfig(), 150.0),
     ],
 )
 def test_optional_complex_design_derivatives_match_centered_differences(context):
@@ -96,14 +96,14 @@ def test_mgii_recovers_two_broad_components_and_metrics():
     line += _gaussian_area_profile(
         wave, 30.0, 2798.75 * np.exp(200.0 / C_KMS), 7000.0
     )
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
         survey="desi",
     )
-    result = neofit.fit_mgii_complex(
+    result = qsospec.fit_mgii_complex(
         spectrum, _continuum_result(spectrum, continuum)
     )
 
@@ -129,14 +129,14 @@ def test_halpha_recovers_tied_narrow_lines_and_fixed_nii_ratio():
         (6.0, 6732.67),
     ):
         line += _gaussian_area_profile(wave, flux, center, 320.0)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
         survey="desi",
     )
-    result = neofit.fit_halpha_complex(
+    result = qsospec.fit_halpha_complex(
         spectrum, _continuum_result(spectrum, continuum)
     )
 
@@ -181,10 +181,10 @@ def test_halpha_recovers_tied_narrow_lines_and_fixed_nii_ratio():
 def test_mgii_coverage_rules(wave_range, covered):
     wave = np.linspace(*wave_range, 300)
     continuum = np.ones_like(wave)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum, err=np.full_like(wave, 0.05), wave_frame="rest"
     )
-    result = neofit.fit_mgii_complex(
+    result = qsospec.fit_mgii_complex(
         spectrum, _continuum_result(spectrum, continuum)
     )
     assert result.success is covered
@@ -200,19 +200,19 @@ def test_variable_projection_matches_legacy_for_optional_complexes():
     line += _gaussian_area_profile(wave, 20.0 / 2.96, 6549.85, 350.0)
     line += _gaussian_area_profile(wave, 7.0, 6718.29, 350.0)
     line += _gaussian_area_profile(wave, 6.0, 6732.67, 350.0)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum + line, err=np.full_like(wave, 0.02), wave_frame="rest"
     )
     known = _continuum_result(spectrum, continuum)
-    optimized = neofit.fit_halpha_complex(
+    optimized = qsospec.fit_halpha_complex(
         spectrum,
         known,
-        neofit.HalphaComplexConfig(optimizer_method="variable_projection"),
+        qsospec.HalphaComplexConfig(optimizer_method="variable_projection"),
     )
-    legacy = neofit.fit_halpha_complex(
+    legacy = qsospec.fit_halpha_complex(
         spectrum,
         known,
-        neofit.HalphaComplexConfig(optimizer_method="legacy_joint"),
+        qsospec.HalphaComplexConfig(optimizer_method="legacy_joint"),
     )
     assert optimized.chi2 <= legacy.chi2 + 1.0e-4
     assert optimized.metrics["Ha_broad_flux_input"] == pytest.approx(
@@ -228,7 +228,7 @@ def _global_spectrum(wave):
     line = _gaussian_area_profile(wave, 60.0, 2798.75, 2500.0)
     line += _gaussian_area_profile(wave, 80.0, 4862.68, 2500.0)
     line += _gaussian_area_profile(wave, 100.0, 6564.61, 2500.0)
-    return neofit.Spectrum.from_arrays(
+    return qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.05),
@@ -238,29 +238,29 @@ def _global_spectrum(wave):
 
 
 def _simple_global_config():
-    return neofit.GlobalContinuumConfig(
+    return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_continuum=neofit.BalmerContinuumConfig(enabled=False),
-        balmer_series=neofit.BalmerSeriesConfig(enabled=False),
+        balmer_continuum=qsospec.BalmerContinuumConfig(enabled=False),
+        balmer_series=qsospec.BalmerSeriesConfig(enabled=False),
         clip_passes=0,
     )
 
 
 def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
-    full = neofit.fit_global_lines(
+    full = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 3000)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
-    partial = neofit.fit_global_lines(
+    partial = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(1875.0, 5130.0, 2500)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     full.metadata.update({"object_id": "synthetic-qa", "redshift": 1.23456})
     full.host_decomp_enabled = True
-    files = neofit.write_global_line_products(full, str(tmp_path))
+    files = qsospec.write_global_line_products(full, str(tmp_path))
 
     assert set(full.line_complexes) == {
         "mgii",
@@ -374,21 +374,21 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
         "mgii_measurements_csv",
         "halpha_nii_sii_measurements_csv",
     } <= set(files)
-    assert files["summary_json"].endswith("neofit_global_lines_summary.json")
+    assert files["summary_json"].endswith("qsospec_global_lines_summary.json")
     assert files["compatibility_summary_json"].endswith(
-        "neofit_global_hbeta_summary.json"
+        "qsospec_global_hbeta_summary.json"
     )
-    compatibility = neofit.write_global_hbeta_products(
+    compatibility = qsospec.write_global_hbeta_products(
         full,
         str(tmp_path / "compatibility"),
-        qa_plot_config=neofit.GlobalQAPlotConfig(show_smoothed_data=True),
+        qa_plot_config=qsospec.GlobalQAPlotConfig(show_smoothed_data=True),
     )
     assert full.metadata["qa_smoothed_data"] is True
     assert compatibility["summary_json"].endswith(
-        "neofit_global_hbeta_summary.json"
+        "qsospec_global_hbeta_summary.json"
     )
     assert compatibility["generic_summary_json"].endswith(
-        "neofit_global_lines_summary.json"
+        "qsospec_global_lines_summary.json"
     )
 
 
@@ -399,10 +399,10 @@ def test_optional_fit_failure_preserves_legacy_success(monkeypatch):
         raise RuntimeError("forced")
 
     monkeypatch.setattr(global_fit, "fit_halpha_complex", fail)
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         spectrum,
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     assert result.continuum_success
     assert result.legacy_hbeta_success
@@ -412,11 +412,11 @@ def test_optional_fit_failure_preserves_legacy_success(monkeypatch):
 
 
 def test_global_monte_carlo_includes_covered_optional_complexes():
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 1800)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
-        uncertainty_config=neofit.UncertaintyConfig(
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+        uncertainty_config=qsospec.UncertaintyConfig(
             monte_carlo_trials=1, random_seed=4
         ),
     )
@@ -439,7 +439,7 @@ def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
     )
 
     def fake_host_subtraction(data, **kwargs):
-        fit_spectrum = neofit.Spectrum.from_arrays(
+        fit_spectrum = qsospec.Spectrum.from_arrays(
             data.wave_obs,
             data.flux,
             err=data.uncertainty(),
@@ -463,9 +463,9 @@ def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
         host_config=None,
         source="synthetic",
         global_config=_simple_global_config(),
-        hbeta_config=neofit.HbetaComplexConfig(fit_oiii_wings=False),
-        mgii_config=neofit.MgIIComplexConfig(),
-        halpha_config=neofit.HalphaComplexConfig(),
+        hbeta_config=qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+        mgii_config=qsospec.MgIIComplexConfig(),
+        halpha_config=qsospec.HalphaComplexConfig(),
     )
     assert result["continuum_success_count"] == 1
     assert result["complex_success_counts"]["hbeta_oiii"] == 1
@@ -484,10 +484,10 @@ def test_qa_percentiles_and_component_styles():
     wave = np.linspace(6350.0, 6850.0, 1200)
     continuum = np.ones_like(wave)
     line = _gaussian_area_profile(wave, 50.0, 6564.61, 2200.0)
-    spectrum = neofit.Spectrum.from_arrays(
+    spectrum = qsospec.Spectrum.from_arrays(
         wave, continuum + line, err=np.full_like(wave, 0.05), wave_frame="rest"
     )
-    fit = neofit.fit_halpha_complex(spectrum, _continuum_result(spectrum, continuum))
+    fit = qsospec.fit_halpha_complex(spectrum, _continuum_result(spectrum, continuum))
     kinds = [kind for _, _, _, kind in _line_groups("halpha", fit)]
     assert kinds.count("broad") == 1
     assert set(kinds) <= {"broad", "narrow", "wing"}
@@ -517,7 +517,7 @@ def test_qa_percentiles_and_component_styles():
 
 
 def test_qa_plot_config_and_selection_contract(monkeypatch):
-    assert neofit.GlobalQAPlotConfig() == neofit.GlobalQAPlotConfig(
+    assert qsospec.GlobalQAPlotConfig() == qsospec.GlobalQAPlotConfig(
         figure_width=10.5,
         figure_height=6.2,
         max_zoom_panels=4,
@@ -525,7 +525,7 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
         smoothing_window_pixels=7,
     )
     with pytest.raises(ValueError):
-        neofit.GlobalQAPlotConfig(smoothing_window_pixels=4)
+        qsospec.GlobalQAPlotConfig(smoothing_window_pixels=4)
 
     successful = type("SuccessfulFit", (), {"success": True})()
     monkeypatch.setitem(global_io._COMPLEX_WINDOWS, "civ", (1450.0, 1700.0))
@@ -543,10 +543,10 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
 
 
 def test_qa_title_smoothing_and_tick_helpers():
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 1800)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     assert _qa_overview_title(result) == ""
     result.metadata.update(
@@ -562,7 +562,7 @@ def test_qa_title_smoothing_and_tick_helpers():
     )
     assert _qa_overview_title(
         result,
-        neofit.GlobalQAPlotConfig(
+        qsospec.GlobalQAPlotConfig(
             object_name="My Quasar",
             object_label="Source",
             show_coordinates=False,
@@ -616,10 +616,10 @@ def test_qa_title_smoothing_and_tick_helpers():
 def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     import matplotlib.pyplot as plt
 
-    full = neofit.fit_global_lines(
+    full = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 2200)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     variants = {
         "one": replace(
@@ -656,7 +656,7 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     _plot_qa(
         variants["three"],
         smoothed_path,
-        neofit.GlobalQAPlotConfig(show_smoothed_data=True),
+        qsospec.GlobalQAPlotConfig(show_smoothed_data=True),
     )
     figure = plt.gcf()
     overview_axis = figure.axes[0]
@@ -683,15 +683,15 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
 def test_host_context_companion_plot(tmp_path, monkeypatch):
     import matplotlib.pyplot as plt
 
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 2200)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     host = 0.45 * (result.spectrum.wave_rest / 5100.0) ** -0.4
     result.host_decomp_enabled = True
     result.host_model_on_quasar_grid = host
-    result.total_spectrum = neofit.Spectrum.from_arrays(
+    result.total_spectrum = qsospec.Spectrum.from_arrays(
         result.spectrum.wave_rest,
         result.spectrum.flux + host,
         err=result.spectrum.err,
@@ -713,10 +713,10 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
     assert _has_host_context(result)
     assert "20.0\\%" in _host_fraction_annotation(result)
     assert "30.0\\%" in _host_fraction_annotation(result)
-    files = neofit.write_global_line_products(
+    files = qsospec.write_global_line_products(
         result,
         str(tmp_path),
-        neofit.GlobalQAPlotConfig(write_other_diagnostics=True),
+        qsospec.GlobalQAPlotConfig(write_other_diagnostics=True),
     )
 
     assert files["host_context_plot"].endswith(
@@ -735,7 +735,7 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
     _plot_qa(
         result,
         qa_path,
-        neofit.GlobalQAPlotConfig(show_host_context_in_overview=True),
+        qsospec.GlobalQAPlotConfig(show_host_context_in_overview=True),
     )
     figure = plt.gcf()
     overview_labels = figure.axes[0].get_legend_handles_labels()[1]
@@ -757,15 +757,15 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
 
 
 def test_host_context_overview_falls_back_without_host(tmp_path):
-    result = neofit.fit_global_lines(
+    result = qsospec.fit_global_lines(
         _global_spectrum(np.linspace(2600.0, 7000.0, 1800)),
         _simple_global_config(),
-        neofit.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     _plot_qa(
         result,
         tmp_path / "qa_without_host.png",
-        neofit.GlobalQAPlotConfig(show_host_context_in_overview=True),
+        qsospec.GlobalQAPlotConfig(show_host_context_in_overview=True),
     )
     assert result.metadata["qa_host_context_overview_requested"] is True
     assert result.metadata["qa_host_context_overview_used"] is False

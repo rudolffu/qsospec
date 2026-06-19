@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-import qsospec as neofit
+import qsospec
 from qsospec.templates.balmer import BalmerTemplateError, evaluate_balmer_series
 
 
 def test_balmer_registry_contains_twelve_science_templates():
-    templates = neofit.list_balmer_templates()
+    templates = qsospec.list_balmer_templates()
 
     assert len(templates) == 12
     assert sum(status == "production" for status in templates.values()) == 4
@@ -16,8 +16,8 @@ def test_balmer_registry_contains_twelve_science_templates():
 
 
 def test_balmer_template_preserves_builder_metadata_and_warnings():
-    pure = neofit.load_balmer_template(log10_ne=9, n_min=6, provenance="sh95")
-    extended = neofit.load_balmer_template(log10_ne=10, n_min=7, provenance="k13")
+    pure = qsospec.load_balmer_template(log10_ne=9, n_min=6, provenance="sh95")
+    extended = qsospec.load_balmer_template(log10_ne=10, n_min=7, provenance="k13")
 
     assert pure.te_k == 15000.0
     assert pure.log10_ne == 9.0
@@ -32,11 +32,11 @@ def test_balmer_template_preserves_builder_metadata_and_warnings():
 
 def test_energy_only_balmer_template_is_rejected():
     with pytest.raises(BalmerTemplateError, match="diagnostic-only"):
-        neofit.load_balmer_template(provenance="energy_only_ext")
+        qsospec.load_balmer_template(provenance="energy_only_ext")
 
 
 def test_balmer_series_broadening_conserves_integrated_flux():
-    template = neofit.load_balmer_template()
+    template = qsospec.load_balmer_template()
     wave = np.linspace(3400.0, 4300.0, 30000)
     basis = evaluate_balmer_series(template, wave, 3000.0)
 
@@ -46,7 +46,7 @@ def test_balmer_series_broadening_conserves_integrated_flux():
 
 
 def test_balmer_series_fwhm_is_velocity_broadened():
-    template = neofit.load_balmer_template()
+    template = qsospec.load_balmer_template()
     wave = np.linspace(4050.0, 4155.0, 10000)
     basis = evaluate_balmer_series(template, wave, 3000.0)
     peak = int(np.argmax(basis))
@@ -59,7 +59,7 @@ def test_balmer_series_fwhm_is_velocity_broadened():
 
 def test_balmer_continuum_is_unit_edge_and_range_limited():
     wave = np.array([1900.0, 2000.0, 3000.0, 3646.0, 3700.0])
-    basis = neofit.balmer_continuum_basis(wave)
+    basis = qsospec.balmer_continuum_basis(wave)
 
     assert basis[0] == 0.0
     assert basis[-1] == 0.0

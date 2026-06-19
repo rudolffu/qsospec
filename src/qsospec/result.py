@@ -1,4 +1,4 @@
-"""Result containers for neofit."""
+"""Result containers for qsospec."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _GAUSSIAN_FWHM_FACTOR = float(np.sqrt(8.0 * np.log(2.0)))
 
 @dataclass
 class FitResult:
-    """Result of a neofit optimization."""
+    """Result of a qsospec optimization."""
 
     success: bool
     status: int

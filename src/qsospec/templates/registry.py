@@ -1,4 +1,4 @@
-"""Registry for bundled and external neofit iron templates."""
+"""Registry for bundled and external qsospec iron templates."""
 
 from __future__ import annotations
 
