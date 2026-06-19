@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qsospec"
 version = "0.1.0"
-description = "Standalone NumPy/SciPy tools for fitting quasar spectra"
+description = "A fast and robust Python package for fitting quasar spectra"
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]

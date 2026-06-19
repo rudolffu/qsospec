@@ -1,6 +1,6 @@
 # qsospec
 
-`qsospec` is a standalone Python package for fitting UV, optical, and
+`qsospec` is a Python package for fitting UV, optical, and
 near-infrared quasar spectra. It provides array-based local and global fitting,
 recipe-driven emission complexes, bundled iron and Balmer templates, optional
 pPXF host subtraction, and resumable Parquet batch runs.
