@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import json
 import warnings
@@ -12,10 +12,10 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from .config import DEFAULT_LINE_CENTERS, HostDecompConfig, default_config
+from .config import DEFAULT_LINE_CENTERS
 from .dust import apply_galactic_dereddening
-from .io import DEFAULT_FLUX_DENSITY_UNIT, SpectrumData, read_sparcli_spectrum
-from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS, load_ppxf_npz_templates
+from .io import DEFAULT_FLUX_DENSITY_UNIT, SpectrumData
+from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
 
 
 _C_KMS = 299792.458
