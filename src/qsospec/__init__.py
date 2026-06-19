@@ -11,8 +11,8 @@ except PackageNotFoundError:  # source checkout without installation
 from . import lines, recipes
 from .lines import LineDefinition
 from .complex_recipes import ComponentRecipe, ComplexRecipe
-from .api import fit_line_complex, fit_local
-from .batch import BatchResult, fit_batch, fit_object_to_store
+from .fitting.local import fit_line_complex, fit_local
+from .workflows.batch import BatchResult, fit_batch, fit_object_to_store
 from .config import (
     BalmerContinuumConfig,
     BalmerSeriesConfig,
@@ -28,7 +28,7 @@ from .config import (
     PowerLawConfig,
     UncertaintyConfig,
 )
-from .global_fit import (
+from .fitting.global_fit import (
     balmer_continuum_basis,
     fit_global_continuum,
     fit_global_hbeta,
@@ -37,7 +37,7 @@ from .global_fit import (
     fit_hbeta_complex,
     fit_mgii_complex,
 )
-from .global_io import (
+from .io.products import (
     GlobalQAPlotConfig,
     write_global_hbeta_products,
     write_global_line_products,
@@ -48,15 +48,15 @@ from .global_result import (
     HbetaComplexResult,
     WorkflowResult,
 )
-from .host_workflow import (
+from .workflows.host_workflow import (
     HostWorkflowResult,
     fit_global_hbeta_workflow,
     fit_global_lines_workflow,
     fit_with_optional_host_decomp,
 )
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
-from .qa_archive import render_qa
-from .readers import (
+from .io.qa import render_qa
+from .io.readers import (
     SpectrumInput,
     detect_fits_reader,
     discover_fits_inputs,
@@ -66,7 +66,7 @@ from .readers import (
 )
 from .plotting import plot_line_result, plot_local_result, save_local_window_plots
 from .result import FitResult, LocalFitResult
-from .run_store import (
+from .io.run_store import (
     RunStore,
     build_science_catalog,
     compute_derived_quantities,

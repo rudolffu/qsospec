@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import qsospec as neofit
-from qsospec.generic_complex import (
+from qsospec.fitting.complexes import (
     GenericComplexContext,
     resolve_recipe_coverage,
 )

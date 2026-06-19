@@ -452,7 +452,7 @@ def fit_generic_complex(
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
-    from ..global_fit import (
+    from .global_fit import (
         _active_bound_warnings,
         _covariance_from_jacobian,
         _metric_errors,

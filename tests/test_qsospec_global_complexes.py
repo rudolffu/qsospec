@@ -7,14 +7,16 @@ import pytest
 
 import qsospec as neofit
 from qsospec.workflows.host.io import SpectrumData
-from qsospec import global_fit, global_io, host_workflow
-from qsospec.global_fit import (
+from qsospec.fitting import global_fit
+from qsospec.io import products as global_io
+from qsospec.workflows import host_workflow
+from qsospec.fitting.global_fit import (
     C_KMS,
     _HalphaContext,
     _MgIIContext,
     _gaussian_area_profile,
 )
-from qsospec.global_io import (
+from qsospec.io.products import (
     _BROAD_COMPONENT_STYLE,
     _COMBINED_BROAD_STYLE,
     _CONTINUUM_STYLES,

@@ -6,7 +6,7 @@ import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import LineComplexConfig, LocalFitConfig
-from ..optimize import run_least_squares
+from ..solvers.least_squares import run_least_squares
 from ..parameters import pack_line_complex_parameters
 from ..residuals import iron_basis_vector, model_and_residual, model_components, model_vector
 from ..result import FitResult, LocalFitResult
