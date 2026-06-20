@@ -1,5 +1,10 @@
 # qsospec
 
+[![Documentation Status](https://readthedocs.org/projects/qsospec/badge/?version=latest)](https://qsospec.readthedocs.io/en/latest/)
+[![PyPI](https://img.shields.io/pypi/v/qsospec)](https://pypi.org/project/qsospec/)
+[![Python](https://img.shields.io/badge/python-3.9%7C3.10%7C3.11%7C3.12%7C3.13-blue)](https://pypi.org/project/qsospec/)
+[![License](https://img.shields.io/badge/license-GPLv3-green)](https://github.com/rudolffu/qsospec/blob/main/LICENSE)
+
 `qsospec` is a Python package for fitting UV, optical, and
 near-infrared quasar spectra. It provides array-based local and global fitting,
 recipe-driven emission complexes, bundled iron and Balmer templates, optional
