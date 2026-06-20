@@ -36,6 +36,14 @@ General quasar spectra and spectral components
 - `Krawczyk et al. (2013), 2013ApJS..206....4K <https://ui.adsabs.harvard.edu/abs/2013ApJS..206....4K/abstract>`__
   — large-sample quasar spectral energy distributions.
 
+- `Euclid Collaboration: Lusso et al. (2024), 2024A&A...685A.108E <https://ui.adsabs.harvard.edu/abs/2024A%26A...685A.108E/abstract>`__
+  — Euclid preparation study of active-galactic-nucleus spectroscopy with the
+  NISP slitless spectroscopic mode.
+
+- `Euclid Collaboration: Fu et al. (2025), 2025arXiv251208803E <https://ui.adsabs.harvard.edu/abs/2025arXiv251208803E/abstract>`__
+  — Euclid quasar spectroscopy paper using early Euclid/NISP spectra, relevant
+  for quasar identification, redshift measurement, and composite-spectrum work.
+
 Balmer continuum and high-order Balmer lines
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -141,6 +149,14 @@ Near-infrared AGN lines
 - `Garcia-Rissmann et al. (2012), 2012ApJ...751....7G <https://ui.adsabs.harvard.edu/abs/2012ApJ...751....7G/abstract>`__
   — near-infrared Fe II template derived from I Zw 1.
 
+- `Euclid Collaboration: Lusso et al. (2024), 2024A&A...685A.108E <https://ui.adsabs.harvard.edu/abs/2024A%26A...685A.108E/abstract>`__
+  — Euclid preparation study of active-galactic-nucleus spectroscopy with the
+  NISP slitless spectroscopic mode.
+
+- `Euclid Collaboration: Fu et al. (2025), 2025arXiv251208803E <https://ui.adsabs.harvard.edu/abs/2025arXiv251208803E/abstract>`__
+  — Euclid quasar spectroscopy paper using early Euclid/NISP spectra, relevant
+  for quasar identification, redshift measurement, and composite-spectrum work.
+
 Emission-line physics and diagnostics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -205,7 +221,8 @@ Quasar/AGN spectral-fitting packages
 
 - `qsofitmore <https://github.com/rudolffu/qsofitmore>`__
   — extended PyQSOFit-family package for UV–optical quasar spectra, DESI/LAMOST
-  use cases, Fe II/Balmer updates, and host-decomposition experiments.
+  use cases, Fe II/Balmer updates, and host-decomposition experiments; described in
+  `Fu et al. (2022), 2022ApJS..261...32F <https://ui.adsabs.harvard.edu/abs/2022ApJS..261...32F/abstract>`__.
 
 - `QSFit <https://github.com/gcalderone/qsfit>`__
   — IDL-based automatic optical AGN spectral-fitting code; simultaneously fits
