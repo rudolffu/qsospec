@@ -13,12 +13,18 @@ from ..config import (
     GlobalContinuumConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
+    LyaNVComplexConfig,
     MgIIComplexConfig,
     UncertaintyConfig,
 )
 from ..complex_recipes import ComplexRecipe
 from .. import complex_recipes
-from .complexes import fit_generic_complex, resolve_recipe_coverage
+from .complexes import (
+    classify_lya_coverage,
+    fit_generic_complex,
+    fit_lya_nv_complex,
+    resolve_recipe_coverage,
+)
 from ..global_result import (
     EmissionComplexResult,
     GlobalContinuumResult,
@@ -2192,12 +2198,32 @@ def fit_global_lines(
     halpha_config: Optional[HalphaComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     *,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     host_model_on_grid: Optional[np.ndarray] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> WorkflowResult:
     """Fit the global continuum and adaptively selected emission recipes."""
 
-    global_cfg = global_config or GlobalContinuumConfig()
+    lya_cfg = lya_nv_config or LyaNVComplexConfig()
+    requested_recipes = _resolve_requested_recipes(complexes)
+    requested_recipes = [
+        complex_recipes.lya_nv_recipe(lya_cfg)
+        if recipe.id == "lya_nv"
+        else recipe
+        for recipe in requested_recipes
+    ]
+    lya_coverage = (
+        classify_lya_coverage(spectrum, lya_cfg)
+        if any(recipe.id == "lya_nv" for recipe in requested_recipes)
+        else None
+    )
+    global_cfg = (
+        GlobalContinuumConfig.lya_safe()
+        if global_config is None
+        and lya_coverage is not None
+        and lya_coverage.fit_allowed
+        else global_config or GlobalContinuumConfig()
+    )
     hbeta_cfg = hbeta_config or HbetaComplexConfig()
     mgii_cfg = mgii_config or MgIIComplexConfig()
     halpha_cfg = halpha_config or HalphaComplexConfig()
@@ -2205,11 +2231,18 @@ def fit_global_lines(
     continuum_initial = fit_global_continuum(
         spectrum, global_cfg, compute_covariance=uncertainty_cfg.covariance
     )
-    requested_recipes = _resolve_requested_recipes(complexes)
     selected_recipes: List[ComplexRecipe] = []
     complex_statuses: Dict[str, str] = {}
     coverage_by_recipe = {}
     for recipe in requested_recipes:
+        if recipe.id == "lya_nv":
+            coverage_by_recipe[recipe.id] = lya_coverage
+            if lya_coverage.status == "not_covered":
+                complex_statuses[recipe.id] = "not_covered"
+                continue
+            selected_recipes.append(recipe)
+            complex_statuses[recipe.id] = lya_coverage.status
+            continue
         coverage = resolve_recipe_coverage(spectrum, recipe)
         coverage_by_recipe[recipe.id] = coverage
         if coverage.status == "not_covered":
@@ -2482,12 +2515,17 @@ def fit_global_lines(
             uncertainty_cfg,
             mgii_cfg,
             halpha_cfg,
+            lya_cfg,
         )
         if fit is None:
             complex_statuses[recipe.id] = "not_covered"
             continue
         line_complexes[recipe.id] = fit
-        complex_statuses[recipe.id] = "fit" if fit.success else "failed"
+        complex_statuses[recipe.id] = (
+            str(fit.metadata.get("lya_fit_status", "failed"))
+            if recipe.id == "lya_nv"
+            else "fit" if fit.success else "failed"
+        )
         warnings.extend(
             warning for warning in fit.warnings
             if warning.code in ("optional_line_fit_failed", "recipe_backend_not_implemented")
@@ -2562,6 +2600,23 @@ def fit_global_lines(
         "line_complex_status": dict(complex_statuses),
         "requested_complex_recipes": tuple(recipe.id for recipe in requested_recipes),
         "selected_complex_recipes": tuple(recipe.id for recipe in selected_recipes),
+        "continuum_preset": (
+            "lya_safe"
+            if global_config is None
+            and lya_coverage is not None
+            and lya_coverage.fit_allowed
+            else "explicit" if global_config is not None else "default"
+        ),
+        "lya_coverage_status": (
+            lya_coverage.status if lya_coverage is not None else "not_requested"
+        ),
+        "lya_valid_pixel_fraction": (
+            lya_coverage.valid_pixel_fraction
+            if lya_coverage is not None else 0.0
+        ),
+        "lya_edge_truncated": bool(
+            lya_coverage is not None and lya_coverage.edge_truncated
+        ),
     }
     continuum.metadata.update(
         {
@@ -2601,6 +2656,7 @@ def fit_global_lines(
             hbeta_cfg,
             mgii_cfg,
             halpha_cfg,
+            lya_cfg,
             int(uncertainty_cfg.monte_carlo_trials),
             uncertainty_cfg.random_seed,
             requested_recipes,
@@ -2706,6 +2762,7 @@ def _fit_selected_recipe(
     uncertainty: UncertaintyConfig,
     mgii_config: MgIIComplexConfig,
     halpha_config: HalphaComplexConfig,
+    lya_nv_config: LyaNVComplexConfig,
 ) -> Optional[EmissionComplexResult]:
     try:
         if recipe.backend == "mgii_adapter":
@@ -2715,6 +2772,14 @@ def _fit_selected_recipe(
         elif recipe.backend == "halpha_adapter":
             result = fit_halpha_complex(
                 spectrum, continuum, halpha_config, compute_covariance=uncertainty.covariance
+            )
+        elif recipe.backend == "lya_adapter":
+            result = fit_lya_nv_complex(
+                spectrum,
+                continuum,
+                recipe,
+                lya_nv_config,
+                compute_covariance=uncertainty.covariance,
             )
         elif recipe.backend == "generic":
             result = fit_generic_complex(
@@ -2785,6 +2850,7 @@ def _run_workflow_mc(
     hbeta_config,
     mgii_config,
     halpha_config,
+    lya_nv_config,
     n_trials,
     seed,
     recipes,
@@ -2810,6 +2876,7 @@ def _run_workflow_mc(
                 mgii_config,
                 halpha_config,
                 UncertaintyConfig(covariance=True, monte_carlo_trials=0),
+                lya_nv_config=lya_nv_config,
                 complexes=recipes,
             )
             values = {}

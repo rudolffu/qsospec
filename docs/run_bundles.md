@@ -127,4 +127,9 @@ qsospec.render_qa(run, warning_codes=["optional_line_fit_failed"], sample=20)
 
 Batch fitting does not create QA figures by default. `render_qa(...)` can
 select object IDs, warning codes, failures, deterministic random samples, or a
-query against the object table.
+query against the object table. Main QA figures distinguish final fitted
+pixels, pPXF emission masks, and configured not-modelled windows. Run bundles
+written with schema version 2 or later preserve the pPXF masks exactly;
+schema-version-1 bundles infer them from their archived host configuration
+when possible. Schema version 3 additionally preserves per-complex metadata
+and excluded-pixel masks, including Lyα absorption rejection.

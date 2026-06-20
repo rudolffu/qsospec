@@ -10,6 +10,7 @@ import numpy as np
 
 from .. import lines
 from ..complex_recipes import ComponentRecipe, ComplexRecipe
+from ..config import LyaNVComplexConfig
 from ..global_result import EmissionComplexResult, GlobalContinuumResult
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
@@ -35,6 +36,21 @@ class RecipeCoverage:
     @property
     def covered(self) -> bool:
         return self.status in ("covered", "partially_covered")
+
+
+@dataclass(frozen=True)
+class LyaCoverage:
+    status: str
+    coverage_fraction: float
+    valid_pixel_fraction: float
+    red_side_valid_fraction: float
+    n_valid_pixels: int
+    center_safely_covered: bool
+    edge_truncated: bool
+
+    @property
+    def fit_allowed(self) -> bool:
+        return self.status in ("full", "red_side_only")
 
 
 def _center_covered(center: float, valid_min: float, valid_max: float, margin: float) -> bool:
@@ -194,6 +210,163 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
     )
 
 
+def classify_lya_coverage(
+    spectrum: Spectrum,
+    config: Optional[LyaNVComplexConfig] = None,
+) -> LyaCoverage:
+    """Classify Lyα/N V coverage without treating the forest as continuum."""
+
+    cfg = config or LyaNVComplexConfig()
+    wave = spectrum.wave_rest
+    valid = spectrum.valid_mask
+    lo, hi = cfg.window
+    valid_wave = wave[valid]
+    if valid_wave.size == 0:
+        return LyaCoverage(
+            "not_covered", 0.0, 0.0, 0.0, 0, False, False
+        )
+    valid_min = float(np.min(valid_wave))
+    valid_max = float(np.max(valid_wave))
+    overlap = max(0.0, min(hi, valid_max) - max(lo, valid_min))
+    coverage_fraction = overlap / (hi - lo)
+    window_samples = (wave >= lo) & (wave <= hi)
+    red_samples = (wave >= 1215.67) & (wave <= cfg.red_side_limit)
+    n_valid_pixels = int(np.count_nonzero(valid & window_samples))
+    valid_pixel_fraction = (
+        float(np.count_nonzero(valid & window_samples))
+        / float(np.count_nonzero(window_samples))
+        if np.any(window_samples) else 0.0
+    )
+    red_side_valid_fraction = (
+        float(np.count_nonzero(valid & red_samples))
+        / float(np.count_nonzero(red_samples))
+        if np.any(red_samples) else 0.0
+    )
+    center_safe = _center_covered(
+        1215.67,
+        valid_min,
+        valid_max,
+        cfg.edge_margin_kms,
+    )
+    full = (
+        valid_min <= cfg.full_blue_limit
+        and valid_max >= cfg.red_side_limit
+        and coverage_fraction >= cfg.full_min_coverage_fraction
+        and valid_pixel_fraction >= cfg.full_min_coverage_fraction
+        and n_valid_pixels >= cfg.min_valid_pixels
+    )
+    red_side_only = (
+        not full
+        and center_safe
+        and valid_max >= cfg.red_side_limit
+        and red_side_valid_fraction >= cfg.red_side_min_valid_fraction
+        and n_valid_pixels >= cfg.min_valid_pixels
+    )
+    useful = (
+        coverage_fraction >= cfg.minimum_useful_overlap_fraction
+        and n_valid_pixels >= cfg.min_valid_pixels
+    )
+    if full:
+        status = "full"
+    elif red_side_only:
+        status = "red_side_only"
+    elif useful:
+        status = "edge_truncated"
+    else:
+        status = "not_covered"
+    return LyaCoverage(
+        status=status,
+        coverage_fraction=float(coverage_fraction),
+        valid_pixel_fraction=float(valid_pixel_fraction),
+        red_side_valid_fraction=float(red_side_valid_fraction),
+        n_valid_pixels=n_valid_pixels,
+        center_safely_covered=bool(center_safe),
+        edge_truncated=status == "edge_truncated",
+    )
+
+
+def _lya_recipe_coverage(
+    spectrum: Spectrum,
+    recipe: ComplexRecipe,
+    coverage: LyaCoverage,
+) -> RecipeCoverage:
+    active = tuple(component.id for component in recipe.components if component.enabled)
+    disabled = tuple(component.id for component in recipe.components if not component.enabled)
+    fit_windows = (recipe.fit_window,) if coverage.status != "not_covered" else ()
+    warning = ()
+    if coverage.status in ("edge_truncated", "not_covered"):
+        warning = (
+            FitWarning(
+                code=f"lya_{coverage.status}",
+                message=(
+                    "Lyα/N V fitting was skipped because the complex is "
+                    f"{coverage.status.replace('_', ' ')}."
+                ),
+                severity="info",
+                context={
+                    "coverage_fraction": coverage.coverage_fraction,
+                    "valid_pixel_fraction": coverage.valid_pixel_fraction,
+                },
+            ),
+        )
+    return RecipeCoverage(
+        status=(
+            "covered"
+            if coverage.fit_allowed
+            else "not_covered"
+        ),
+        recipe=recipe,
+        active_component_ids=active if coverage.fit_allowed else (),
+        disabled_component_ids=disabled if coverage.fit_allowed else active,
+        missing_required_line_ids=(),
+        coverage_fraction=coverage.coverage_fraction,
+        n_valid_pixels=coverage.n_valid_pixels,
+        fit_windows=fit_windows,
+        covered_line_ids=recipe.required_line_ids if coverage.fit_allowed else (),
+        qa_all_lines_covered=coverage.status == "full",
+        warnings=warning,
+    )
+
+
+def lya_absorption_mask(
+    wave: np.ndarray,
+    standardized_residual: np.ndarray,
+    fit_mask: np.ndarray,
+    config: Optional[LyaNVComplexConfig] = None,
+) -> np.ndarray:
+    """Mask narrow contiguous negative-residual runs in the Lyα complex."""
+
+    cfg = config or LyaNVComplexConfig()
+    wave = np.asarray(wave, dtype=float)
+    residual = np.asarray(standardized_residual, dtype=float)
+    fit_mask = np.asarray(fit_mask, dtype=bool)
+    candidates = fit_mask & np.isfinite(residual) & (
+        residual < -cfg.absorption_sigma
+    )
+    indices = np.flatnonzero(candidates)
+    output = np.zeros_like(fit_mask)
+    if indices.size == 0:
+        return output
+    breaks = np.flatnonzero(np.diff(indices) > 1) + 1
+    for group in np.split(indices, breaks):
+        if group.size == 0:
+            continue
+        width_kms = (
+            abs(float(wave[group[-1]] - wave[group[0]]))
+            / 1215.67
+            * C_KMS
+        )
+        if width_kms > cfg.absorption_max_width_kms:
+            continue
+        start = max(int(group[0]) - cfg.absorption_dilation_pixels, 0)
+        stop = min(
+            int(group[-1]) + cfg.absorption_dilation_pixels + 1,
+            output.size,
+        )
+        output[start:stop] = True
+    return output & fit_mask
+
+
 def _profile(
     wave: np.ndarray,
     rest_center: float,
@@ -265,7 +438,9 @@ class GenericComplexContext:
         self.initial: List[float] = []
         self.lower: List[float] = []
         self.upper: List[float] = []
-        self.instances: List[Tuple[str, ComponentRecipe, Tuple[str, ...], str]] = []
+        self.instances: List[
+            Tuple[str, ComponentRecipe, Tuple[str, ...], str, str]
+        ] = []
         scale = max(float(flux_scale), 1.0e-8)
 
         for component in self.components_config:
@@ -273,21 +448,39 @@ class GenericComplexContext:
             for index in range(component.multiplicity):
                 suffix = f"{index + 1}" if component.multiplicity > 1 else ""
                 instance_id = f"{component.id}{suffix}"
-                group = component.kinematic_group or instance_id
+                velocity_group = (
+                    component.velocity_group
+                    or component.kinematic_group
+                    or instance_id
+                )
+                width_group = (
+                    component.width_group
+                    or component.kinematic_group
+                    or instance_id
+                )
                 if component.multiplicity > 1:
-                    group = f"{group}{index + 1}"
+                    velocity_group = f"{velocity_group}{index + 1}"
+                    width_group = f"{width_group}{index + 1}"
                 flux_name = (
                     f"{component.fixed_ratio_to}.flux"
                     if component.fixed_ratio_to is not None
                     else f"{instance_id}.flux"
                 )
-                self.instances.append((instance_id, component, component.line_ids, group))
+                self.instances.append(
+                    (
+                        instance_id,
+                        component,
+                        component.line_ids,
+                        velocity_group,
+                        width_group,
+                    )
+                )
                 if component.fixed_ratio_to is None and flux_name not in self.names:
                     lo = -np.inf if component.flux_bounds[0] is None else component.flux_bounds[0]
                     hi = np.inf if component.flux_bounds[1] is None else component.flux_bounds[1]
                     self._add(flux_name, scale / max(len(self.components_config), 1), lo, hi)
-                velocity_name = f"{group}.velocity_kms"
-                width_name = f"{group}.fwhm_kms"
+                velocity_name = f"{velocity_group}.velocity_kms"
+                width_name = f"{width_group}.fwhm_kms"
                 if velocity_name not in self.names:
                     self._add(
                         velocity_name, 0.0,
@@ -344,9 +537,9 @@ class GenericComplexContext:
         return float(theta[self.index[name]])
 
     def _instance_basis(self, instance, nonlinear_values, wave):
-        _, component, line_ids, group = instance
-        velocity_name = f"{group}.velocity_kms"
-        width_name = f"{group}.fwhm_kms"
+        _, component, line_ids, velocity_group, width_group = instance
+        velocity_name = f"{velocity_group}.velocity_kms"
+        width_name = f"{width_group}.fwhm_kms"
         basis = np.zeros_like(wave)
         d_velocity = np.zeros_like(wave)
         d_width = np.zeros_like(wave)
@@ -369,7 +562,7 @@ class GenericComplexContext:
         derivative_columns = [[] for _ in self.nonlinear_names] if need_derivatives else None
         by_flux: Dict[str, List[Tuple[Any, ...]]] = {}
         for instance in self.instances:
-            instance_id, component, _, _ = instance
+            instance_id, component, _, _, _ = instance
             flux_name = (
                 f"{component.fixed_ratio_to}.flux"
                 if component.fixed_ratio_to is not None
@@ -389,9 +582,10 @@ class GenericComplexContext:
                 for instance in by_flux.get(linear_name, ()):
                     values = self._instance_basis(instance, nonlinear_values, wave)
                     basis += values[0]
-                    group = instance[3]
-                    velocity_name = f"{group}.velocity_kms"
-                    width_name = f"{group}.fwhm_kms"
+                    velocity_group = instance[3]
+                    width_group = instance[4]
+                    velocity_name = f"{velocity_group}.velocity_kms"
+                    width_name = f"{width_group}.fwhm_kms"
                     derivatives[velocity_name] = derivatives.get(
                         velocity_name, np.zeros_like(wave)
                     ) + values[1]
@@ -415,7 +609,7 @@ class GenericComplexContext:
             name: self._value(theta, name) for name in self.nonlinear_names
         }
         for instance in self.instances:
-            instance_id, component, _, _ = instance
+            instance_id, component, _, _, _ = instance
             flux_name = (
                 f"{component.fixed_ratio_to}.flux"
                 if component.fixed_ratio_to is not None
@@ -471,6 +665,8 @@ def fit_generic_complex(
     recipe: ComplexRecipe,
     *,
     compute_covariance: bool = True,
+    coverage_override: Optional[RecipeCoverage] = None,
+    fit_mask_override: Optional[np.ndarray] = None,
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
@@ -481,7 +677,7 @@ def fit_generic_complex(
         _solve_once_with_fallback,
     )
 
-    coverage = resolve_recipe_coverage(spectrum, recipe)
+    coverage = coverage_override or resolve_recipe_coverage(spectrum, recipe)
     if coverage.status == "not_covered":
         return None
     if coverage.status == "missing_required":
@@ -492,6 +688,13 @@ def fit_generic_complex(
     for window in recipe.mask_windows:
         mask &= ~((spectrum.wave_rest >= window[0]) & (spectrum.wave_rest <= window[1]))
     mask &= spectrum.valid_mask
+    if fit_mask_override is not None:
+        override = np.asarray(fit_mask_override, dtype=bool)
+        if override.shape != mask.shape:
+            raise ValueError("fit_mask_override must match the spectrum grid.")
+        mask &= override
+    if np.count_nonzero(mask) < recipe.min_valid_pixels:
+        return _failed_result(spectrum, continuum, recipe, coverage)
     line_flux = spectrum.flux - continuum.model
     if recipe.continuum_mode != "fixed_global":
         fit_flux = spectrum.flux if recipe.continuum_mode != "absent" else line_flux
@@ -561,7 +764,13 @@ def fit_generic_complex(
             )
             candidate_snrs = []
             for component in candidate_components:
-                for instance_id, instance_component, _, _ in context.instances:
+                for (
+                    instance_id,
+                    instance_component,
+                    _,
+                    _,
+                    _,
+                ) in context.instances:
                     if instance_component.id != component.id:
                         continue
                     flux_name = (
@@ -679,7 +888,13 @@ def fit_generic_complex(
             Tuple[str, str],
             List[Tuple[float, float, float, str]],
         ] = {}
-        for instance_id, component, line_ids, group in context.instances:
+        for (
+            instance_id,
+            component,
+            line_ids,
+            velocity_group,
+            width_group,
+        ) in context.instances:
             flux_name = (
                 f"{component.fixed_ratio_to}.flux"
                 if component.fixed_ratio_to is not None
@@ -687,8 +902,10 @@ def fit_generic_complex(
             )
             ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
             flux = context._value(theta, flux_name) / ratio
-            velocity = context._value(theta, f"{group}.velocity_kms")
-            width = context._value(theta, f"{group}.fwhm_kms")
+            velocity = context._value(
+                theta, f"{velocity_group}.velocity_kms"
+            )
+            width = context._value(theta, f"{width_group}.fwhm_kms")
             for feature in line_ids:
                 grouped.setdefault((feature, component.role), []).append(
                     (flux, velocity, width, component.profile)
@@ -798,3 +1015,235 @@ def fit_generic_complex(
         context.components(result.x, spectrum.wave_rest), mask, fit_warnings, metadata,
         result,
     )
+
+
+def _lya_skipped_result(
+    spectrum: Spectrum,
+    continuum: GlobalContinuumResult,
+    recipe: ComplexRecipe,
+    coverage: LyaCoverage,
+) -> EmissionComplexResult:
+    recipe_coverage = _lya_recipe_coverage(spectrum, recipe, coverage)
+    result = _failed_result(spectrum, continuum, recipe, recipe_coverage)
+    result.metadata.update(
+        {
+            "lya_coverage_status": coverage.status,
+            "lya_fit_status": coverage.status,
+            "lya_fit_reliable": False,
+            "lya_edge_truncated": coverage.edge_truncated,
+            "lya_absorption_masked_fraction": 0.0,
+            "lya_valid_pixel_fraction": coverage.valid_pixel_fraction,
+            "lya_continuum_extrapolated": True,
+            "lya_warning_messages": tuple(
+                warning.message for warning in result.warnings
+            ),
+        }
+    )
+    result.excluded_mask = np.zeros_like(spectrum.valid_mask)
+    return result
+
+
+def fit_lya_nv_complex(
+    spectrum: Spectrum,
+    continuum: GlobalContinuumResult,
+    recipe: ComplexRecipe,
+    config: Optional[LyaNVComplexConfig] = None,
+    *,
+    compute_covariance: bool = True,
+) -> EmissionComplexResult:
+    """Fit Lyα/N V with coverage classification and one absorption refit."""
+
+    cfg = config or LyaNVComplexConfig()
+    coverage = classify_lya_coverage(spectrum, cfg)
+    if not coverage.fit_allowed:
+        return _lya_skipped_result(spectrum, continuum, recipe, coverage)
+    recipe_coverage = _lya_recipe_coverage(spectrum, recipe, coverage)
+    preliminary = fit_generic_complex(
+        spectrum,
+        continuum,
+        recipe,
+        compute_covariance=compute_covariance,
+        coverage_override=recipe_coverage,
+    )
+    if preliminary is None or not preliminary.success:
+        result = preliminary or _lya_skipped_result(
+            spectrum, continuum, recipe, coverage
+        )
+        result.metadata.update(
+            {
+                "lya_coverage_status": coverage.status,
+                "lya_fit_status": "failed",
+                "lya_fit_reliable": False,
+                "lya_edge_truncated": False,
+                "lya_absorption_masked_fraction": 0.0,
+                "lya_valid_pixel_fraction": coverage.valid_pixel_fraction,
+                "lya_continuum_extrapolated": True,
+            }
+        )
+        result.metadata["lya_warning_messages"] = tuple(
+            warning.message for warning in result.warnings
+        )
+        result.excluded_mask = np.zeros_like(spectrum.valid_mask)
+        return result
+
+    standardized = np.full_like(spectrum.flux, np.nan, dtype=float)
+    preliminary_fit = np.asarray(preliminary.fit_mask, dtype=bool)
+    standardized[preliminary_fit] = (
+        spectrum.flux[preliminary_fit]
+        - continuum.model[preliminary_fit]
+        - preliminary.model[preliminary_fit]
+    ) / spectrum.err[preliminary_fit]
+    excluded = lya_absorption_mask(
+        spectrum.wave_rest,
+        standardized,
+        preliminary_fit,
+        cfg,
+    )
+    result = preliminary
+    if np.any(excluded):
+        refit = fit_generic_complex(
+            spectrum,
+            continuum,
+            recipe,
+            compute_covariance=compute_covariance,
+            coverage_override=recipe_coverage,
+            fit_mask_override=preliminary_fit & ~excluded,
+        )
+        if refit is not None and refit.success:
+            result = refit
+        else:
+            result.warnings.append(
+                FitWarning(
+                    code="lya_absorption_refit_failed",
+                    message=(
+                        "The Lyα absorption-masked refit failed; "
+                        "the preliminary fit was retained."
+                    ),
+                )
+            )
+    result.excluded_mask = excluded
+    masked_fraction = (
+        float(np.count_nonzero(excluded))
+        / float(np.count_nonzero(preliminary_fit))
+        if np.any(preliminary_fit) else 0.0
+    )
+    flux = result.metrics.get("lya_1216_broad_flux_input", np.nan)
+    flux_error = result.metric_errors.get(
+        "lya_1216_broad_flux_input", np.nan
+    )
+    flux_snr = (
+        float(flux / flux_error)
+        if np.isfinite(flux)
+        and np.isfinite(flux_error)
+        and flux_error > 0
+        else np.nan
+    )
+    active = np.asarray(
+        getattr(
+            result.optimizer_result,
+            "active_mask",
+            np.zeros(len(result.param_values)),
+        ),
+        dtype=int,
+    )
+    parameter_names = list(result.param_values)
+    lya_at_bound = any(
+        active[index] != 0
+        for index, name in enumerate(parameter_names)
+        if (
+            name.startswith("lya_broad")
+            or name.startswith("lya_nv_broad_width")
+        )
+        and (
+            name.endswith(".velocity_kms")
+            or name.endswith(".fwhm_kms")
+        )
+    )
+    reliable = bool(
+        result.success
+        and coverage.status == "full"
+        and compute_covariance
+        and np.isfinite(flux_snr)
+        and flux_snr >= cfg.reliable_min_flux_snr
+        and masked_fraction <= cfg.reliable_max_absorption_fraction
+        and not lya_at_bound
+    )
+    if coverage.status == "red_side_only":
+        result.warnings.append(
+            FitWarning(
+                code="lya_red_side_only",
+                message=(
+                    "Lyα was fitted from red-side-limited coverage; "
+                    "measurements are retained but unreliable."
+                ),
+                severity="info",
+            )
+        )
+    if masked_fraction > cfg.reliable_max_absorption_fraction:
+        result.warnings.append(
+            FitWarning(
+                code="lya_absorption_dominated",
+                message=(
+                    "The Lyα fit masked too much absorption to be reliable."
+                ),
+                context={"masked_fraction": masked_fraction},
+            )
+        )
+    if not np.isfinite(flux_snr) or flux_snr < cfg.reliable_min_flux_snr:
+        result.warnings.append(
+            FitWarning(
+                code="lya_low_flux_snr",
+                message="The Lyα broad-line flux S/N is too low for a reliable fit.",
+                severity="info",
+                context={
+                    "flux_snr": flux_snr,
+                    "minimum_flux_snr": cfg.reliable_min_flux_snr,
+                },
+            )
+        )
+    if lya_at_bound:
+        result.warnings.append(
+            FitWarning(
+                code="lya_kinematics_at_bound",
+                message=(
+                    "One or more Lyα width or velocity parameters finished "
+                    "on an optimizer bound."
+                ),
+                severity="info",
+            )
+        )
+    if not compute_covariance:
+        result.warnings.append(
+            FitWarning(
+                code="lya_reliability_covariance_unavailable",
+                message=(
+                    "Lyα reliability requires covariance-based flux errors."
+                ),
+                severity="info",
+            )
+        )
+    fit_status = (
+        "fit"
+        if reliable
+        else "limited"
+        if coverage.status == "red_side_only"
+        else "unreliable"
+    )
+    result.metadata.update(
+        {
+            "lya_coverage_status": coverage.status,
+            "lya_fit_status": fit_status,
+            "lya_fit_reliable": reliable,
+            "lya_edge_truncated": False,
+            "lya_absorption_masked_fraction": masked_fraction,
+            "lya_valid_pixel_fraction": coverage.valid_pixel_fraction,
+            "lya_red_side_valid_fraction": coverage.red_side_valid_fraction,
+            "lya_continuum_extrapolated": True,
+            "lya_flux_snr": flux_snr,
+            "lya_kinematics_at_bound": bool(lya_at_bound),
+            "lya_warning_messages": tuple(
+                warning.message for warning in result.warnings
+            ),
+        }
+    )
+    return result

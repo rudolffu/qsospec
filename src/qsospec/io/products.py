@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 import re
 from typing import Dict, Mapping, Optional, Tuple, Union
@@ -21,10 +22,16 @@ class GlobalQAPlotConfig:
     """Rendering options for the global continuum and emission-line QA plot."""
 
     figure_width: float = 10.5
-    figure_height: float = 6.2
+    figure_height: float = 8.0
     max_zoom_panels: int = 4
-    show_smoothed_data: bool = False
+    show_smoothed_data: bool = True
+    smooth_original_spectrum_for_display: bool = False
     smoothing_window_pixels: int = 7
+    show_residual_panel: bool = True
+    show_fit_regions: bool = True
+    unmodelled_windows: Tuple[Tuple[float, float, str], ...] = (
+        (1170.0, 1275.0, "Lyα"),
+    )
     show_host_context_in_overview: bool = True
     object_name: Optional[str] = None
     object_label: Optional[str] = None
@@ -39,8 +46,45 @@ class GlobalQAPlotConfig:
             raise ValueError("max_zoom_panels must be at least one.")
         if self.smoothing_window_pixels < 1 or self.smoothing_window_pixels % 2 == 0:
             raise ValueError("smoothing_window_pixels must be a positive odd integer.")
+        for window in self.unmodelled_windows:
+            if len(window) != 3 or not float(window[0]) < float(window[1]):
+                raise ValueError(
+                    "Each unmodelled window must be (lower, upper, label)."
+                )
         if self.output_format not in ("png", "pdf", "both"):
             raise ValueError("output_format must be 'png', 'pdf', or 'both'.")
+
+
+_SCIENCE_PLOT_STYLE = {
+    "font.family": "serif",
+    "font.serif": [
+        "Times New Roman",
+        "Times",
+        "STIX Two Text",
+        "DejaVu Serif",
+    ],
+    "font.size": 12.0,
+    "axes.titlesize": 12.0,
+    "axes.labelsize": 14.0,
+    "xtick.labelsize": 12.0,
+    "ytick.labelsize": 12.0,
+    "legend.fontsize": 11.0,
+    "figure.titlesize": 16.0,
+    "mathtext.fontset": "stix",
+}
+
+
+def _science_plot_style(function):
+    """Render one plot without mutating process-global Matplotlib settings."""
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        import matplotlib.pyplot as plt
+
+        with plt.rc_context(_SCIENCE_PLOT_STYLE):
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 def _normalized_file_label(value: object) -> str:
@@ -126,6 +170,7 @@ def _percentile_limits(values, percentiles: Tuple[float, float] = (1.0, 99.0), p
     return float(lo - margin), float(hi + margin)
 
 
+@_science_plot_style
 def _plot_global(
     result: WorkflowResult,
     paths: Union[Path, Mapping[str, Path]],
@@ -209,35 +254,71 @@ _COMPLEX_WINDOWS = {
     if recipe.fit_window[1] > recipe.fit_window[0] + 1.0
 }
 _COMPLEX_WINDOWS.update({"hbeta": (4600.0, 5120.0), "halpha": (6400.0, 6800.0)})
-_SPECIES_COLORS = {
-    "MgII": "tab:blue",
-    "Hb": "tab:cyan",
-    "HeII": "tab:pink",
-    "OIII": "tab:green",
-    "Ha": "tab:red",
-    "NII": "tab:purple",
-    "SII": "tab:brown",
+_TCC_COLORS = {
+    "data": "#a8a19d",  # 鼠毛
+    "data_smooth": "#686b68",  # 石涅
+    "total_model": "#28292b",  # 元青
+    "continuum": "#ee781f",  # 金红
+    "host": "#785034",  # 驼褐
+    "powerlaw": "#b03766",  # 魏红
+    "feii": "#7b5aa3",  # 青莲
+    "balmer_cont": "#db9c4b",  # 库金
+    "broad_total": "#014a8f",  # 空青
+    "broad_component": "#30aecf",  # 法蓝
+    "narrow": "#007d62",  # 孔雀绿
+    "outflow": "#d80835",  # 朱砂
+    "line_marker": "#6f9bc6",  # 挼蓝
+    "unmodelled_span": "#e4ecf0",  # 卵白
+    "masked_span": "#ddd4d3",  # 葭灰
 }
-_IRON_STYLE = ("#7570b3", "-")
-_BALMER_STYLE = ("#b8860b", "-")
+_SPECIES_COLORS = {
+    "MgII": _TCC_COLORS["broad_component"],
+    "Hb": _TCC_COLORS["broad_component"],
+    "HeII": _TCC_COLORS["outflow"],
+    "OIII": _TCC_COLORS["narrow"],
+    "Ha": _TCC_COLORS["outflow"],
+    "NII": _TCC_COLORS["narrow"],
+    "SII": _TCC_COLORS["host"],
+}
+_IRON_STYLE = (_TCC_COLORS["feii"], ":")
+_BALMER_STYLE = (_TCC_COLORS["balmer_cont"], "-.")
 _CONTINUUM_STYLES = {
-    "power_law": ("#cc79a7", "-"),
+    "power_law": (_TCC_COLORS["powerlaw"], "--"),
     "uv_iron": _IRON_STYLE,
     "optical_iron": _IRON_STYLE,
     "balmer_bound_free": _BALMER_STYLE,
     "balmer_high_order_series": _BALMER_STYLE,
 }
-_COMBINED_BROAD_STYLE = {"color": "#1f77b4", "linestyle": "-", "linewidth": 1.6}
-_BROAD_COMPONENT_STYLE = {"color": "#17becf", "linestyle": "-", "linewidth": 0.9}
-_NARROW_STYLE = {"color": "#2ca02c", "linestyle": "-", "linewidth": 1.15}
-_WING_STYLE = {"color": "#b2182b", "linestyle": "-", "linewidth": 1.0}
-_HOST_STYLE = {"color": "#8c564b", "linestyle": "-", "linewidth": 1.25}
+_COMBINED_BROAD_STYLE = {
+    "color": _TCC_COLORS["broad_total"],
+    "linestyle": "-",
+    "linewidth": 1.6,
+}
+_BROAD_COMPONENT_STYLE = {
+    "color": _TCC_COLORS["broad_component"],
+    "linestyle": "-",
+    "linewidth": 0.9,
+}
+_NARROW_STYLE = {
+    "color": _TCC_COLORS["narrow"],
+    "linestyle": "-",
+    "linewidth": 1.15,
+}
+_WING_STYLE = {
+    "color": _TCC_COLORS["outflow"],
+    "linestyle": "--",
+    "linewidth": 1.0,
+}
+_HOST_STYLE = {
+    "color": _TCC_COLORS["host"],
+    "linestyle": "--",
+    "linewidth": 1.25,
+}
 _MAJOR_EMISSION_LINES = (
+    (1215.67, r"Ly$\alpha$"),
     (1549.06, r"C IV"),
     (1908.73, r"C III]"),
     (2798.75, r"Mg II"),
-    (3728.47, r"[O II] 3728"),
-    (4341.68, r"H$\gamma$"),
     (4862.68, r"H$\beta$"),
     (5008.24, r"[O III] 5008"),
     (6564.61, r"H$\alpha$"),
@@ -267,13 +348,18 @@ for _recipe in complex_recipes.list_complexes():
             for line_id in _recipe.qa_labels
         )
 _ZOOM_PRIORITY = (
-    "hbeta_oiii", "hbeta", "mgii", "halpha_nii_sii", "halpha"
+    "lya_nv",
+    "hbeta_oiii",
+    "hbeta",
+    "mgii",
+    "halpha_nii_sii",
+    "halpha",
 )
 _LINE_MARKER_STYLE = {
-    "color": "0.35",
+    "color": _TCC_COLORS["line_marker"],
     "linestyle": ":",
-    "linewidth": 0.65,
-    "alpha": 0.55,
+    "linewidth": 0.8,
+    "alpha": 0.65,
 }
 
 
@@ -390,33 +476,19 @@ def _qa_overview_title(
     plot_config: Optional[GlobalQAPlotConfig] = None,
 ) -> str:
     config = plot_config or GlobalQAPlotConfig()
-    parts = []
     object_name = (
         config.object_name
         if config.object_name not in (None, "")
         else result.metadata.get("object_id")
     )
+    parts = []
     if object_name not in (None, ""):
-        if config.object_label is not None:
-            object_label = config.object_label
-        elif config.object_name not in (None, ""):
-            object_label = "Object"
-        elif str(result.spectrum.metadata.survey).lower() == "desi":
-            object_label = "DESI TARGETID"
-        else:
-            object_label = "ID"
+        object_label = config.object_label or "Object"
         parts.append(f"{object_label} {object_name}".strip())
     redshift = result.metadata.get("redshift")
     if redshift is not None and np.isfinite(redshift):
-        parts.append(f"z={float(redshift):.4f}")
-    if config.show_coordinates:
-        ra = result.metadata.get("ra")
-        dec = result.metadata.get("dec")
-        if ra is not None and np.isfinite(ra):
-            parts.append(rf"RA={float(ra):.5f}")
-        if dec is not None and np.isfinite(dec):
-            parts.append(rf"Dec={float(dec):+.5f}")
-    return " — ".join(parts)
+        parts.append(f"z = {float(redshift):.4f}")
+    return "   ".join(parts)
 
 
 def _configure_qa_axis(axis) -> None:
@@ -443,7 +515,13 @@ def _annotate_emission_lines(axis, lines, *, y_fraction: float) -> Tuple[str, ..
             if line_label.startswith("[")
             else y_fraction
         )
-        axis.axvline(line_wave, zorder=0.5, **_LINE_MARKER_STYLE)
+        axis.axvline(
+            line_wave,
+            ymin=0.88,
+            ymax=1.0,
+            zorder=0.5,
+            **_LINE_MARKER_STYLE,
+        )
         axis.text(
             line_wave,
             label_y_fraction,
@@ -453,7 +531,7 @@ def _annotate_emission_lines(axis, lines, *, y_fraction: float) -> Tuple[str, ..
             ha="center",
             va="bottom",
             fontsize=8.5,
-            color="#355f8a",
+            color=_TCC_COLORS["line_marker"],
             alpha=0.82,
         )
         labels.append(line_label)
@@ -515,8 +593,15 @@ def _has_host_context(result: WorkflowResult) -> bool:
 
 def _host_fraction_annotation(result: WorkflowResult) -> str:
     samples = result.metadata.get("continuum_samples", {})
+    valid_wave = result.spectrum.wave_rest[result.spectrum.valid_mask]
     entries = []
     for wavelength in (3000, 5100):
+        if (
+            valid_wave.size == 0
+            or wavelength < float(np.min(valid_wave))
+            or wavelength > float(np.max(valid_wave))
+        ):
+            continue
         fraction = samples.get(f"fracHost_{wavelength}")
         if fraction is not None and np.isfinite(fraction):
             entries.append(
@@ -526,6 +611,105 @@ def _host_fraction_annotation(result: WorkflowResult) -> str:
     return "\n".join(entries)
 
 
+def _final_fit_masks(
+    result: WorkflowResult,
+    config: GlobalQAPlotConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return final fitted, unmodelled, and pPXF-masked pixels."""
+
+    wave = result.spectrum.wave_rest
+    valid = result.spectrum.valid_mask
+    fitted = np.asarray(result.continuum.clip_mask, dtype=bool) & valid
+    successful_line_fit = np.zeros_like(fitted)
+    unmodelled = np.zeros_like(fitted)
+    lya_fit_successful = bool(
+        "lya_nv" in result.line_complexes
+        and result.line_complexes["lya_nv"].success
+    )
+    for name, fit in result.line_complexes.items():
+        if fit.success:
+            line_mask = np.asarray(fit.fit_mask, dtype=bool) & valid
+            fitted |= line_mask
+            successful_line_fit |= line_mask
+        elif name in _COMPLEX_WINDOWS:
+            lo, hi = _COMPLEX_WINDOWS[name]
+            unmodelled |= valid & (wave >= lo) & (wave <= hi)
+    for lo, hi, _ in config.unmodelled_windows:
+        if lya_fit_successful and lo <= 1215.67 <= hi:
+            continue
+        unmodelled |= valid & (wave >= float(lo)) & (wave <= float(hi))
+    unmodelled &= ~fitted
+    ppxf_masked = np.zeros_like(fitted)
+    if (
+        result.host_fit_mask is not None
+        and result.host_emission_mask is not None
+    ):
+        host_fit_mask = np.asarray(result.host_fit_mask, dtype=bool)
+        host_emission_mask = np.asarray(result.host_emission_mask, dtype=bool)
+        if host_fit_mask.shape == fitted.shape and host_emission_mask.shape == fitted.shape:
+            ppxf_masked = (
+                valid & host_fit_mask & host_emission_mask & ~fitted
+            )
+    return fitted, unmodelled, ppxf_masked
+
+
+def _mask_intervals(
+    wave: np.ndarray,
+    mask: np.ndarray,
+) -> Tuple[Tuple[float, float], ...]:
+    indices = np.flatnonzero(np.asarray(mask, dtype=bool))
+    if indices.size == 0:
+        return ()
+    breaks = np.flatnonzero(np.diff(indices) > 1) + 1
+    groups = np.split(indices, breaks)
+    return tuple(
+        (float(wave[group[0]]), float(wave[group[-1]]))
+        for group in groups
+        if group.size
+    )
+
+
+def _shade_mask_regions(
+    axis,
+    wave: np.ndarray,
+    unmodelled: np.ndarray,
+    ppxf_masked: np.ndarray,
+    *,
+    labels: bool,
+) -> None:
+    for index, (lo, hi) in enumerate(_mask_intervals(wave, ppxf_masked)):
+        axis.axvspan(
+            lo,
+            hi,
+            facecolor=_TCC_COLORS["masked_span"],
+            alpha=0.42,
+            linewidth=0.0,
+            zorder=-10,
+            label="masked in pPXF host fit" if labels and index == 0 else "_nolegend_",
+        )
+    for index, (lo, hi) in enumerate(_mask_intervals(wave, unmodelled)):
+        axis.axvspan(
+            lo,
+            hi,
+            facecolor=_TCC_COLORS["unmodelled_span"],
+            alpha=0.45,
+            hatch="////",
+            edgecolor=_TCC_COLORS["masked_span"],
+            linewidth=0.0,
+            zorder=-9,
+            label="not fitted / not modelled" if labels and index == 0 else "_nolegend_",
+        )
+
+
+def _deduplicated_legend_items(axis):
+    items = {}
+    for handle, label in zip(*axis.get_legend_handles_labels()):
+        if label and label != "_nolegend_" and label not in items:
+            items[label] = handle
+    return list(items.values()), list(items)
+
+
+@_science_plot_style
 def _plot_host_context(
     result: WorkflowResult,
     paths: Union[Path, Mapping[str, Path]],
@@ -553,6 +737,20 @@ def _plot_host_context(
         & np.isfinite(host)
         & np.isfinite(reconstructed_total)
     )
+    displayed_total_flux = (
+        _masked_running_median(
+            total_spectrum.flux,
+            valid_total,
+            config.smoothing_window_pixels,
+        )
+        if config.smooth_original_spectrum_for_display
+        else total_spectrum.flux
+    )
+    original_label = (
+        "original spectrum\nsmoothed for display"
+        if config.smooth_original_spectrum_for_display
+        else "original spectrum"
+    )
     valid_wave = wave[valid_total | valid_fit]
 
     fig, axes = plt.subplots(
@@ -567,10 +765,10 @@ def _plot_host_context(
 
     top_axis.plot(
         wave[valid_total],
-        total_spectrum.flux[valid_total],
+        displayed_total_flux[valid_total],
         color="0.48",
         lw=0.65,
-        label="original spectrum",
+        label=original_label,
     )
     top_axis.plot(
         wave[valid_total],
@@ -673,11 +871,15 @@ def _plot_host_context(
         "host_subtracted": bottom_upper,
     }
     result.metadata["host_context_fraction_annotation"] = fraction_text
+    result.metadata["host_context_original_spectrum_smoothed_for_display"] = (
+        bool(config.smooth_original_spectrum_for_display)
+    )
     saved = _save_figure(fig, paths)
     plt.close(fig)
     return saved
 
 
+@_science_plot_style
 def _plot_qa(
     result: WorkflowResult,
     paths: Union[Path, Mapping[str, Path]],
@@ -691,9 +893,15 @@ def _plot_qa(
         result.line_complexes,
         config.max_zoom_panels,
     )
-    result.metadata["qa_panel_count"] = 1 + len(available)
+    result.metadata["qa_panel_count"] = (
+        1 + int(config.show_residual_panel) + len(available)
+    )
     result.metadata["qa_percentiles"] = [1.0, 99.8]
-    result.metadata["qa_layout"] = "overview_top_complexes_bottom"
+    result.metadata["qa_layout"] = (
+        "overview_residual_complexes"
+        if config.show_residual_panel
+        else "overview_complexes"
+    )
     result.metadata["qa_figure_size_inches"] = [
         float(config.figure_width),
         float(config.figure_height),
@@ -702,6 +910,19 @@ def _plot_qa(
     result.metadata["qa_displayed_complexes"] = list(available)
     result.metadata["qa_omitted_complexes"] = list(omitted)
     result.metadata["qa_smoothed_data"] = bool(config.show_smoothed_data)
+    result.metadata["qa_original_spectrum_smoothed_for_display"] = bool(
+        config.smooth_original_spectrum_for_display
+    )
+    result.metadata["qa_show_fit_regions"] = bool(config.show_fit_regions)
+    result.metadata["qa_show_residual_panel"] = bool(
+        config.show_residual_panel
+    )
+    result.metadata["qa_unmodelled_windows"] = [
+        [float(lo), float(hi), str(label)]
+        for lo, hi, label in config.unmodelled_windows
+    ]
+    result.metadata["qa_plot_style"] = "qsospec_science_serif"
+    result.metadata["qa_plot_style_rc"] = dict(_SCIENCE_PLOT_STYLE)
     result.metadata["qa_smoothing_window_pixels"] = int(
         config.smoothing_window_pixels
     )
@@ -716,14 +937,52 @@ def _plot_qa(
         figsize=(config.figure_width, config.figure_height),
         constrained_layout=True,
     )
-    grid = fig.add_gridspec(2, ncols, height_ratios=(1.0, 0.82))
-    overview_axis = fig.add_subplot(grid[0, :])
-    zoom_axes = [fig.add_subplot(grid[1, index]) for index in range(ncols)]
+    if config.show_residual_panel:
+        grid = fig.add_gridspec(
+            3,
+            ncols,
+            height_ratios=(1.0, 0.28, 0.78),
+        )
+        overview_axis = fig.add_subplot(grid[0, :])
+        residual_axis = fig.add_subplot(
+            grid[1, :],
+            sharex=overview_axis,
+        )
+        zoom_row = 2
+    else:
+        grid = fig.add_gridspec(2, ncols, height_ratios=(1.0, 0.78))
+        overview_axis = fig.add_subplot(grid[0, :])
+        residual_axis = None
+        zoom_row = 1
+    zoom_axes = [
+        fig.add_subplot(grid[zoom_row, index])
+        for index in range(ncols)
+    ]
     spectrum = result.spectrum
     wave = spectrum.wave_rest
     valid = spectrum.valid_mask
     line_model = _full_line_model(result)
     full_model = result.continuum.model + line_model
+    fitted_mask, unmodelled_mask, ppxf_masked = _final_fit_masks(
+        result, config
+    )
+    if not config.show_fit_regions:
+        unmodelled_mask[:] = False
+        ppxf_masked[:] = False
+    result.metadata["qa_n_fitted_pixels"] = int(np.count_nonzero(fitted_mask))
+    result.metadata["qa_n_unmodelled_pixels"] = int(
+        np.count_nonzero(unmodelled_mask)
+    )
+    result.metadata["qa_n_ppxf_masked_pixels"] = int(
+        np.count_nonzero(ppxf_masked)
+    )
+    result.metadata["qa_host_mask_provenance"] = result.metadata.get(
+        "host_mask_provenance",
+        "exact"
+        if result.host_fit_mask is not None
+        and result.host_emission_mask is not None
+        else "unavailable",
+    )
     host_overview = bool(
         config.show_host_context_in_overview and _has_host_context(result)
     )
@@ -742,6 +1001,7 @@ def _plot_qa(
         else spectrum.flux
     )
     overview_full_model = full_model + host_model
+    overview_continuum = result.continuum.model + host_model
     overview_valid = valid.copy()
     if host_overview:
         overview_valid &= (
@@ -755,7 +1015,10 @@ def _plot_qa(
             valid,
             config.smoothing_window_pixels,
         )
-        if config.show_smoothed_data
+        if (
+            config.show_smoothed_data
+            or config.smooth_original_spectrum_for_display
+        )
         else None
     )
     smoothed_overview_data = (
@@ -764,77 +1027,66 @@ def _plot_qa(
             overview_valid,
             config.smoothing_window_pixels,
         )
-        if config.show_smoothed_data
+        if (
+            config.show_smoothed_data
+            or config.smooth_original_spectrum_for_display
+        )
         else None
     )
+    replace_original_with_smoothed = bool(
+        config.smooth_original_spectrum_for_display
+    )
+    result.metadata["qa_original_spectrum_smoothed_used"] = (
+        replace_original_with_smoothed
+    )
 
-    def plot_common(
+    def plot_observed(
         ax,
         panel_mask,
-        title,
         *,
-        data_values=None,
-        model_values=None,
-        continuum_values=None,
-        smoothed_values=None,
-        data_label="host-subtracted data",
-        model_label="full model",
-        continuum_label="total continuum",
-        host_values=None,
+        data_values,
+        smoothed_values,
+        labels,
     ):
-        data_values = spectrum.flux if data_values is None else data_values
-        model_values = full_model if model_values is None else model_values
-        continuum_values = (
-            result.continuum.model
-            if continuum_values is None
-            else continuum_values
-        )
-        ax.plot(
-            wave[panel_mask],
-            data_values[panel_mask],
-            color="0.45",
-            lw=0.65,
-            label=data_label,
-        )
+        if not replace_original_with_smoothed:
+            ax.plot(
+                wave[panel_mask],
+                data_values[panel_mask],
+                color=_TCC_COLORS["data"],
+                lw=0.45,
+                alpha=0.55,
+                zorder=1,
+                label="observed spectrum" if labels else "_nolegend_",
+            )
         if smoothed_values is not None:
             ax.plot(
                 wave[panel_mask],
                 smoothed_values[panel_mask],
-                color="0.25",
-                lw=0.8,
-                alpha=0.8,
-                label="smoothed data",
+                color=_TCC_COLORS["data_smooth"],
+                lw=0.9,
+                alpha=0.75,
+                zorder=2,
+                label=(
+                    "observed spectrum (smoothed for display)"
+                    if labels else "_nolegend_"
+                ),
             )
-        ax.plot(
-            wave[panel_mask],
-            model_values[panel_mask],
-            color="black",
-            lw=1.8,
-            label=model_label,
-        )
-        ax.plot(
-            wave[panel_mask],
-            continuum_values[panel_mask],
-            color="tab:orange",
-            lw=1.05,
-            ls="-",
-            label=continuum_label,
-        )
-        if host_values is not None:
-            ax.plot(
-                wave[panel_mask],
-                host_values[panel_mask],
-                label="host galaxy",
-                **_HOST_STYLE,
-            )
+
+    def plot_continuum_components(ax, panel_mask, *, labels):
         iron_label_used = False
         balmer_label_used = False
         for component_name, component in result.continuum.component_models.items():
             if not np.any(np.abs(component[panel_mask]) > 0):
                 continue
-            color, linestyle = _CONTINUUM_STYLES.get(component_name, ("0.5", ":"))
+            color, linestyle = _CONTINUUM_STYLES.get(
+                component_name, ("0.5", ":")
+            )
             if component_name in ("uv_iron", "optical_iron"):
-                label = "iron" if not iron_label_used else "_nolegend_"
+                label = (
+                    "Fe II"
+                    if labels and not iron_label_used
+                    else "_nolegend_"
+                )
                 iron_label_used = True
             elif component_name in (
                 "balmer_bound_free",
@@ -842,59 +1094,96 @@ def _plot_qa(
             ):
                 label = (
                     "Balmer pseudo-continuum"
-                    if not balmer_label_used
+                    if labels and not balmer_label_used
                     else "_nolegend_"
                 )
                 balmer_label_used = True
             else:
-                label = component_name.replace("_", " ")
+                label = (
+                    component_name.replace("_", " ")
+                    if labels else "_nolegend_"
+                )
             ax.plot(
                 wave[panel_mask],
                 component[panel_mask],
                 color=color,
                 ls=linestyle,
-                lw=0.75,
+                lw=0.8,
+                alpha=0.9,
                 label=label,
+                zorder=3,
             )
-        limits = _percentile_limits(
-            [data_values[panel_mask], model_values[panel_mask]],
-            percentiles=(1.0, 99.8),
+
+    plot_observed(
+        overview_axis,
+        overview_valid,
+        data_values=overview_data,
+        smoothed_values=smoothed_overview_data,
+        labels=True,
+    )
+    overview_model_plot = np.where(
+        fitted_mask & overview_valid,
+        overview_full_model,
+        np.nan,
+    )
+    overview_axis.plot(
+        wave,
+        overview_model_plot,
+        color=_TCC_COLORS["total_model"],
+        lw=1.8,
+        label="total model",
+        zorder=6,
+    )
+    continuum_expectation = np.where(
+        overview_valid & ~fitted_mask,
+        overview_continuum,
+        np.nan,
+    )
+    overview_axis.plot(
+        wave,
+        continuum_expectation,
+        color=_TCC_COLORS["continuum"],
+        lw=1.05,
+        ls="--",
+        alpha=0.62,
+        label="continuum model (extrapolated)",
+        zorder=3,
+    )
+    if host_overview:
+        overview_axis.plot(
+            wave[overview_valid],
+            host_model[overview_valid],
+            label="host galaxy",
+            zorder=3,
+            **_HOST_STYLE,
         )
-        if limits:
-            ax.set_ylim(*limits)
-        ax.set_title(title, fontsize=12)
-        _configure_qa_axis(ax)
+    plot_continuum_components(
+        overview_axis,
+        overview_valid,
+        labels=True,
+    )
 
     overview_title = _qa_overview_title(result, config)
     result.metadata["qa_overview_title"] = overview_title
-    plot_common(
-        overview_axis,
-        overview_valid,
-        overview_title,
-        data_values=overview_data,
-        model_values=overview_full_model,
-        continuum_values=result.continuum.model,
-        smoothed_values=smoothed_overview_data,
-        data_label=("original spectrum" if host_overview else "host-subtracted data"),
-        model_label=(
-            "host + full model" if host_overview else "full model"
-        ),
-        continuum_label="full continuum",
-        host_values=(host_model if host_overview else None),
-    )
+    overview_axis.set_title(overview_title, fontsize=12)
+    _configure_qa_axis(overview_axis)
     broad_label_used = False
     narrow_label_used = False
     wing_label_used = False
-    for complex_name in available:
+    for complex_name, fit in result.line_complexes.items():
+        if not fit.success:
+            continue
         fit = result.line_complexes[complex_name]
+        component_mask = valid & np.asarray(fit.fit_mask, dtype=bool)
         combined = _combined_broad_profile(fit)
         overview_axis.plot(
-            wave[valid],
-            combined[valid],
-            label="full broad line" if not broad_label_used else "_nolegend_",
+            wave[component_mask],
+            combined[component_mask],
+            label="broad-line model" if not broad_label_used else "_nolegend_",
+            zorder=5,
             **_COMBINED_BROAD_STYLE,
         )
-        broad_label_used = True
+        broad_label_used |= bool(np.any(combined[component_mask] != 0))
         for label, component, species, kind in _line_groups(complex_name, fit):
             if kind == "broad":
                 continue
@@ -903,16 +1192,23 @@ def _plot_qa(
                 legend_label = "outflow wing" if not wing_label_used else "_nolegend_"
                 wing_label_used = True
             else:
-                legend_label = "narrow line" if not narrow_label_used else "_nolegend_"
+                legend_label = "narrow-line model" if not narrow_label_used else "_nolegend_"
                 narrow_label_used = True
             overview_axis.plot(
-                wave[valid],
-                component[valid],
+                wave[component_mask],
+                component[component_mask],
                 label=legend_label,
+                zorder=5,
                 **style,
             )
-        lo, hi = _COMPLEX_WINDOWS[complex_name]
-        overview_axis.axvspan(lo, hi, color="0.7", alpha=0.10)
+    if config.show_fit_regions:
+        _shade_mask_regions(
+            overview_axis,
+            wave,
+            unmodelled_mask,
+            ppxf_masked,
+            labels=True,
+        )
     valid_wave = wave[overview_valid]
     if valid_wave.size:
         overview_axis.set_xlim(float(valid_wave.min()), float(valid_wave.max()))
@@ -934,8 +1230,12 @@ def _plot_qa(
         and float(np.max(valid_overview_wave)) >= 1215.67
     )
     lya_model_fitted = any(
-        "lya" in str(name).lower() or "lyalpha" in str(name).lower()
-        for name in result.line_complexes
+        (
+            "lya" in str(name).lower()
+            or "lyalpha" in str(name).lower()
+        )
+        and fit.success
+        for name, fit in result.line_complexes.items()
     )
     if lya_in_coverage and not lya_model_fitted:
         data_limits = _percentile_limits(
@@ -947,7 +1247,7 @@ def _plot_qa(
         result.metadata["qa_overview_upper_percentile"] = 99.8
     else:
         overview_upper = _rounded_model_upper_limit(
-            overview_full_model[overview_valid]
+            overview_full_model[overview_valid & fitted_mask]
         )
         result.metadata["qa_overview_upper_policy"] = "rounded_model"
         result.metadata["qa_overview_upper_percentile"] = None
@@ -960,6 +1260,23 @@ def _plot_qa(
         )
         result.metadata["qa_overview_ymin"] = 0.0
         result.metadata["qa_overview_model_upper_limit"] = overview_upper
+        clipped = overview_valid & np.isfinite(overview_data) & (
+            overview_data > overview_upper
+        )
+        if np.any(clipped):
+            overview_axis.scatter(
+                wave[clipped],
+                np.full(np.count_nonzero(clipped), 0.985 * overview_upper),
+                marker="^",
+                s=12,
+                facecolor=_TCC_COLORS["data_smooth"],
+                edgecolor="none",
+                alpha=0.7,
+                zorder=8,
+            )
+        result.metadata["qa_overview_clipped_peak_count"] = int(
+            np.count_nonzero(clipped)
+        )
     host_state = (
         "decomposed with pPXF"
         if result.host_decomp_enabled
@@ -967,10 +1284,30 @@ def _plot_qa(
         else "not decomposed"
     )
     overview_annotation_lines = [
-        rf"$\chi^2_\nu(\mathrm{{cont.}})="
+        rf"$\chi^2_\nu(\mathrm{{cont., fitted\ pixels}})="
         f"{_format_reduced_chi2(result.continuum.reduced_chi2)}$",
         f"Host: {host_state}",
     ]
+    lya_status = result.metadata.get("lya_coverage_status")
+    if lya_status in ("red_side_only", "edge_truncated"):
+        overview_annotation_lines.append(
+            "Lyα: "
+            + (
+                "limited red-side fit"
+                if lya_status == "red_side_only"
+                else "edge-truncated; not fitted"
+            )
+        )
+    if config.show_coordinates:
+        ra = result.metadata.get("ra")
+        dec = result.metadata.get("dec")
+        if ra is not None and np.isfinite(ra):
+            overview_annotation_lines.insert(0, f"RA = {float(ra):.5f}")
+        if dec is not None and np.isfinite(dec):
+            insertion = 1 if overview_annotation_lines[0].startswith("RA") else 0
+            overview_annotation_lines.insert(
+                insertion, f"Dec = {float(dec):+.5f}"
+            )
     host_fraction_annotation = _host_fraction_annotation(result)
     if host_fraction_annotation:
         overview_annotation_lines.extend(host_fraction_annotation.splitlines())
@@ -994,15 +1331,79 @@ def _plot_qa(
         "continuum_reduced_chi2": float(result.continuum.reduced_chi2),
         "host_state": host_state,
         "host_fractions": host_fraction_annotation,
+        "ra": result.metadata.get("ra") if config.show_coordinates else None,
+        "dec": result.metadata.get("dec") if config.show_coordinates else None,
     }
-    overview_axis.legend(
-        fontsize=9,
-        ncol=4,
-        loc="best",
-        framealpha=0.72,
-        borderpad=0.35,
-        handlelength=2.4,
-    )
+    handles, labels = _deduplicated_legend_items(overview_axis)
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            fontsize=9,
+            ncol=min(5, len(handles)),
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.0),
+            framealpha=0.82,
+            borderpad=0.35,
+            handlelength=2.4,
+        )
+        layout_engine = fig.get_layout_engine()
+        if layout_engine is not None:
+            layout_engine.set(rect=(0.0, 0.0, 1.0, 0.91))
+
+    if residual_axis is not None:
+        residual_mask = (
+            fitted_mask
+            & overview_valid
+            & np.isfinite(overview_data)
+            & np.isfinite(overview_full_model)
+            & np.isfinite(spectrum.err)
+            & (spectrum.err > 0)
+        )
+        normalized_residual = np.full_like(overview_data, np.nan, dtype=float)
+        normalized_residual[residual_mask] = (
+            overview_data[residual_mask]
+            - overview_full_model[residual_mask]
+        ) / spectrum.err[residual_mask]
+        residual_axis.plot(
+            wave,
+            normalized_residual,
+            color=_TCC_COLORS["total_model"],
+            lw=0.55,
+        )
+        for value, linestyle, alpha in (
+            (0.0, "-", 0.7),
+            (3.0, "--", 0.45),
+            (-3.0, "--", 0.45),
+        ):
+            residual_axis.axhline(
+                value,
+                color=_TCC_COLORS["data_smooth"],
+                lw=0.7,
+                ls=linestyle,
+                alpha=alpha,
+                zorder=0,
+            )
+        if config.show_fit_regions:
+            _shade_mask_regions(
+                residual_axis,
+                wave,
+                unmodelled_mask,
+                ppxf_masked,
+                labels=False,
+            )
+        residual_axis.set_ylim(-5.5, 5.5)
+        residual_axis.set_ylabel(
+            r"$\Delta/\sigma$",
+            fontsize=11,
+        )
+        residual_axis.tick_params(axis="x", labelbottom=False)
+        _configure_qa_axis(residual_axis)
+        result.metadata["qa_residual_definition"] = "(data-model)/sigma"
+        result.metadata["qa_residual_reference_lines"] = [0.0, -3.0, 3.0]
+        result.metadata["qa_n_residual_pixels"] = int(
+            np.count_nonzero(residual_mask)
+        )
 
     for zoom_index, (axis, complex_name) in enumerate(zip(zoom_axes, available)):
         lo, hi = _COMPLEX_WINDOWS[complex_name]
@@ -1016,32 +1417,79 @@ def _plot_qa(
             f"{title}  |  "
             rf"$\chi^2_\nu={_format_reduced_chi2(fit.reduced_chi2)}$"
         )
+        if complex_name == "lya_nv":
+            coverage_status = fit.metadata.get("lya_coverage_status")
+            if coverage_status == "red_side_only":
+                title = (
+                    r"Ly$\alpha$ / N V"
+                    + "\n"
+                    + rf"$\chi^2_\nu={_format_reduced_chi2(fit.reduced_chi2)}$"
+                    + "; limited"
+                )
+            elif not fit.metadata.get("lya_fit_reliable", False):
+                title = (
+                    r"Ly$\alpha$ / N V"
+                    + "\n"
+                    + rf"$\chi^2_\nu={_format_reduced_chi2(fit.reduced_chi2)}$"
+                    + "; unreliable"
+                )
         result.metadata.setdefault("qa_zoom_titles", {})[complex_name] = title
-        plot_common(
+        plot_observed(
             axis,
             panel_mask,
-            title,
+            data_values=spectrum.flux,
             smoothed_values=smoothed_fit_data,
+            labels=False,
         )
+        fit_panel_mask = panel_mask & np.asarray(fit.fit_mask, dtype=bool)
+        axis.plot(
+            wave,
+            np.where(fit_panel_mask, full_model, np.nan),
+            color=_TCC_COLORS["total_model"],
+            lw=1.8,
+            label="_nolegend_",
+            zorder=6,
+        )
+        axis.plot(
+            wave[panel_mask],
+            result.continuum.model[panel_mask],
+            color=_TCC_COLORS["continuum"],
+            lw=1.0,
+            ls="--",
+            alpha=0.65,
+            label="_nolegend_",
+            zorder=3,
+        )
+        plot_continuum_components(axis, panel_mask, labels=False)
+        axis.set_title(title, fontsize=12)
+        _configure_qa_axis(axis)
         combined = _combined_broad_profile(fit)
         axis.plot(
             wave[panel_mask],
             combined[panel_mask],
-            label="_nolegend_",
+            label="broad-line model",
             **_COMBINED_BROAD_STYLE,
         )
         broad_component_label_used = False
         broad_names = set(_broad_component_names(fit))
         for component_name, component in fit.component_models.items():
             if component_name in broad_names:
+                if complex_name == "lya_nv":
+                    component_label = (
+                        "Lyα component"
+                        if component_name.lower().startswith("lya")
+                        else "N V component"
+                    )
+                else:
+                    component_label = (
+                        "broad components"
+                        if not broad_component_label_used
+                        else "_nolegend_"
+                    )
                 axis.plot(
                     wave[panel_mask],
                     component[panel_mask],
-                    label=(
-                        "broad components"
-                        if zoom_index == 0 and not broad_component_label_used
-                        else "_nolegend_"
-                    ),
+                    label=component_label,
                     **_BROAD_COMPONENT_STYLE,
                 )
                 broad_component_label_used = True
@@ -1051,9 +1499,41 @@ def _plot_qa(
             axis.plot(
                 wave[panel_mask],
                 component[panel_mask],
-                label="_nolegend_",
+                label=(
+                    "outflow wing"
+                    if kind == "wing"
+                    else "narrow lines"
+                ),
                 **style,
             )
+        if complex_name == "lya_nv":
+            axis.plot(
+                wave[panel_mask],
+                result.continuum.model[panel_mask],
+                color=_TCC_COLORS["continuum"],
+                lw=1.0,
+                ls="--",
+                alpha=0.8,
+                label="continuum model (extrapolated)",
+                zorder=3,
+            )
+            excluded = (
+                np.asarray(fit.excluded_mask, dtype=bool)
+                if fit.excluded_mask is not None
+                else np.zeros_like(panel_mask)
+            )
+            excluded &= panel_mask
+            if np.any(excluded):
+                axis.scatter(
+                    wave[excluded],
+                    spectrum.flux[excluded],
+                    marker="x",
+                    s=18,
+                    linewidths=0.8,
+                    color=_TCC_COLORS["outflow"],
+                    label="masked absorption",
+                    zorder=8,
+                )
         limits = axis.get_ylim()
         zoom_upper = _rounded_model_upper_limit(full_model[panel_mask])
         axis.set_ylim(0.0, max(zoom_upper if zoom_upper is not None else limits[1], 0.0))
@@ -1070,17 +1550,26 @@ def _plot_qa(
                 y_fraction=0.82,
             )
         )
-        handles, labels = axis.get_legend_handles_labels()
-        unique = [
+        handles, labels = _deduplicated_legend_items(axis)
+        allowed = {
+            "broad components",
+            "narrow lines",
+            "outflow wing",
+            "Lyα component",
+            "N V component",
+            "continuum model (extrapolated)",
+            "masked absorption",
+        }
+        local_items = [
             (handle, label)
             for handle, label in zip(handles, labels)
-            if label == "broad components"
+            if label in allowed
         ]
-        if zoom_index == 0 and unique:
+        if local_items:
             axis.legend(
-                [unique[0][0]],
-                [unique[0][1]],
-                fontsize=9,
+                [item[0] for item in local_items],
+                [item[1] for item in local_items],
+                fontsize=8,
                 loc="best",
                 framealpha=0.72,
                 borderpad=0.35,
@@ -1098,6 +1587,7 @@ def _plot_qa(
     return saved
 
 
+@_science_plot_style
 def _plot_hbeta(
     result: WorkflowResult,
     paths: Union[Path, Mapping[str, Path]],

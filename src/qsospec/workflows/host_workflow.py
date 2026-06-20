@@ -12,6 +12,7 @@ from ..config import (
     GlobalContinuumConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
+    LyaNVComplexConfig,
     LocalFitConfig,
     MgIIComplexConfig,
     UncertaintyConfig,
@@ -184,6 +185,7 @@ def fit_with_optional_host_decomp(
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
     halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ):
@@ -207,6 +209,7 @@ def fit_with_optional_host_decomp(
             hbeta_config=hbeta_config,
             mgii_config=mgii_config,
             halpha_config=halpha_config,
+            lya_nv_config=lya_nv_config,
             uncertainty_config=uncertainty_config,
             complexes=complexes,
         )
@@ -308,6 +311,7 @@ def _run_host_refit_mc(
     hbeta_config: Optional[HbetaComplexConfig],
     mgii_config: Optional[MgIIComplexConfig],
     halpha_config: Optional[HalphaComplexConfig],
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> Dict[str, Any]:
     rng = np.random.default_rng(seed)
@@ -337,6 +341,7 @@ def _run_host_refit_mc(
                 mgii_config,
                 halpha_config,
                 UncertaintyConfig(monte_carlo_trials=0),
+                lya_nv_config=lya_nv_config,
                 host_model_on_grid=host_on_grid,
                 complexes=complexes,
             )
@@ -373,6 +378,7 @@ def fit_global_lines_workflow(
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
     halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> WorkflowResult:
@@ -421,6 +427,7 @@ def fit_global_lines_workflow(
         mgii_config,
         halpha_config,
         primary_uncertainty,
+        lya_nv_config=lya_nv_config,
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
@@ -429,6 +436,14 @@ def fit_global_lines_workflow(
     workflow.host_fit = host_fit
     workflow.host_sed = host_sed
     workflow.host_model_on_quasar_grid = host_on_grid
+    workflow.host_fit_mask = (
+        np.asarray(host_fit.preprocessed.fit_mask, dtype=bool).copy()
+        if host_fit is not None else None
+    )
+    workflow.host_emission_mask = (
+        np.asarray(host_fit.preprocessed.emission_mask, dtype=bool).copy()
+        if host_fit is not None else None
+    )
     workflow.host_warnings = [str(item) for item in host_warnings]
     workflow.metadata.update(
         {
@@ -444,6 +459,8 @@ def fit_global_lines_workflow(
             "host_decomp_enabled": host_decomp_enabled,
             "host_decomp_skip_reason": host_skip_reason,
             "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
+            "host_fit_range": list(host_fit_range),
+            "host_mask_provenance": "exact" if host_decomp_enabled else "unavailable",
         }
     )
     if run_host_decomp and not host_decomp_enabled:
@@ -474,6 +491,7 @@ def fit_global_lines_workflow(
             hbeta_config=hbeta_config,
             mgii_config=mgii_config,
             halpha_config=halpha_config,
+            lya_nv_config=lya_nv_config,
             complexes=complexes,
         )
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo_host_refit"

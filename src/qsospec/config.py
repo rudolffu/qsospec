@@ -193,6 +193,19 @@ LEGACY_CONTINUUM_WINDOWS: Tuple[Window, ...] = (
     (11400.0, 12400.0),
 )
 
+LYA_SAFE_CONTINUUM_WINDOWS: Tuple[Window, ...] = (
+    (1275.0, 1290.0),
+    (1315.0, 1325.0),
+    (1345.0, 1365.0),
+    (1445.0, 1465.0),
+    (1680.0, 1710.0),
+    (1975.0, 2050.0),
+    (2150.0, 2250.0),
+    (2950.0, 2990.0),
+    (3020.0, 3100.0),
+    *(window for window in LEGACY_CONTINUUM_WINDOWS if window[0] >= 3400.0),
+)
+
 
 @dataclass(frozen=True)
 class PowerLawConfig:
@@ -300,6 +313,12 @@ class GlobalContinuumConfig:
     jacobian_method: str = "semi_analytic"
     max_nfev: Optional[int] = 1000
 
+    @classmethod
+    def lya_safe(cls, **changes) -> "GlobalContinuumConfig":
+        """Return a continuum configuration anchored redward of Lyα."""
+
+        return cls(continuum_windows=LYA_SAFE_CONTINUUM_WINDOWS, **changes)
+
     def __post_init__(self) -> None:
         if self.optimizer_method not in ("auto", "variable_projection", "legacy_joint"):
             raise ValueError(
@@ -319,6 +338,92 @@ class GlobalContinuumConfig:
             raise ValueError("clip_passes must be non-negative.")
         if self.clip_low_sigma <= 0 or self.clip_high_sigma <= 0:
             raise ValueError("clip sigma thresholds must be positive.")
+
+
+@dataclass(frozen=True)
+class LyaNVComplexConfig:
+    """Coverage, profile, and absorption policy for the Lyα/N V complex."""
+
+    fit_lya: bool = True
+    fit_nv: bool = True
+    window: Window = (1150.0, 1290.0)
+    lya_num_broad_gaussians: int = 2
+    nv_num_broad_gaussians: int = 1
+    lya_velocity_bounds_kms: Tuple[float, float] = (-3000.0, 3000.0)
+    nv_velocity_bounds_kms: Tuple[float, float] = (-3000.0, 3000.0)
+    lya_fwhm_bands_kms: Tuple[Tuple[float, float], ...] = (
+        (1200.0, 5000.0),
+        (5000.0, 20000.0),
+    )
+    nv_fwhm_bands_kms: Tuple[Tuple[float, float], ...] = (
+        (1000.0, 15000.0),
+    )
+    nv_mode: str = "effective_blend"
+    tie_nv_width_to_lya: bool = False
+    full_blue_limit: float = 1170.0
+    red_side_limit: float = 1290.0
+    full_min_coverage_fraction: float = 0.70
+    red_side_min_valid_fraction: float = 0.80
+    minimum_useful_overlap_fraction: float = 0.20
+    min_valid_pixels: int = 30
+    edge_margin_kms: float = 1000.0
+    absorption_sigma: float = 3.0
+    absorption_max_width_kms: float = 2000.0
+    absorption_dilation_pixels: int = 1
+    reliable_min_flux_snr: float = 3.0
+    reliable_max_absorption_fraction: float = 0.20
+
+    def __post_init__(self) -> None:
+        if not (self.fit_lya or self.fit_nv):
+            raise ValueError(
+                "LyaNVComplexConfig must enable Lyα, N V, or both."
+            )
+        if not self.window[0] < self.window[1]:
+            raise ValueError("LyaNVComplexConfig.window must be increasing.")
+        if self.nv_mode not in ("effective_blend", "equal_doublet"):
+            raise ValueError(
+                "LyaNVComplexConfig.nv_mode must be 'effective_blend' "
+                "or 'equal_doublet'."
+            )
+        for value, name in (
+            (self.lya_num_broad_gaussians, "lya_num_broad_gaussians"),
+            (self.nv_num_broad_gaussians, "nv_num_broad_gaussians"),
+            (self.min_valid_pixels, "min_valid_pixels"),
+        ):
+            if int(value) < 1:
+                raise ValueError(f"LyaNVComplexConfig.{name} must be positive.")
+        if self.tie_nv_width_to_lya and (
+            self.lya_num_broad_gaussians != self.nv_num_broad_gaussians
+        ):
+            raise ValueError(
+                "N V widths can be tied to Lyα only when component counts match."
+            )
+        for fraction, name in (
+            (self.full_min_coverage_fraction, "full_min_coverage_fraction"),
+            (self.red_side_min_valid_fraction, "red_side_min_valid_fraction"),
+            (
+                self.minimum_useful_overlap_fraction,
+                "minimum_useful_overlap_fraction",
+            ),
+            (
+                self.reliable_max_absorption_fraction,
+                "reliable_max_absorption_fraction",
+            ),
+        ):
+            if not 0.0 <= fraction <= 1.0:
+                raise ValueError(f"LyaNVComplexConfig.{name} must be in [0, 1].")
+        for value, name in (
+            (self.edge_margin_kms, "edge_margin_kms"),
+            (self.absorption_sigma, "absorption_sigma"),
+            (self.absorption_max_width_kms, "absorption_max_width_kms"),
+            (self.reliable_min_flux_snr, "reliable_min_flux_snr"),
+        ):
+            if value <= 0:
+                raise ValueError(f"LyaNVComplexConfig.{name} must be positive.")
+        if self.absorption_dilation_pixels < 0:
+            raise ValueError(
+                "LyaNVComplexConfig.absorption_dilation_pixels must be non-negative."
+            )
 
 
 @dataclass(frozen=True)

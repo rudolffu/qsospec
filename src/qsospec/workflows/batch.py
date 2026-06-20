@@ -11,6 +11,8 @@ from pathlib import Path
 import traceback
 from typing import Any, Dict, Iterator, Optional, Sequence, Union
 
+import numpy as np
+
 from .host.io import SpectrumData
 
 from ..complex_recipes import ComplexRecipe
@@ -18,6 +20,7 @@ from ..config import (
     GlobalContinuumConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
+    LyaNVComplexConfig,
     MgIIComplexConfig,
     UncertaintyConfig,
 )
@@ -111,6 +114,7 @@ def _fit_spectrum_data(
     hbeta_config,
     mgii_config,
     halpha_config,
+    lya_nv_config,
     uncertainty_config,
     complexes,
 ):
@@ -155,6 +159,7 @@ def _fit_spectrum_data(
         mgii_config,
         halpha_config,
         uncertainty_config,
+        lya_nv_config=lya_nv_config,
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
@@ -163,6 +168,14 @@ def _fit_spectrum_data(
     result.host_fit = host_fit
     result.host_sed = host_sed
     result.host_model_on_quasar_grid = host_on_grid
+    result.host_fit_mask = (
+        np.asarray(host_fit.preprocessed.fit_mask, dtype=bool).copy()
+        if host_fit is not None else None
+    )
+    result.host_emission_mask = (
+        np.asarray(host_fit.preprocessed.emission_mask, dtype=bool).copy()
+        if host_fit is not None else None
+    )
     result.host_warnings = [str(item) for item in host_warnings]
     object_id = (
         descriptor.object_id
@@ -186,6 +199,10 @@ def _fit_spectrum_data(
             "host_model_source": (
                 "template_weighted_sed_on_quasar_grid"
                 if host_decomp_enabled else None
+            ),
+            "host_fit_range": list(host_fit_range),
+            "host_mask_provenance": (
+                "exact" if host_decomp_enabled else "unavailable"
             ),
         }
     )
@@ -333,6 +350,7 @@ def _configuration(
     hbeta_config,
     mgii_config,
     halpha_config,
+    lya_nv_config,
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
@@ -342,10 +360,15 @@ def _configuration(
         "template_file": str(template_file),
         "host_fit_range": tuple(host_fit_range),
         "host_config": host_config,
-        "global_config": asdict(global_config),
+        "global_config": (
+            asdict(global_config)
+            if global_config is not None
+            else {"preset": "automatic_lya_safe"}
+        ),
         "hbeta_config": asdict(hbeta_config),
         "mgii_config": asdict(mgii_config),
         "halpha_config": asdict(halpha_config),
+        "lya_nv_config": asdict(lya_nv_config),
         "uncertainty_config": asdict(uncertainty_config),
         "complexes": [
             asdict(item) if isinstance(item, ComplexRecipe) else str(item)
@@ -365,6 +388,7 @@ def _fit_options(
     hbeta_config,
     mgii_config,
     halpha_config,
+    lya_nv_config,
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
@@ -378,6 +402,7 @@ def _fit_options(
         "hbeta_config": hbeta_config,
         "mgii_config": mgii_config,
         "halpha_config": halpha_config,
+        "lya_nv_config": lya_nv_config,
         "uncertainty_config": uncertainty_config,
         "complexes": complexes,
     }
@@ -400,6 +425,7 @@ def fit_object_to_store(
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
     halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
     run_id: Optional[str] = None,
@@ -410,10 +436,10 @@ def fit_object_to_store(
 ) -> WorkflowResult:
     """Fit one object into the same run bundle used for batch fitting."""
 
-    global_config = global_config or GlobalContinuumConfig()
     hbeta_config = hbeta_config or HbetaComplexConfig()
     mgii_config = mgii_config or MgIIComplexConfig()
     halpha_config = halpha_config or HalphaComplexConfig()
+    lya_nv_config = lya_nv_config or LyaNVComplexConfig()
     uncertainty_config = uncertainty_config or UncertaintyConfig()
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
@@ -425,6 +451,7 @@ def fit_object_to_store(
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,
         halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
         uncertainty_config=uncertainty_config,
         complexes=complexes,
     )
@@ -489,6 +516,7 @@ def fit_object_to_store(
             hbeta_config=hbeta_config,
             mgii_config=mgii_config,
             halpha_config=halpha_config,
+            lya_nv_config=lya_nv_config,
             uncertainty_config=uncertainty_config,
             complexes=complexes,
         ),
@@ -610,6 +638,7 @@ def fit_batch(
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
     halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
     run_id: Optional[str] = None,
@@ -623,10 +652,10 @@ def fit_batch(
 
     if num_shards < 1 or not 0 <= shard_index < num_shards:
         raise ValueError("Require num_shards >= 1 and 0 <= shard_index < num_shards.")
-    global_config = global_config or GlobalContinuumConfig()
     hbeta_config = hbeta_config or HbetaComplexConfig()
     mgii_config = mgii_config or MgIIComplexConfig()
     halpha_config = halpha_config or HalphaComplexConfig()
+    lya_nv_config = lya_nv_config or LyaNVComplexConfig()
     uncertainty_config = uncertainty_config or UncertaintyConfig()
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
@@ -638,6 +667,7 @@ def fit_batch(
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,
         halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
         uncertainty_config=uncertainty_config,
         complexes=complexes,
     )
@@ -660,6 +690,7 @@ def fit_batch(
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,
         halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
         uncertainty_config=uncertainty_config,
         complexes=complexes,
     )

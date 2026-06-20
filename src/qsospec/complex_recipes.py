@@ -7,6 +7,7 @@ import re
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 from . import lines
+from .config import LyaNVComplexConfig
 
 Bounds = Tuple[Optional[float], Optional[float]]
 Window = Tuple[float, float]
@@ -29,6 +30,8 @@ class ComponentRecipe:
     velocity_bounds_kms: Tuple[float, float] = (-1000.0, 1000.0)
     fwhm_bands_kms: Tuple[Tuple[float, float], ...] = ((70.0, 1200.0),)
     kinematic_group: Optional[str] = None
+    velocity_group: Optional[str] = None
+    width_group: Optional[str] = None
     fixed_ratio_to: Optional[str] = None
     fixed_ratio: Optional[float] = None
     selection_rule: Optional[str] = None
@@ -74,7 +77,13 @@ class ComplexRecipe:
             raise ValueError("coverage_mode must be 'full' or 'component_adaptive'.")
         if self.continuum_mode not in ("fixed_global", "constant", "linear", "absent"):
             raise ValueError("Unsupported continuum_mode.")
-        if self.backend not in ("generic", "mgii_adapter", "hbeta_adapter", "halpha_adapter"):
+        if self.backend not in (
+            "generic",
+            "mgii_adapter",
+            "hbeta_adapter",
+            "halpha_adapter",
+            "lya_adapter",
+        ):
             raise ValueError("Unsupported recipe backend.")
         for line_id in self.required_line_ids:
             lines.get(line_id)
@@ -98,7 +107,94 @@ def _component(id, line_ids, role, **kwargs):
     return ComponentRecipe(id=id, line_ids=tuple(line_ids), role=role, **kwargs)
 
 
+def _bands_for_count(
+    bands: Tuple[Tuple[float, float], ...],
+    count: int,
+) -> Tuple[Tuple[float, float], ...]:
+    if len(bands) >= count:
+        return tuple(bands[:count])
+    return tuple((*bands, *((bands[-1],) * (count - len(bands)))))
+
+
+def lya_nv_recipe(
+    config: Optional[LyaNVComplexConfig] = None,
+) -> ComplexRecipe:
+    """Compile the specialized Lyα/N V recipe from public configuration."""
+
+    cfg = config or LyaNVComplexConfig()
+    components = []
+    paired_width_group = (
+        "lya_nv_broad_width"
+        if cfg.tie_nv_width_to_lya else None
+    )
+    if cfg.fit_lya:
+        components.append(
+            _component(
+                "Lya_broad",
+                ("lya_1216",),
+                "broad",
+                multiplicity=cfg.lya_num_broad_gaussians,
+                kinematic_group="lya_broad",
+                width_group=paired_width_group,
+                velocity_bounds_kms=cfg.lya_velocity_bounds_kms,
+                fwhm_bands_kms=_bands_for_count(
+                    cfg.lya_fwhm_bands_kms,
+                    cfg.lya_num_broad_gaussians,
+                ),
+            )
+        )
+    if cfg.fit_nv:
+        components.append(
+            _component(
+                "NV_broad",
+                (
+                    ("nv_blend",)
+                    if cfg.nv_mode == "effective_blend"
+                    else ("nv_1239", "nv_1243")
+                ),
+                "broad",
+                multiplicity=cfg.nv_num_broad_gaussians,
+                kinematic_group="nv_broad",
+                width_group=paired_width_group,
+                velocity_bounds_kms=cfg.nv_velocity_bounds_kms,
+                fwhm_bands_kms=_bands_for_count(
+                    cfg.nv_fwhm_bands_kms,
+                    cfg.nv_num_broad_gaussians,
+                ),
+            )
+        )
+    required = []
+    if cfg.fit_lya:
+        required.append("lya_1216")
+    if cfg.fit_nv:
+        required.extend(
+            ("nv_blend",)
+            if cfg.nv_mode == "effective_blend"
+            else ("nv_1239", "nv_1243")
+        )
+    return ComplexRecipe(
+        id="lya_nv",
+        aliases=("lya", "lyalpha", "lya_nv1240"),
+        label="Lyα / N V",
+        fit_window=cfg.window,
+        fit_windows=(cfg.window,),
+        mask_windows=(),
+        components=tuple(components),
+        required_line_ids=tuple(required),
+        coverage_mode="full",
+        min_coverage_fraction=cfg.minimum_useful_overlap_fraction,
+        min_valid_pixels=cfg.min_valid_pixels,
+        edge_margin_kms=cfg.edge_margin_kms,
+        qa_labels=("lya_1216", "nv_blend"),
+        auto_enabled=True,
+        priority=85,
+        backend="lya_adapter",
+        exclusive_group="lya",
+    )
+
+
 _RECIPES = (
+    lya_nv_recipe(),
     ComplexRecipe(
         id="mgii", aliases=("mgii_blend",), label="Mg II",
         fit_window=(2700.0, 2900.0), fit_windows=((2700.0, 2900.0),), mask_windows=(),

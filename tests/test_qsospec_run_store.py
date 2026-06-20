@@ -4,10 +4,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as pads
+import pyarrow.parquet as pq
 import pytest
 from astropy.io import fits
 
 import qsospec
+from qsospec.io.run_store import RunStore, workflow_payload
 from qsospec.workflows.host.io import SpectrumData
 
 
@@ -165,6 +167,84 @@ def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
     assert "balmer_pseudocontinuum_velocity_kms" in set(
         measurements["quantity"]
     )
+
+
+def test_host_masks_round_trip_and_schema_v1_inference(tmp_path):
+    data = _spectrum_data("host-mask-object")
+    spectrum = qsospec.Spectrum.from_arrays(
+        data.wave_obs,
+        data.flux,
+        err=data.error,
+        z=data.redshift,
+        survey="desi",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        _continuum_config(),
+        complexes=[],
+    )
+    wave = result.spectrum.wave_rest
+    result.host_decomp_enabled = True
+    result.total_spectrum = result.spectrum
+    result.host_model_on_quasar_grid = np.zeros_like(wave)
+    result.host_fit_mask = (wave >= 3600.0) & (wave <= 4200.0)
+    result.host_emission_mask = (wave >= 3710.0) & (wave <= 3745.0)
+    result.metadata.update(
+        {
+            "object_id": "host-mask-object",
+            "host_decomp_enabled": True,
+            "host_mask_provenance": "exact",
+        }
+    )
+    run_path = tmp_path / "host-mask-run"
+    store = RunStore.create(
+        str(run_path),
+        configuration={
+            "run_host_decomp": True,
+            "host_fit_range": [3600.0, 4200.0],
+            "host_config": None,
+        },
+    )
+    store.write_payload(
+        workflow_payload(
+            result,
+            run_id=store.run_id,
+            object_key="host-mask-object",
+            object_id="host-mask-object",
+            input_record={
+                "source": "memory",
+                "row_index": 0,
+                "reader": "memory",
+                "metadata": {},
+            },
+        )
+    )
+    loaded = qsospec.load_model(store, "host-mask-object")
+    np.testing.assert_array_equal(
+        loaded.host_fit_mask, result.host_fit_mask
+    )
+    np.testing.assert_array_equal(
+        loaded.host_emission_mask, result.host_emission_mask
+    )
+    assert loaded.metadata["host_mask_provenance"] == "exact"
+    assert store.manifest["schema_version"] == "3"
+
+    model_path = next((run_path / "models").glob("*.parquet"))
+    old_table = pq.read_table(model_path).drop(
+        ["host_fit_mask", "host_emission_mask"]
+    )
+    pq.write_table(old_table, model_path)
+    manifest_path = run_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_version"] = "1"
+    manifest_path.write_text(json.dumps(manifest))
+
+    inferred = qsospec.load_model(str(run_path), "host-mask-object")
+    assert inferred.metadata["host_mask_provenance"] == "inferred"
+    assert np.any(inferred.host_fit_mask)
+    assert np.any(inferred.host_emission_mask)
+    assert inferred.host_fit_mask.shape == wave.shape
+    assert inferred.host_emission_mask.shape == wave.shape
 
 
 def test_serial_batch_resume_and_configuration_guard(tmp_path):

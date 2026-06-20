@@ -75,6 +75,24 @@ deprecated `legacy_hbeta_success` property.
 `complexes=[]` performs a continuum-only fit. Explicit recipe IDs or immutable
 recipe objects can be supplied to select a custom set.
 
+The auto-enabled `lya_nv` recipe uses a dedicated coverage classifier and a
+single deterministic absorption-masking refit. Full fits may be reliable;
+red-side-only fits retain measurements with `lya_fit_reliable=False`;
+edge-truncated and uncovered fits are skipped. When no global continuum
+configuration is supplied, eligible Lyα spectra use
+`GlobalContinuumConfig.lya_safe()` so the forest and line peak do not anchor
+the continuum.
+
+For one DESI-like Parquet row:
+
+```python
+result = qsospec.fit_global_lines_workflow(
+    "desispecs.parquet",
+    row_index=0,
+    lya_nv_config=qsospec.LyaNVComplexConfig(),
+)
+```
+
 ### Registry and generic complex fitting
 
 `qsospec.lines` provides canonical definitions, normalized aliases, vacuum
@@ -201,23 +219,28 @@ The main object-named QA figure currently uses:
   lines;
 - combined broad profiles in the overview and individual broad components in
   zoom panels;
-- consistent solid-line component styling and color separation:
-  narrow lines remain green, iron remains purple, Balmer continuum/series are
-  ochre, and outflow wings are dark red;
+- raw and smoothed observed spectra with a fitted-only total model, dashed
+  continuum extrapolation, mask shading, and normalized fitted-pixel residuals;
+- color and line-style separation for continuum, broad, narrow, and outflow
+  components;
 - continuum and per-complex reduced chi-square annotations;
 - pPXF decomposition state and host fractions at 3000 and 5100 Angstrom when
   covered;
-- automatic DESI TARGETID titles with redshift, RA, and Dec.
+- compact object/redshift titles with RA and Dec in the information box.
 
 Configuration example:
 
 ```python
 qa_config = qsospec.GlobalQAPlotConfig(
     figure_width=10.5,
-    figure_height=6.2,
+    figure_height=8.0,
     max_zoom_panels=4,
-    show_smoothed_data=False,
+    show_smoothed_data=True,
+    smooth_original_spectrum_for_display=False,
     smoothing_window_pixels=7,
+    show_residual_panel=True,
+    show_fit_regions=True,
+    unmodelled_windows=((1170.0, 1275.0, "Lyα"),),
     show_host_context_in_overview=True,
     object_name=None,
     object_label=None,

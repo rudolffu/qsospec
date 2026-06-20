@@ -21,10 +21,12 @@ from qsospec.io.products import (
     _COMBINED_BROAD_STYLE,
     _CONTINUUM_STYLES,
     _NARROW_STYLE,
+    _TCC_COLORS,
     _WING_STYLE,
     _annotate_emission_lines,
     _configure_qa_axis,
     _flux_density_axis_label,
+    _final_fit_masks,
     _line_groups,
     _host_fraction_annotation,
     _has_host_context,
@@ -281,10 +283,10 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
     assert files["qa_plot"] == files["global_plot"]
     assert "host_context_plot" not in files
     assert full.metadata["host_context_plot_created"] is False
-    assert full.metadata["qa_panel_count"] == 5
+    assert full.metadata["qa_panel_count"] == 6
     assert full.metadata["qa_percentiles"] == [1.0, 99.8]
-    assert full.metadata["qa_layout"] == "overview_top_complexes_bottom"
-    assert full.metadata["qa_figure_size_inches"] == [10.5, 6.2]
+    assert full.metadata["qa_layout"] == "overview_residual_complexes"
+    assert full.metadata["qa_figure_size_inches"] == [10.5, 8.0]
     assert full.metadata["qa_displayed_complexes"] == [
         "mgii",
         "oii_nev_neiii_hgamma",
@@ -292,16 +294,18 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
         "halpha_nii_sii",
     ]
     assert full.metadata["qa_omitted_complexes"] == []
-    assert full.metadata["qa_smoothed_data"] is False
+    assert full.metadata["qa_smoothed_data"] is True
     assert full.metadata["qa_minor_ticks"] is True
     assert full.metadata["qa_tick_direction"] == "in"
     assert full.metadata["qa_overview_title"] == (
-        "DESI TARGETID synthetic-qa — z=1.2346"
+        "Object synthetic-qa   z = 1.2346"
     )
     assert full.metadata["qa_overview_annotation"] == {
         "continuum_reduced_chi2": full.continuum.reduced_chi2,
         "host_state": "decomposed with pPXF",
         "host_fractions": "",
+        "ra": None,
+        "dec": None,
     }
     assert full.metadata["qa_overview_xlim"] == pytest.approx(
         [full.spectrum.wave_rest.min(), full.spectrum.wave_rest.max()]
@@ -365,8 +369,6 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
     }
     assert set(full.metadata["qa_major_emission_line_labels"]) == {
         "Mg II",
-        "[O II] 3728",
-        r"H$\gamma$",
         r"H$\beta$",
         "[O III] 5008",
         r"H$\alpha$",
@@ -493,23 +495,26 @@ def test_qa_percentiles_and_component_styles():
     assert kinds.count("broad") == 1
     assert set(kinds) <= {"broad", "narrow", "wing"}
     assert _COMBINED_BROAD_STYLE["color"] != _BROAD_COMPONENT_STYLE["color"]
-    assert _BROAD_COMPONENT_STYLE["color"] == "#17becf"
+    assert _BROAD_COMPONENT_STYLE["color"] == "#30aecf"
     assert _COMBINED_BROAD_STYLE["linestyle"] == "-"
     assert _BROAD_COMPONENT_STYLE["linestyle"] == "-"
     assert _NARROW_STYLE["linestyle"] == "-"
-    assert _CONTINUUM_STYLES["balmer_bound_free"][0] == "#b8860b"
+    assert _CONTINUUM_STYLES["balmer_bound_free"][0] == "#db9c4b"
     assert _CONTINUUM_STYLES["balmer_bound_free"][0] != _NARROW_STYLE["color"]
-    assert _WING_STYLE["color"] == "#b2182b"
+    assert _WING_STYLE["color"] == "#d80835"
+    assert _WING_STYLE["linestyle"] == "--"
     assert _WING_STYLE["color"] != _CONTINUUM_STYLES["uv_iron"][0]
     assert _CONTINUUM_STYLES["uv_iron"] == _CONTINUUM_STYLES["optical_iron"]
-    assert _CONTINUUM_STYLES["power_law"][0] == "#cc79a7"
+    assert _CONTINUUM_STYLES["power_law"][0] == "#b03766"
     assert (
         _CONTINUUM_STYLES["balmer_bound_free"]
         == _CONTINUUM_STYLES["balmer_high_order_series"]
     )
     assert {
         style[1] for style in _CONTINUUM_STYLES.values()
-    } == {"-"}
+    } == {"--", ":", "-."}
+    assert _TCC_COLORS["total_model"] == "#28292b"
+    assert _TCC_COLORS["unmodelled_span"] == "#e4ecf0"
     label = _flux_density_axis_label(
         "1e-17 erg cm^-2 s^-1 Angstrom^-1"
     )
@@ -520,10 +525,14 @@ def test_qa_percentiles_and_component_styles():
 def test_qa_plot_config_and_selection_contract(monkeypatch):
     assert qsospec.GlobalQAPlotConfig() == qsospec.GlobalQAPlotConfig(
         figure_width=10.5,
-        figure_height=6.2,
+        figure_height=8.0,
         max_zoom_panels=4,
-        show_smoothed_data=False,
+        show_smoothed_data=True,
+        smooth_original_spectrum_for_display=False,
         smoothing_window_pixels=7,
+        show_residual_panel=True,
+        show_fit_regions=True,
+        unmodelled_windows=((1170.0, 1275.0, "Lyα"),),
     )
     with pytest.raises(ValueError):
         qsospec.GlobalQAPlotConfig(smoothing_window_pixels=4)
@@ -558,6 +567,81 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
     assert _select_zoom_complexes(
         {"oii_nev_neiii_hgamma": partially_covered_blue}, 4
     )[0] == ()
+
+
+def test_qa_fit_masks_residuals_and_region_precedence(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    result = qsospec.fit_global_lines(
+        _global_spectrum(np.linspace(2600.0, 7000.0, 2200)),
+        _simple_global_config(),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+    )
+    failed_mgii = replace(result.mgii, success=False)
+    result.mgii = failed_mgii
+    result.line_complexes = {
+        **result.line_complexes,
+        "mgii": failed_mgii,
+    }
+    host_fit_mask = np.ones_like(result.spectrum.valid_mask)
+    host_emission_mask = (
+        (result.spectrum.wave_rest >= 5600.0)
+        & (result.spectrum.wave_rest <= 5650.0)
+    )
+    result.host_fit_mask = host_fit_mask
+    result.host_emission_mask = host_emission_mask
+    result.metadata["host_mask_provenance"] = "exact"
+    config = qsospec.GlobalQAPlotConfig()
+    fitted, unmodelled, ppxf_masked = _final_fit_masks(result, config)
+
+    assert np.all(
+        ~fitted[
+            (result.spectrum.wave_rest >= 2700.0)
+            & (result.spectrum.wave_rest <= 2900.0)
+        ]
+    )
+    assert np.any(
+        unmodelled[
+            (result.spectrum.wave_rest >= 2700.0)
+            & (result.spectrum.wave_rest <= 2900.0)
+        ]
+    )
+    assert np.any(ppxf_masked)
+    assert not np.any(ppxf_masked & fitted)
+    assert not np.any(unmodelled & fitted)
+
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda figure: None)
+    _plot_qa(result, tmp_path / "regions.png", config)
+    figure = plt.gcf()
+    overview = figure.axes[0]
+    residual = figure.axes[1]
+    total_model_line = next(
+        line for line in overview.lines if line.get_label() == "total model"
+    )
+    assert np.all(np.isnan(total_model_line.get_ydata()[~fitted]))
+    residual_line = residual.lines[0]
+    residual_values = residual_line.get_ydata()
+    expected = (
+        result.spectrum.flux[fitted]
+        - (
+            result.continuum.model[fitted]
+            + sum(
+                (
+                    fit.model[fitted]
+                    for fit in result.line_complexes.values()
+                    if fit.success
+                ),
+                np.zeros(np.count_nonzero(fitted)),
+            )
+        )
+    ) / result.spectrum.err[fitted]
+    np.testing.assert_allclose(residual_values[fitted], expected)
+    assert np.all(np.isnan(residual_values[~fitted]))
+    assert result.metadata["qa_n_unmodelled_pixels"] > 0
+    assert result.metadata["qa_n_ppxf_masked_pixels"] > 0
+    assert result.metadata["qa_host_mask_provenance"] == "exact"
+    real_close(figure)
 
 
 def test_lya_overview_uses_unsmoothed_data_only_percentile(tmp_path):
@@ -619,9 +703,7 @@ def test_qa_title_smoothing_and_tick_helpers():
             "dec": -2.345678,
         }
     )
-    assert _qa_overview_title(result) == (
-        "DESI TARGETID abc — z=0.7500 — RA=151.12346 — Dec=-2.34568"
-    )
+    assert _qa_overview_title(result) == "Object abc   z = 0.7500"
     assert _qa_overview_title(
         result,
         qsospec.GlobalQAPlotConfig(
@@ -629,9 +711,7 @@ def test_qa_title_smoothing_and_tick_helpers():
             object_label="Source",
             show_coordinates=False,
         ),
-    ) == (
-        "Source My Quasar — z=0.7500"
-    )
+    ) == "Source My Quasar   z = 0.7500"
 
     smoothed = _masked_running_median(
         np.array([1.0, 100.0, 3.0, 5.0, 7.0]),
@@ -664,7 +744,10 @@ def test_qa_title_smoothing_and_tick_helpers():
     assert text_positions[r"H$\beta$"] == pytest.approx(0.82)
     assert text_positions["[O III] 4960"] == pytest.approx(0.68)
     assert text_positions["[O III] 5008"] == pytest.approx(0.68)
-    assert all(text.get_color() == "#355f8a" for text in axis.texts)
+    assert all(
+        text.get_color() == _TCC_COLORS["line_marker"]
+        for text in axis.texts
+    )
     axis.set_xlim(3650.0, 3800.0)
     _annotate_emission_lines(
         axis,
@@ -705,11 +788,13 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
         _plot_qa(result, path)
         image = plt.imread(path)
         pixel_sizes.add(image.shape[:2])
-    assert pixel_sizes == {(992, 1680)}
+    assert pixel_sizes == {(1280, 1680)}
     assert variants["one"].metadata["qa_overview_annotation"] == {
         "continuum_reduced_chi2": variants["one"].continuum.reduced_chi2,
         "host_state": "not decomposed",
         "host_fractions": "",
+        "ra": None,
+        "dec": None,
     }
 
     real_close = plt.close
@@ -725,24 +810,30 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert figure._supxlabel.get_text() == r"Rest wavelength [$\mathrm{\AA}$]"
     assert "f_\\lambda" in figure._supylabel.get_text()
     assert all(axis.get_xlabel() == "" for axis in figure.axes)
-    assert all(axis.get_ylabel() == "" for axis in figure.axes)
-    overview_labels = overview_axis.get_legend_handles_labels()[1]
-    assert overview_labels.count("smoothed data") == 1
-    assert overview_labels.count("iron") <= 1
-    assert overview_labels.count("full broad line") == 1
-    assert overview_labels.count("narrow line") == 1
-    assert (
-        figure.axes[1].get_legend_handles_labels()[1].count("broad components")
-        == 1
+    assert figure.axes[1].get_ylabel() == r"$\Delta/\sigma$"
+    assert all(
+        axis.get_ylabel() == ""
+        for axis in (figure.axes[0], *figure.axes[2:])
     )
-    for axis in figure.axes[2:]:
-        assert "broad components" not in axis.get_legend_handles_labels()[1]
+    overview_labels = overview_axis.get_legend_handles_labels()[1]
+    assert overview_labels.count("observed spectrum") == 1
+    assert overview_labels.count(
+        "observed spectrum (smoothed for display)"
+    ) == 1
+    assert overview_labels.count("Fe II") <= 1
+    assert overview_labels.count("broad-line model") == 1
+    assert overview_labels.count("narrow-line model") == 1
+    assert variants["three"].metadata["qa_residual_definition"] == (
+        "(data-model)/sigma"
+    )
+    assert variants["three"].metadata["qa_n_residual_pixels"] > 0
     assert variants["three"].metadata["qa_smoothed_data"] is True
     assert variants["three"].metadata["qa_shared_axis_labels"] is True
     real_close(figure)
 
 
 def test_host_context_companion_plot(tmp_path, monkeypatch):
+    import matplotlib
     import matplotlib.pyplot as plt
 
     result = qsospec.fit_global_lines(
@@ -793,26 +884,52 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
 
     real_close = plt.close
     monkeypatch.setattr(plt, "close", lambda figure: None)
+    original_font_family = list(matplotlib.rcParams["font.family"])
     qa_path = tmp_path / "qa_with_host_overview.png"
     _plot_qa(
         result,
         qa_path,
-        qsospec.GlobalQAPlotConfig(show_host_context_in_overview=True),
+        qsospec.GlobalQAPlotConfig(
+            show_host_context_in_overview=True,
+            smooth_original_spectrum_for_display=True,
+            smoothing_window_pixels=7,
+        ),
     )
     figure = plt.gcf()
     overview_labels = figure.axes[0].get_legend_handles_labels()[1]
-    assert "original spectrum" in overview_labels
+    assert "observed spectrum (smoothed for display)" in overview_labels
+    assert "observed spectrum" not in overview_labels
     assert "host galaxy" in overview_labels
-    assert "host + full model" in overview_labels
-    assert "full continuum" in overview_labels
-    assert "host + total continuum" not in overview_labels
-    for axis in figure.axes[1:]:
+    assert "total model" in overview_labels
+    assert "continuum model (extrapolated)" in overview_labels
+    for axis in figure.axes[2:]:
         zoom_labels = axis.get_legend_handles_labels()[1]
-        assert "host-subtracted data" in zoom_labels
-        assert "original spectrum" not in zoom_labels
+        assert "observed spectrum" not in zoom_labels
         assert "host galaxy" not in zoom_labels
     assert result.metadata["qa_host_context_overview_requested"] is True
     assert result.metadata["qa_host_context_overview_used"] is True
+    assert result.metadata[
+        "qa_original_spectrum_smoothed_for_display"
+    ] is True
+    assert result.metadata["qa_original_spectrum_smoothed_used"] is True
+    assert result.metadata["qa_plot_style"] == "qsospec_science_serif"
+    assert figure.axes[0].title.get_fontfamily() == ["serif"]
+    assert list(matplotlib.rcParams["font.family"]) == original_font_family
+    original_line = next(
+        line
+        for line in figure.axes[0].lines
+        if line.get_label()
+        == "observed spectrum (smoothed for display)"
+    )
+    expected_smoothed = _masked_running_median(
+        result.total_spectrum.flux,
+        result.total_spectrum.valid_mask,
+        7,
+    )
+    np.testing.assert_allclose(
+        original_line.get_ydata(),
+        expected_smoothed[result.total_spectrum.valid_mask],
+    )
     assert "20.0\\%" in result.metadata["qa_overview_annotation"]["host_fractions"]
     assert "30.0\\%" in result.metadata["qa_overview_annotation"]["host_fractions"]
     real_close(figure)
@@ -827,7 +944,11 @@ def test_host_context_overview_falls_back_without_host(tmp_path):
     _plot_qa(
         result,
         tmp_path / "qa_without_host.png",
-        qsospec.GlobalQAPlotConfig(show_host_context_in_overview=True),
+        qsospec.GlobalQAPlotConfig(
+            show_host_context_in_overview=True,
+            smooth_original_spectrum_for_display=True,
+        ),
     )
     assert result.metadata["qa_host_context_overview_requested"] is True
     assert result.metadata["qa_host_context_overview_used"] is False
+    assert result.metadata["qa_original_spectrum_smoothed_used"] is True

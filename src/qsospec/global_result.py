@@ -79,6 +79,7 @@ class EmissionComplexResult:
     warnings: List[FitWarning] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     optimizer_result: Optional[Any] = None
+    excluded_mask: Optional[np.ndarray] = None
 
     def warning_codes(self) -> List[str]:
         return [warning.code for warning in self.warnings]
@@ -124,6 +125,8 @@ class WorkflowResult:
     host_fit: Optional[Any] = None
     host_sed: Optional[Any] = None
     host_model_on_quasar_grid: Optional[np.ndarray] = None
+    host_fit_mask: Optional[np.ndarray] = None
+    host_emission_mask: Optional[np.ndarray] = None
     host_warnings: List[str] = field(default_factory=list)
     monte_carlo: Dict[str, Any] = field(default_factory=dict)
     warnings: List[FitWarning] = field(default_factory=list)
