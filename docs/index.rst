@@ -69,3 +69,9 @@ Install from source (development):
 
    run_bundles
    development_plan
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Background
+
+   references
