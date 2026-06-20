@@ -50,6 +50,7 @@ dev = [
 docs = [
     "sphinx",
     "sphinx-rtd-theme",
+    "myst-parser",
 ]
 
 [project.urls]
