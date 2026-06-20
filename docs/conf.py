@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.abspath("../src"))
 
 project = "qsospec"
-copyright = "2025, Yuming Fu"
+copyright = "2026, Yuming Fu"
 author = "Yuming Fu"
 release = "0.1.0"
 
