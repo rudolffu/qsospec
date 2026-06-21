@@ -29,6 +29,28 @@ python -m pip install -e ".[dev,host]"
 pytest
 ```
 
+## Configure Galactic dust maps
+
+File-based and batch workflows correct Galactic extinction by default using
+the Planck 2016 GNILC map. Configure the external `dustmaps` directory and
+download the maps after installing `qsospec`:
+
+```python
+from dustmaps.config import config
+
+config["data_dir"] = "/path/to/dustmaps"
+
+from dustmaps import planck, sfd
+planck.fetch(which="GNILC")
+sfd.fetch()
+```
+
+This creates `planck/` and `sfd/` below the configured directory. Missing maps
+or coordinates are errors when correction is enabled. Disable the step
+explicitly with `GalacticExtinctionConfig(enabled=False)`, or use
+`ebv_override=...` when E(B-V) is already known. The low-level array fitting
+functions treat `Spectrum` inputs as already corrected.
+
 ## Quick start
 
 ```python

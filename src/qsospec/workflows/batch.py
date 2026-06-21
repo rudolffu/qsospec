@@ -17,12 +17,17 @@ from .host.io import SpectrumData
 
 from ..complex_recipes import ComplexRecipe
 from ..config import (
+    GalacticExtinctionConfig,
     GlobalContinuumConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
     LyaNVComplexConfig,
     MgIIComplexConfig,
     UncertaintyConfig,
+)
+from ..extinction import (
+    correct_spectrum_data,
+    preflight_galactic_extinction,
 )
 from ..fitting.global_fit import fit_global_lines
 from ..io.products import GlobalQAPlotConfig, write_global_line_products
@@ -110,6 +115,7 @@ def _fit_spectrum_data(
     template_file: str,
     host_fit_range,
     host_config,
+    galactic_extinction_config,
     global_config,
     hbeta_config,
     mgii_config,
@@ -118,6 +124,9 @@ def _fit_spectrum_data(
     uncertainty_config,
     complexes,
 ):
+    spectrum_data = correct_spectrum_data(
+        spectrum_data, galactic_extinction_config
+    )
     source = (
         f"{descriptor.source}:row_index={descriptor.row_index}"
         if descriptor.row_index is not None else descriptor.source
@@ -203,6 +212,9 @@ def _fit_spectrum_data(
             "host_fit_range": list(host_fit_range),
             "host_mask_provenance": (
                 "exact" if host_decomp_enabled else "unavailable"
+            ),
+            "galactic_extinction": dict(
+                spectrum_data.metadata.get("galactic_extinction", {})
             ),
         }
     )
@@ -346,6 +358,7 @@ def _configuration(
     template_file,
     host_fit_range,
     host_config,
+    galactic_extinction_config,
     global_config,
     hbeta_config,
     mgii_config,
@@ -360,6 +373,7 @@ def _configuration(
         "template_file": str(template_file),
         "host_fit_range": tuple(host_fit_range),
         "host_config": host_config,
+        "galactic_extinction_config": asdict(galactic_extinction_config),
         "global_config": (
             asdict(global_config)
             if global_config is not None
@@ -384,6 +398,7 @@ def _fit_options(
     template_file,
     host_fit_range,
     host_config,
+    galactic_extinction_config,
     global_config,
     hbeta_config,
     mgii_config,
@@ -398,6 +413,7 @@ def _fit_options(
         "template_file": template_file,
         "host_fit_range": tuple(host_fit_range),
         "host_config": host_config,
+        "galactic_extinction_config": galactic_extinction_config,
         "global_config": global_config,
         "hbeta_config": hbeta_config,
         "mgii_config": mgii_config,
@@ -421,6 +437,9 @@ def fit_object_to_store(
     template_file: str = "spectra_emiles_9.0.npz",
     host_fit_range=(3600.0, 7000.0),
     host_config=None,
+    galactic_extinction_config: Optional[
+        GalacticExtinctionConfig
+    ] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
@@ -441,12 +460,16 @@ def fit_object_to_store(
     halpha_config = halpha_config or HalphaComplexConfig()
     lya_nv_config = lya_nv_config or LyaNVComplexConfig()
     uncertainty_config = uncertainty_config or UncertaintyConfig()
+    galactic_extinction_config = (
+        galactic_extinction_config or GalacticExtinctionConfig()
+    )
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
         template_file=template_file,
         host_fit_range=host_fit_range,
         host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
         global_config=global_config,
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,
@@ -463,7 +486,13 @@ def fit_object_to_store(
     )
     if isinstance(input_data, SpectrumInput):
         descriptor = input_data
-        spectrum_data = None
+        spectrum_data = read_spectrum(
+            descriptor.source,
+            row_index=descriptor.row_index,
+            redshift=descriptor.redshift,
+            object_id=descriptor.object_id,
+            reader=descriptor.reader,
+        )
     elif isinstance(input_data, SpectrumData):
         descriptor = SpectrumInput(
             source=str(input_data.metadata.get("input_file", "in_memory")),
@@ -486,7 +515,16 @@ def fit_object_to_store(
             mask=input_data.mask,
             redshift=input_data.z,
             object_id=object_id,
-            metadata={"input_file": descriptor.source},
+            metadata={
+                "input_file": descriptor.source,
+                "galactic_extinction": {
+                    "requested": bool(
+                        galactic_extinction_config.enabled
+                    ),
+                    "applied": False,
+                    "status": "caller_preprocessed",
+                },
+            },
         )
     else:
         descriptor = SpectrumInput(
@@ -512,6 +550,7 @@ def fit_object_to_store(
             template_file=template_file,
             host_fit_range=host_fit_range,
             host_config=host_config,
+            galactic_extinction_config=galactic_extinction_config,
             global_config=global_config,
             hbeta_config=hbeta_config,
             mgii_config=mgii_config,
@@ -634,6 +673,9 @@ def fit_batch(
     template_file: str = "spectra_emiles_9.0.npz",
     host_fit_range=(3600.0, 7000.0),
     host_config=None,
+    galactic_extinction_config: Optional[
+        GalacticExtinctionConfig
+    ] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
@@ -657,12 +699,17 @@ def fit_batch(
     halpha_config = halpha_config or HalphaComplexConfig()
     lya_nv_config = lya_nv_config or LyaNVComplexConfig()
     uncertainty_config = uncertainty_config or UncertaintyConfig()
+    galactic_extinction_config = (
+        galactic_extinction_config or GalacticExtinctionConfig()
+    )
+    preflight_galactic_extinction(galactic_extinction_config)
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
         template_file=template_file,
         host_fit_range=host_fit_range,
         host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
         global_config=global_config,
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,
@@ -686,6 +733,7 @@ def fit_batch(
         template_file=template_file,
         host_fit_range=host_fit_range,
         host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
         global_config=global_config,
         hbeta_config=hbeta_config,
         mgii_config=mgii_config,

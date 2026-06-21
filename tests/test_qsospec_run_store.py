@@ -24,6 +24,10 @@ def _continuum_config():
     )
 
 
+def _extinction_config():
+    return qsospec.GalacticExtinctionConfig(ebv_override=0.0)
+
+
 def _spectrum_data(object_id="object-1", scale=1.0):
     wave = np.linspace(3500.0, 4500.0, 240)
     flux = scale * 2.0 * (wave / 4000.0) ** -1.1
@@ -62,6 +66,7 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     result = qsospec.fit_object_to_store(
         _spectrum_data(),
         str(run),
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
         write_qa=False,
@@ -133,6 +138,7 @@ def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
     result = qsospec.fit_object_to_store(
         data,
         str(run),
+        galactic_extinction_config=_extinction_config(),
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
@@ -255,6 +261,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
         str(source),
         str(run),
         n_workers=1,
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
     )
@@ -266,6 +273,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
         str(source),
         str(run),
         n_workers=1,
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
     )
@@ -276,6 +284,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
             str(source),
             str(run),
             n_workers=1,
+            galactic_extinction_config=_extinction_config(),
             global_config=_continuum_config(),
             complexes=["mgii"],
         )
@@ -301,6 +310,7 @@ def test_duplicate_object_ids_get_row_safe_qa_names(tmp_path):
         str(source),
         str(run),
         n_workers=1,
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
     )
@@ -323,6 +333,7 @@ def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
         str(source),
         str(parallel_run),
         n_workers=2,
+        galactic_extinction_config=_extinction_config(),
         task_size=1,
         global_config=_continuum_config(),
         complexes=[],
@@ -337,6 +348,7 @@ def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
             str(source),
             str(sharded_run),
             n_workers=1,
+            galactic_extinction_config=_extinction_config(),
             num_shards=2,
             shard_index=shard_index,
             finalize=False,
@@ -360,6 +372,7 @@ def test_failure_archive_keeps_input_locator(tmp_path):
         [missing],
         str(run),
         n_workers=1,
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
     )
@@ -436,6 +449,7 @@ def test_manifest_records_schema_and_shard_state(tmp_path):
     qsospec.fit_object_to_store(
         _spectrum_data(),
         str(run),
+        galactic_extinction_config=_extinction_config(),
         global_config=_continuum_config(),
         complexes=[],
         write_qa=False,

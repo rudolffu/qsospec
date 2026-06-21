@@ -12,6 +12,48 @@ Window = Tuple[float, float]
 
 
 @dataclass(frozen=True)
+class GalacticExtinctionConfig:
+    """Foreground Galactic-extinction preprocessing configuration."""
+
+    enabled: bool = True
+    map_name: str = "planck"
+    law: str = "f99"
+    rv: float = 3.1
+    sfd_recalibration: float = 0.86
+    ebv_override: Optional[float] = None
+    dustmaps_data_dir: Optional[str] = None
+    clip_negative_ebv: bool = True
+
+    def __post_init__(self) -> None:
+        map_name = str(self.map_name).strip().lower()
+        if map_name not in ("planck", "planck16", "sfd"):
+            raise ValueError(
+                "GalacticExtinctionConfig.map_name must be 'planck', "
+                "'planck16', or 'sfd'."
+            )
+        if str(self.law).strip().lower() != "f99":
+            raise ValueError(
+                "GalacticExtinctionConfig currently supports only law='f99'."
+            )
+        if not np.isfinite(self.rv) or not 2.0 <= float(self.rv) <= 6.0:
+            raise ValueError(
+                "GalacticExtinctionConfig.rv must be finite and within "
+                "the F99 range [2, 6]."
+            )
+        if (
+            not np.isfinite(self.sfd_recalibration)
+            or float(self.sfd_recalibration) <= 0
+        ):
+            raise ValueError(
+                "GalacticExtinctionConfig.sfd_recalibration must be positive."
+            )
+        if self.ebv_override is not None and not np.isfinite(self.ebv_override):
+            raise ValueError(
+                "GalacticExtinctionConfig.ebv_override must be finite or None."
+            )
+
+
+@dataclass(frozen=True)
 class GaussianComponent:
     """Initial values and bounds for one Gaussian component."""
 

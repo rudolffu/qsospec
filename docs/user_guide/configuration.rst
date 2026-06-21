@@ -4,6 +4,50 @@ Configuration
 All configuration objects in ``qsospec`` are immutable dataclasses.  Construct
 them directly, and the fitter will validate them before use.
 
+Galactic extinction configuration
+---------------------------------
+
+.. autoclass:: qsospec.GalacticExtinctionConfig
+   :noindex:
+
+File-based, host-decomposition, and batch workflows apply foreground
+dereddening before every other processing step.  The default configuration
+uses ``PlanckGNILCQuery`` (``map_name="planck"``; ``"planck16"`` is an alias)
+and the Fitzpatrick (1999) law with :math:`R_V=3.1`.
+
+Use the SFD map with the Schlafly & Finkbeiner (2011) recalibration:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(map_name="sfd")
+
+SFD E(B-V) values are multiplied by 0.86 before evaluating F99.  To bypass a
+map query, supply a known value:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(ebv_override=0.035)
+
+To disable correction explicitly:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(enabled=False)
+
+Pass the configuration as ``galactic_extinction_config=extinction`` to
+``fit_global_lines_workflow``, ``fit_with_optional_host_decomp``,
+``fit_object_to_store``, or ``fit_batch``.  These workflows fail fast when
+correction is enabled but coordinates or map files are unavailable.
+
+The lower-level ``fit_local``, ``fit_global_continuum``, and
+``fit_global_lines`` functions do not query maps and treat ``Spectrum`` inputs
+as already corrected.  Use :func:`qsospec.correct_spectrum` for explicit
+in-memory preprocessing.  See the `dustmaps Planck/SFD documentation
+<https://dustmaps.readthedocs.io/en/latest/modules.html>`__ and the
+`dust-extinction F99 documentation
+<https://dust-extinction.readthedocs.io/en/latest/api/dust_extinction.parameter_averages.F99.html>`__
+for implementation details.
+
 Global continuum configuration
 ------------------------------
 

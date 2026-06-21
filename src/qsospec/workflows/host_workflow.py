@@ -9,6 +9,7 @@ import numpy as np
 
 from ..fitting.local import fit_local
 from ..config import (
+    GalacticExtinctionConfig,
     GlobalContinuumConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
@@ -17,6 +18,7 @@ from ..config import (
     MgIIComplexConfig,
     UncertaintyConfig,
 )
+from ..extinction import correct_spectrum_data
 from ..fitting.global_fit import fit_global_lines
 from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
@@ -181,6 +183,7 @@ def fit_with_optional_host_decomp(
     template_file: str = "spectra_emiles_9.0.npz",
     host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
     host_config: Optional[Any] = None,
+    galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
@@ -205,6 +208,7 @@ def fit_with_optional_host_decomp(
             template_file=template_file,
             host_fit_range=host_fit_range,
             host_config=host_config,
+            galactic_extinction_config=galactic_extinction_config,
             global_config=global_config,
             hbeta_config=hbeta_config,
             mgii_config=mgii_config,
@@ -220,7 +224,15 @@ def fit_with_optional_host_decomp(
 
     from .host.io import read_sparcli_spectrum
 
-    spectrum_data = read_sparcli_spectrum(input_path, row_index=row_index, redshift=redshift, object_id=object_id)
+    spectrum_data = read_sparcli_spectrum(
+        input_path,
+        row_index=row_index,
+        redshift=redshift,
+        object_id=object_id,
+    )
+    spectrum_data = correct_spectrum_data(
+        spectrum_data, galactic_extinction_config
+    )
     source = f"{input_path}:row_index={row_index}"
     host_decomp_enabled, host_skip_reason = _host_decomp_decision(
         run_host_decomp, spectrum_data.redshift
@@ -260,6 +272,9 @@ def fit_with_optional_host_decomp(
         "host_decomp_enabled": host_decomp_enabled,
         "host_decomp_skip_reason": host_skip_reason,
         "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
+        "galactic_extinction": dict(
+            spectrum_data.metadata.get("galactic_extinction", {})
+        ),
     }
     return HostWorkflowResult(
         total_spectrum=total_spectrum,
@@ -374,6 +389,7 @@ def fit_global_lines_workflow(
     template_file: str = "spectra_emiles_9.0.npz",
     host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
     host_config: Optional[Any] = None,
+    galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     mgii_config: Optional[MgIIComplexConfig] = None,
@@ -389,6 +405,9 @@ def fit_global_lines_workflow(
     uncertainty = uncertainty_config or UncertaintyConfig()
     spectrum_data = read_sparcli_spectrum(
         input_path, row_index=row_index, redshift=redshift, object_id=object_id
+    )
+    spectrum_data = correct_spectrum_data(
+        spectrum_data, galactic_extinction_config
     )
     source = f"{input_path}:row_index={row_index}"
     host_decomp_enabled, host_skip_reason = _host_decomp_decision(
@@ -461,6 +480,9 @@ def fit_global_lines_workflow(
             "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
             "host_fit_range": list(host_fit_range),
             "host_mask_provenance": "exact" if host_decomp_enabled else "unavailable",
+            "galactic_extinction": dict(
+                spectrum_data.metadata.get("galactic_extinction", {})
+            ),
         }
     )
     if run_host_decomp and not host_decomp_enabled:
@@ -509,6 +531,7 @@ def fit_global_hbeta_workflow(
     template_file: str = "spectra_emiles_9.0.npz",
     host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
     host_config: Optional[Any] = None,
+    galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
@@ -525,6 +548,7 @@ def fit_global_hbeta_workflow(
         template_file=template_file,
         host_fit_range=host_fit_range,
         host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
         global_config=global_config,
         hbeta_config=hbeta_config,
         uncertainty_config=uncertainty_config,

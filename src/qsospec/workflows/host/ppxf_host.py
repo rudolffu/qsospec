@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 from .config import DEFAULT_LINE_CENTERS
-from .dust import apply_galactic_dereddening
 from .io import DEFAULT_FLUX_DENSITY_UNIT, SpectrumData
 from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
 
@@ -147,7 +146,6 @@ def prepare_desi_for_host_decomp(
     spectrum: SpectrumData,
     redshift: Optional[float] = None,
     fit_range: Tuple[float, float] = (3600.0, 7000.0),
-    ebv: Optional[float] = None,
     line_mask_widths: Optional[Dict[str, float]] = None,
     broad_line_mask_widths: Optional[Dict[str, float]] = None,
     use_broad_line_masks: bool = True,
@@ -177,7 +175,7 @@ def prepare_desi_for_host_decomp(
         warnings_out.append("few_valid_pixels_after_cleaning")
 
     wave_obs = wave_obs[valid]
-    flux = apply_galactic_dereddening(wave_obs, flux[valid], ebv=ebv)
+    flux = flux[valid]
     err = err[valid]
     ivar_clean = ivar[valid] if ivar is not None else None
     order = np.argsort(wave_obs)

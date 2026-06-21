@@ -25,6 +25,7 @@ Configuration
    :toctree: _generated
 
    GlobalContinuumConfig
+   GalacticExtinctionConfig
    PowerLawConfig
    BalmerPseudoContinuumConfig
    IronTemplateConfig
@@ -77,6 +78,11 @@ Fitting functions
 I/O functions
 -------------
 
+.. autofunction:: qsospec.query_galactic_ebv
+.. autofunction:: qsospec.f99_dereddening_factor
+.. autofunction:: qsospec.correct_spectrum
+.. autofunction:: qsospec.correct_spectrum_data
+.. autofunction:: qsospec.preflight_galactic_extinction
 .. autofunction:: qsospec.read_spectrum
 .. autofunction:: qsospec.discover_fits_inputs
 .. autofunction:: qsospec.read_input_manifest

@@ -41,6 +41,28 @@ Install from source (development):
    cd qsospec
    python -m pip install -e ".[dev,host,docs]"
 
+Configure Galactic dust maps
+----------------------------
+
+File-based and batch workflows apply Galactic dereddening by default using
+the Planck Collaboration (2016) GNILC map.  Configure the external
+``dustmaps`` data directory and fetch the maps after installation:
+
+.. code-block:: python
+
+   from dustmaps.config import config
+
+   config["data_dir"] = "/path/to/dustmaps"
+
+   from dustmaps import planck, sfd
+   planck.fetch(which="GNILC")
+   sfd.fetch()
+
+The directory will contain ``planck/`` and ``sfd/`` subdirectories.  Missing
+coordinates or map files raise an error while correction is enabled.  See
+:doc:`user_guide/configuration` for map selection, disabling the correction,
+and supplying an explicit E(B-V).
+
 .. toctree::
    :maxdepth: 2
    :caption: User Guide

@@ -14,6 +14,7 @@ from .fitting.local import fit_line_complex, fit_local
 from .workflows.batch import BatchResult, fit_batch, fit_object_to_store
 from .config import (
     BalmerPseudoContinuumConfig,
+    GalacticExtinctionConfig,
     GaussianComponent,
     GlobalContinuumConfig,
     HalphaComplexConfig,
@@ -26,6 +27,13 @@ from .config import (
     MgIIComplexConfig,
     PowerLawConfig,
     UncertaintyConfig,
+)
+from .extinction import (
+    correct_spectrum,
+    correct_spectrum_data,
+    f99_dereddening_factor,
+    preflight_galactic_extinction,
+    query_galactic_ebv,
 )
 from .fitting.global_fit import (
     fit_global_continuum,
@@ -95,6 +103,7 @@ __all__ = [
     "FitResult",
     "EmissionComplexResult",
     "GaussianComponent",
+    "GalacticExtinctionConfig",
     "GlobalContinuumConfig",
     "GlobalContinuumResult",
     "GlobalQAPlotConfig",
@@ -122,10 +131,13 @@ __all__ = [
     "balmer_bound_free_shape",
     "build_science_catalog",
     "compute_derived_quantities",
+    "correct_spectrum",
+    "correct_spectrum_data",
     "detect_fits_reader",
     "discover_fits_inputs",
     "finalize_run",
     "fit_batch",
+    "f99_dereddening_factor",
     "fit_global_continuum",
     "fit_global_hbeta",
     "fit_global_hbeta_workflow",
@@ -147,6 +159,8 @@ __all__ = [
     "load_iron_template",
     "load_model",
     "open_run",
+    "preflight_galactic_extinction",
+    "query_galactic_ebv",
     "plot_line_result",
     "plot_local_result",
     "recipes",

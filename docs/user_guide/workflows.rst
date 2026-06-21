@@ -17,6 +17,10 @@ spectrum is available.
 Create a ``Spectrum`` from arrays and pass it to :func:`qsospec.fit_local`
 with a :class:`~qsospec.LocalFitConfig`.
 
+Array-based ``Spectrum`` inputs are treated as already corrected for Galactic
+extinction.  Use :func:`qsospec.correct_spectrum` first when correction is
+needed.
+
 .. code-block:: python
 
     import qsospec
@@ -103,30 +107,34 @@ Fitting steps
 
 The global workflow executes these steps in order:
 
-1. **Continuum fitting** — fits the power-law, UV iron, optical iron, and
+1. **Galactic dereddening** — file-based workflows query the configured dust
+   map and apply F99 to observed-frame flux and uncertainty.  Direct
+   ``fit_global_lines(Spectrum)`` calls treat their input as pre-corrected.
+
+2. **Continuum fitting** — fits the power-law, UV iron, optical iron, and
    Balmer pseudo-continuum on line-free windows using bounded variable
    projection.  Returns a :class:`~qsospec.GlobalContinuumResult`.
 
-2. **Optional Hβ synchronisation** — if
+3. **Optional Hβ synchronisation** — if
    ``BalmerPseudoContinuumConfig.sync_with_hbeta=True`` and the later Hβ fit
    succeeds, the Balmer-series FWHM is replaced with the broad Hβ FWHM.
 
-3. **Adaptive complex selection** — from the rest-frame coverage, qsospec
+4. **Adaptive complex selection** — from the rest-frame coverage, qsospec
    determines which emission-line recipes are executable.  By default
    (``complexes=None``), all covered, auto-enabled recipes are selected.
 
-4. **Hβ/[O III] fitting** — constrained broad + narrow Hβ model with ordered
+5. **Hβ/[O III] fitting** — constrained broad + narrow Hβ model with ordered
    components, optional [O III] wings, and BIC-based wing selection.
 
-5. **Mg II fitting** — two ordered broad + one narrow Mg II components.
+6. **Mg II fitting** — two ordered broad + one narrow Mg II components.
 
-6. **Hα/[N II]/[S II] fitting** — three ordered broad Hα + tied narrow lines.
+7. **Hα/[N II]/[S II] fitting** — three ordered broad Hα + tied narrow lines.
 
-7. **Optional complexes** — Lyα/N V (with coverage classification and
+8. **Optional complexes** — Lyα/N V (with coverage classification and
    absorption masking), C IV, C III], K/NIR (Paschen/NIR), [O II]/Hγ/Ne III,
    and generic narrow-line recipes.  Each records independent success/failure.
 
-8. **Uncertainty estimation** — covariance errors from the Hessian at the
+9. **Uncertainty estimation** — covariance errors from the Hessian at the
    solution, and optionally Monte Carlo perturbation trials.
 
 
@@ -143,6 +151,9 @@ subtracts the host galaxy, and then runs qsospec fitting.  This requires
         "spectrum.fits",
         row_index=0,
         run_host_decomp=True,
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(
+            map_name="planck",
+        ),
     )
 
 Or for local fitting with host subtraction:
@@ -219,6 +230,9 @@ Large samples use the same Parquet-backed run format as single objects.
         ["spectra-000.parquet", "spectra-001.parquet"],
         "runs/sample",
         n_workers="auto",
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(
+            map_name="planck",
+        ),
     )
 
 Key features:

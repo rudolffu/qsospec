@@ -33,6 +33,8 @@ dependencies = [
     "scipy",
     "matplotlib",
     "astropy",
+    "dustmaps>=1.0.14",
+    "dust-extinction>=1.5",
     "pandas",
     "pyarrow>=12",
 ]

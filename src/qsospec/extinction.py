@@ -1,0 +1,324 @@
+"""Foreground Galactic-extinction queries and dereddening helpers."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, replace
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import astropy.units as u
+import numpy as np
+from astropy.coordinates import SkyCoord
+from dust_extinction.parameter_averages import F99
+
+from .config import GalacticExtinctionConfig
+from .spectrum import Spectrum
+from .workflows.host.io import SpectrumData
+
+
+_PLANCK_GNILC_FILENAME = (
+    "COM_CompMap_Dust-GNILC-Model-Opacity_2048_R2.01.fits"
+)
+_PROVENANCE_KEY = "galactic_extinction"
+
+
+def _resolved_config(
+    config: Optional[GalacticExtinctionConfig],
+) -> GalacticExtinctionConfig:
+    return config or GalacticExtinctionConfig()
+
+
+def _canonical_map_name(name: str) -> str:
+    value = str(name).strip().lower()
+    return "planck" if value in ("planck", "planck16") else value
+
+
+def _resolved_data_dir(config: GalacticExtinctionConfig) -> Optional[str]:
+    if config.dustmaps_data_dir is not None:
+        return str(Path(config.dustmaps_data_dir).expanduser().resolve())
+    if not config.enabled or config.ebv_override is not None:
+        return None
+    from dustmaps.std_paths import data_dir
+
+    return str(Path(data_dir()).expanduser().resolve())
+
+
+def _config_provenance(config: GalacticExtinctionConfig) -> Dict[str, Any]:
+    values = asdict(config)
+    values["map_name"] = _canonical_map_name(config.map_name)
+    values["dustmaps_data_dir"] = _resolved_data_dir(config)
+    if (
+        config.enabled
+        and config.ebv_override is None
+        and values["dustmaps_data_dir"] is not None
+    ):
+        map_root = Path(values["dustmaps_data_dir"])
+        values["map_path"] = str(
+            map_root / "planck" / _PLANCK_GNILC_FILENAME
+            if values["map_name"] == "planck"
+            else map_root / "sfd"
+        )
+    else:
+        values["map_path"] = None
+    return values
+
+
+@lru_cache(maxsize=8)
+def _dust_query(map_name: str, data_dir: Optional[str]):
+    if map_name == "planck":
+        from dustmaps.planck import PlanckGNILCQuery
+
+        map_fname = None
+        if data_dir is not None:
+            map_fname = str(
+                Path(data_dir)
+                / "planck"
+                / _PLANCK_GNILC_FILENAME
+            )
+        return PlanckGNILCQuery(map_fname=map_fname)
+    if map_name == "sfd":
+        from dustmaps.sfd import SFDQuery
+
+        map_dir = (
+            str(Path(data_dir) / "sfd")
+            if data_dir is not None
+            else None
+        )
+        return SFDQuery(map_dir=map_dir)
+    raise ValueError(f"Unsupported Galactic dust map: {map_name!r}")
+
+
+def preflight_galactic_extinction(
+    config: Optional[GalacticExtinctionConfig] = None,
+) -> None:
+    """Validate that the configured external dust map can be opened."""
+
+    cfg = _resolved_config(config)
+    if not cfg.enabled or cfg.ebv_override is not None:
+        return
+    _dust_query(
+        _canonical_map_name(cfg.map_name),
+        _resolved_data_dir(cfg),
+    )
+
+
+def query_galactic_ebv(
+    ra: Optional[float],
+    dec: Optional[float],
+    config: Optional[GalacticExtinctionConfig] = None,
+) -> Tuple[float, Dict[str, Any]]:
+    """Return applied E(B-V) and query provenance for one ICRS coordinate."""
+
+    cfg = _resolved_config(config)
+    provenance = _config_provenance(cfg)
+    provenance.update(
+        {
+            "requested": bool(cfg.enabled),
+            "ra": None if ra is None else float(ra),
+            "dec": None if dec is None else float(dec),
+        }
+    )
+    if not cfg.enabled:
+        provenance.update(
+            {
+                "applied": False,
+                "status": "disabled",
+                "raw_ebv": None,
+                "applied_ebv": 0.0,
+                "warning": None,
+            }
+        )
+        return 0.0, provenance
+
+    if cfg.ebv_override is not None:
+        raw_ebv = float(cfg.ebv_override)
+        source = "override"
+    else:
+        if ra is None or dec is None:
+            raise ValueError(
+                "Galactic extinction correction requires finite RA and Dec "
+                "in degrees, or GalacticExtinctionConfig.ebv_override."
+            )
+        ra_value = float(ra)
+        dec_value = float(dec)
+        if (
+            not np.isfinite(ra_value)
+            or not np.isfinite(dec_value)
+            or not 0.0 <= ra_value < 360.0
+            or not -90.0 <= dec_value <= 90.0
+        ):
+            raise ValueError(
+                "Galactic extinction correction requires finite ICRS "
+                "coordinates with 0 <= RA < 360 and -90 <= Dec <= 90 degrees."
+            )
+        data_dir = _resolved_data_dir(cfg)
+        query = _dust_query(_canonical_map_name(cfg.map_name), data_dir)
+        coordinate = SkyCoord(
+            ra=ra_value * u.deg,
+            dec=dec_value * u.deg,
+            frame="icrs",
+        )
+        raw_ebv = float(np.asarray(query(coordinate)).reshape(-1)[0])
+        source = _canonical_map_name(cfg.map_name)
+
+    if not np.isfinite(raw_ebv):
+        raise ValueError("The Galactic dust-map query returned non-finite E(B-V).")
+    warning = None
+    map_ebv = raw_ebv
+    if raw_ebv < 0:
+        if not cfg.clip_negative_ebv:
+            raise ValueError(
+                "The Galactic dust-map query returned negative E(B-V) and "
+                "clip_negative_ebv is disabled."
+            )
+        map_ebv = 0.0
+        warning = "negative_ebv_clipped_to_zero"
+    applied_ebv = (
+        map_ebv * float(cfg.sfd_recalibration)
+        if source == "sfd"
+        else map_ebv
+    )
+    provenance.update(
+        {
+            "applied": True,
+            "status": "applied",
+            "source": source,
+            "raw_ebv": raw_ebv,
+            "applied_ebv": applied_ebv,
+            "warning": warning,
+        }
+    )
+    return float(applied_ebv), provenance
+
+
+def f99_dereddening_factor(
+    wave_obs: np.ndarray,
+    ebv: float,
+    rv: float = 3.1,
+) -> np.ndarray:
+    """Return the multiplicative F99 dereddening factor."""
+
+    wave = np.asarray(wave_obs, dtype=float)
+    if wave.ndim != 1:
+        raise ValueError("Observed wavelengths must be a one-dimensional array.")
+    if not np.all(np.isfinite(wave)) or np.any(wave <= 0):
+        raise ValueError(
+            "F99 Galactic extinction correction requires positive, finite "
+            "observed wavelengths."
+        )
+    model = F99(Rv=float(rv))
+    inverse_micron = (1.0 / (wave * u.AA)).to_value(1 / u.micron)
+    if (
+        np.any(inverse_micron < model.x_range[0])
+        or np.any(inverse_micron > model.x_range[1])
+    ):
+        supported_min = 1.0e4 / model.x_range[1]
+        supported_max = 1.0e4 / model.x_range[0]
+        raise ValueError(
+            "Observed wavelengths fall outside the F99 supported range "
+            f"[{supported_min:.1f}, {supported_max:.1f}] Angstrom."
+        )
+    attenuation = np.asarray(
+        model.extinguish(wave * u.AA, Ebv=float(ebv)),
+        dtype=float,
+    )
+    return 1.0 / attenuation
+
+
+def _same_correction(
+    existing: Dict[str, Any],
+    config: GalacticExtinctionConfig,
+    ra: Optional[float],
+    dec: Optional[float],
+) -> bool:
+    requested = _config_provenance(config)
+    for key, value in requested.items():
+        if existing.get(key) != value:
+            return False
+    if config.ebv_override is None:
+        return existing.get("ra") == ra and existing.get("dec") == dec
+    return True
+
+
+def correct_spectrum_data(
+    spectrum: SpectrumData,
+    config: Optional[GalacticExtinctionConfig] = None,
+) -> SpectrumData:
+    """Apply the configured Galactic correction exactly once."""
+
+    cfg = _resolved_config(config)
+    metadata = dict(spectrum.metadata)
+    existing = metadata.get(_PROVENANCE_KEY)
+    if isinstance(existing, dict):
+        if existing.get("status") == "caller_preprocessed":
+            return spectrum
+        if _same_correction(existing, cfg, spectrum.ra, spectrum.dec):
+            return spectrum
+        raise ValueError(
+            "SpectrumData already contains a different Galactic-extinction "
+            "correction and the raw arrays are unavailable."
+        )
+
+    ebv, provenance = query_galactic_ebv(spectrum.ra, spectrum.dec, cfg)
+    if not cfg.enabled:
+        metadata[_PROVENANCE_KEY] = provenance
+        return replace(spectrum, metadata=metadata)
+
+    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
+    flux = np.asarray(spectrum.flux, dtype=float) * factor
+    error = (
+        None
+        if spectrum.error is None
+        else np.asarray(spectrum.error, dtype=float) * factor
+    )
+    ivar = (
+        None
+        if spectrum.ivar is None
+        else np.asarray(spectrum.ivar, dtype=float) / factor**2
+    )
+    provenance.update(
+        {
+            "correction_factor_min": float(np.min(factor)),
+            "correction_factor_max": float(np.max(factor)),
+        }
+    )
+    metadata[_PROVENANCE_KEY] = provenance
+    return replace(
+        spectrum,
+        flux=flux,
+        error=error,
+        ivar=ivar,
+        metadata=metadata,
+    )
+
+
+def correct_spectrum(
+    spectrum: Spectrum,
+    *,
+    ra: Optional[float] = None,
+    dec: Optional[float] = None,
+    config: Optional[GalacticExtinctionConfig] = None,
+) -> Tuple[Spectrum, Dict[str, Any]]:
+    """Return a corrected in-memory spectrum and correction provenance."""
+
+    cfg = _resolved_config(config)
+    ebv, provenance = query_galactic_ebv(ra, dec, cfg)
+    if not cfg.enabled:
+        return spectrum, provenance
+    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
+    corrected = Spectrum.from_arrays(
+        spectrum.wave_obs,
+        spectrum.flux * factor,
+        err=spectrum.err * factor,
+        z=spectrum.z,
+        mask=spectrum.mask,
+        metadata=spectrum.metadata,
+    )
+    provenance.update(
+        {
+            "correction_factor_min": float(np.min(factor)),
+            "correction_factor_max": float(np.max(factor)),
+        }
+    )
+    return corrected, provenance

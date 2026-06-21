@@ -127,11 +127,20 @@ Broad-line profiles, components, and virial measurements
 Reddening and extinction
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
+- `Schlegel, Finkbeiner & Davis (1998), 1998ApJ...500..525S <https://ui.adsabs.harvard.edu/abs/1998ApJ...500..525S/abstract>`__
+  — all-sky Galactic dust reddening map.
+
+- `Schlafly & Finkbeiner (2011), 2011ApJ...737..103S <https://ui.adsabs.harvard.edu/abs/2011ApJ...737..103S/abstract>`__
+  — recalibration applied to SFD E(B-V) values.
+
 - `Cardelli, Clayton & Mathis (1989), 1989ApJ...345..245C <https://ui.adsabs.harvard.edu/abs/1989ApJ...345..245C/abstract>`__
   — widely used Galactic extinction law.
 
 - `Fitzpatrick (1999), 1999PASP..111...63F <https://ui.adsabs.harvard.edu/abs/1999PASP..111...63F/abstract>`__
   — updated Milky Way extinction curve.
+
+- `Planck Collaboration (2016), 2016A&A...594A..11P <https://ui.adsabs.harvard.edu/abs/2016A%26A...594A..11P/abstract>`__
+  — GNILC thermal-dust map used by the default foreground correction.
 
 - `Calzetti et al. (2000), 2000ApJ...533..682C <https://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C/abstract>`__
   — starburst attenuation curve, often used as a comparison law.
