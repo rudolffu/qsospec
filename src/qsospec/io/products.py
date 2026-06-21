@@ -170,6 +170,17 @@ def _percentile_limits(values, percentiles: Tuple[float, float] = (1.0, 99.0), p
     return float(lo - margin), float(hi + margin)
 
 
+def _flux_display_scale(spectrum) -> float:
+    """Return the display-only scale into DESI-style 1e-17 cgs units."""
+
+    if getattr(spectrum, "flux_unit", None) != "cgs":
+        return 1.0
+    scale = getattr(spectrum, "flux_scale", None)
+    if scale is None or not np.isfinite(scale) or scale <= 0:
+        return 1.0
+    return float(scale) / 1.0e-17
+
+
 @_science_plot_style
 def _plot_global(
     result: WorkflowResult,
@@ -183,6 +194,7 @@ def _plot_global(
     spectrum = result.spectrum
     continuum = result.continuum
     wave = spectrum.wave_rest
+    display_scale = _flux_display_scale(spectrum)
     valid = spectrum.valid_mask
     if window is not None:
         valid &= (wave >= window[0]) & (wave <= window[1])
@@ -192,14 +204,14 @@ def _plot_global(
     )
     ax.plot(
         wave[valid],
-        spectrum.flux[valid],
+        display_scale * spectrum.flux[valid],
         color="0.45",
         lw=0.65,
         label="host-subtracted data",
     )
     ax.plot(
         wave[valid],
-        continuum.model[valid],
+        display_scale * continuum.model[valid],
         color="black",
         lw=1.8,
         label="full continuum",
@@ -222,7 +234,7 @@ def _plot_global(
             label = name.replace("_", " ")
         ax.plot(
             wave[valid],
-            component[valid],
+            display_scale * component[valid],
             lw=0.75,
             ls=linestyle,
             color=color,
@@ -230,15 +242,24 @@ def _plot_global(
         )
     used = continuum.clip_mask & valid
     if np.any(used):
-        ax.scatter(wave[used], spectrum.flux[used], s=5, color="k", alpha=0.25, label="fit pixels")
-    upper = _rounded_model_upper_limit(continuum.model[valid])
+        ax.scatter(
+            wave[used],
+            display_scale * spectrum.flux[used],
+            s=5,
+            color="k",
+            alpha=0.25,
+            label="fit pixels",
+        )
+    upper = _rounded_model_upper_limit(
+        display_scale * continuum.model[valid]
+    )
     if upper is not None:
         ax.set_ylim(0.0, upper)
     if window is not None:
         ax.set_xlim(*window)
     ax.set_xlabel(r"Rest wavelength [$\mathrm{\AA}$]", fontsize=13)
     ax.set_ylabel(
-        _flux_density_axis_label(spectrum.flux_density_unit),
+        _flux_density_axis_label(spectrum),
         fontsize=13,
     )
     _configure_qa_axis(ax)
@@ -306,13 +327,13 @@ _NARROW_STYLE = {
 }
 _WING_STYLE = {
     "color": _TCC_COLORS["outflow"],
-    "linestyle": "--",
-    "linewidth": 1.0,
+    "linestyle": "-",
+    "linewidth": 0.9,
 }
 _HOST_STYLE = {
     "color": _TCC_COLORS["host"],
-    "linestyle": "--",
-    "linewidth": 1.25,
+    "linestyle": "-",
+    "linewidth": 0.9,
 }
 _MAJOR_EMISSION_LINES = (
     (1215.67, r"Ly$\alpha$"),
@@ -538,8 +559,17 @@ def _annotate_emission_lines(axis, lines, *, y_fraction: float) -> Tuple[str, ..
     return tuple(labels)
 
 
-def _flux_density_axis_label(flux_density_unit: str) -> str:
-    normalized = str(flux_density_unit).lower().replace("angstrom", "aa")
+def _flux_density_axis_label(spectrum_or_unit) -> str:
+    flux_unit = getattr(spectrum_or_unit, "flux_unit", None)
+    if flux_unit == "cgs":
+        return (
+            r"$F_\lambda\ "
+            r"[10^{-17}\,\mathrm{erg}\,\mathrm{s}^{-1}\,"
+            r"\mathrm{cm}^{-2}\,\mathrm{\AA}^{-1}]$"
+        )
+    if flux_unit == "relative":
+        return r"$F_\lambda$ [relative units]"
+    normalized = str(spectrum_or_unit).lower().replace("angstrom", "aa")
     if (
         "1e-17" in normalized
         and "erg" in normalized
@@ -547,11 +577,13 @@ def _flux_density_axis_label(flux_density_unit: str) -> str:
         and "aa" in normalized
     ):
         return (
-            r"$f_\lambda\ "
+            r"$F_\lambda\ "
             r"[10^{-17}\,\mathrm{erg}\,\mathrm{s}^{-1}\,"
             r"\mathrm{cm}^{-2}\,\mathrm{\AA}^{-1}]$"
         )
-    return rf"$f_\lambda$ [{flux_density_unit}]"
+    if "relative" in normalized:
+        return r"$F_\lambda$ [relative units]"
+    return rf"$F_\lambda$ [{spectrum_or_unit}]"
 
 
 def _rounded_model_upper_limit(model_values: np.ndarray) -> Optional[float]:
@@ -727,6 +759,7 @@ def _plot_host_context(
     spectrum = result.spectrum
     total_spectrum = result.total_spectrum
     wave = spectrum.wave_rest
+    display_scale = _flux_display_scale(spectrum)
     host = np.asarray(result.host_model_on_quasar_grid, dtype=float)
     line_model = _full_line_model(result)
     agn_model = result.continuum.model + line_model
@@ -737,18 +770,27 @@ def _plot_host_context(
         & np.isfinite(host)
         & np.isfinite(reconstructed_total)
     )
-    displayed_total_flux = (
+    smoothing_effective = bool(
+        config.smooth_original_spectrum_for_display
+        and wave.size > 4000
+    )
+    displayed_total_flux_native = (
         _masked_running_median(
             total_spectrum.flux,
             valid_total,
             config.smoothing_window_pixels,
         )
-        if config.smooth_original_spectrum_for_display
+        if smoothing_effective
         else total_spectrum.flux
     )
+    displayed_total_flux = display_scale * displayed_total_flux_native
+    reconstructed_total_display = display_scale * reconstructed_total
+    host_display = display_scale * host
+    fit_flux_display = display_scale * spectrum.flux
+    agn_model_display = display_scale * agn_model
     original_label = (
         "original spectrum\nsmoothed for display"
-        if config.smooth_original_spectrum_for_display
+        if smoothing_effective
         else "original spectrum"
     )
     valid_wave = wave[valid_total | valid_fit]
@@ -772,22 +814,24 @@ def _plot_host_context(
     )
     top_axis.plot(
         wave[valid_total],
-        reconstructed_total[valid_total],
+        reconstructed_total_display[valid_total],
         color="black",
         lw=1.7,
         label="host + final AGN model",
     )
     top_axis.plot(
         wave[valid_total],
-        host[valid_total],
+        host_display[valid_total],
         **_HOST_STYLE,
         label="host galaxy",
     )
-    top_upper = _rounded_model_upper_limit(reconstructed_total[valid_total])
+    top_upper = _rounded_model_upper_limit(
+        reconstructed_total_display[valid_total]
+    )
     if top_upper is not None:
         top_axis.set_ylim(0.0, top_upper)
     top_axis.set_ylabel(
-        _flux_density_axis_label(spectrum.flux_density_unit),
+        _flux_density_axis_label(spectrum),
         fontsize=13,
     )
     source_title = _qa_overview_title(result, config)
@@ -823,23 +867,25 @@ def _plot_host_context(
 
     bottom_axis.plot(
         wave[valid_fit],
-        spectrum.flux[valid_fit],
+        fit_flux_display[valid_fit],
         color="0.48",
         lw=0.65,
         label="host-subtracted spectrum",
     )
     bottom_axis.plot(
         wave[valid_fit],
-        agn_model[valid_fit],
+        agn_model_display[valid_fit],
         color="black",
         lw=1.7,
         label="final AGN + emission-line model",
     )
-    bottom_upper = _rounded_model_upper_limit(agn_model[valid_fit])
+    bottom_upper = _rounded_model_upper_limit(
+        agn_model_display[valid_fit]
+    )
     if bottom_upper is not None:
         bottom_axis.set_ylim(0.0, bottom_upper)
     bottom_axis.set_ylabel(
-        _flux_density_axis_label(spectrum.flux_density_unit),
+        _flux_density_axis_label(spectrum),
         fontsize=13,
     )
     bottom_axis.set_xlabel(
@@ -872,8 +918,13 @@ def _plot_host_context(
     }
     result.metadata["host_context_fraction_annotation"] = fraction_text
     result.metadata["host_context_original_spectrum_smoothed_for_display"] = (
-        bool(config.smooth_original_spectrum_for_display)
+        smoothing_effective
     )
+    result.metadata["host_context_smoothing_requested"] = bool(
+        config.smooth_original_spectrum_for_display
+    )
+    result.metadata["host_context_smoothing_effective"] = smoothing_effective
+    result.metadata["host_context_flux_display_scale"] = display_scale
     saved = _save_figure(fig, paths)
     plt.close(fig)
     return saved
@@ -911,7 +962,9 @@ def _plot_qa(
     result.metadata["qa_max_zoom_panels"] = int(config.max_zoom_panels)
     result.metadata["qa_displayed_complexes"] = list(available)
     result.metadata["qa_omitted_complexes"] = list(omitted)
-    result.metadata["qa_smoothed_data"] = bool(config.show_smoothed_data)
+    result.metadata["qa_smoothed_data_requested"] = bool(
+        config.show_smoothed_data
+    )
     result.metadata["qa_original_spectrum_smoothed_for_display"] = bool(
         config.smooth_original_spectrum_for_display
     )
@@ -962,6 +1015,7 @@ def _plot_qa(
     ]
     spectrum = result.spectrum
     wave = spectrum.wave_rest
+    display_scale = _flux_display_scale(spectrum)
     valid = spectrum.valid_mask
     line_model = _full_line_model(result)
     full_model = result.continuum.model + line_model
@@ -997,49 +1051,77 @@ def _plot_qa(
         if host_overview
         else np.zeros_like(full_model)
     )
-    overview_data = (
+    overview_data_native = (
         np.asarray(result.total_spectrum.flux, dtype=float)
         if host_overview
         else spectrum.flux
     )
-    overview_full_model = full_model + host_model
-    overview_continuum = result.continuum.model + host_model
+    overview_full_model_native = full_model + host_model
+    overview_data = display_scale * overview_data_native
+    overview_full_model = display_scale * overview_full_model_native
+    full_model_display = display_scale * full_model
+    fit_data_display = display_scale * spectrum.flux
+    fit_error_display = display_scale * spectrum.err
+    host_model_display = display_scale * host_model
     overview_valid = valid.copy()
     if host_overview:
         overview_valid &= (
             result.total_spectrum.valid_mask
             & np.isfinite(host_model)
-            & np.isfinite(overview_data)
+            & np.isfinite(overview_data_native)
         )
-    smoothed_fit_data = (
+    smoothing_requested = bool(
+        config.show_smoothed_data
+        or config.smooth_original_spectrum_for_display
+    )
+    smoothing_effective = bool(smoothing_requested and wave.size > 4000)
+    smoothed_fit_data_native = (
         _masked_running_median(
             spectrum.flux,
             valid,
             config.smoothing_window_pixels,
         )
-        if (
-            config.show_smoothed_data
-            or config.smooth_original_spectrum_for_display
-        )
+        if smoothing_effective
         else None
     )
-    smoothed_overview_data = (
+    smoothed_overview_data_native = (
         _masked_running_median(
-            overview_data,
+            overview_data_native,
             overview_valid,
             config.smoothing_window_pixels,
         )
-        if (
-            config.show_smoothed_data
-            or config.smooth_original_spectrum_for_display
-        )
+        if smoothing_effective
+        else None
+    )
+    smoothed_fit_data = (
+        display_scale * smoothed_fit_data_native
+        if smoothed_fit_data_native is not None
+        else None
+    )
+    smoothed_overview_data = (
+        display_scale * smoothed_overview_data_native
+        if smoothed_overview_data_native is not None
         else None
     )
     replace_original_with_smoothed = bool(
         config.smooth_original_spectrum_for_display
+        and smoothing_effective
+    )
+    show_smoothed_trace = bool(
+        config.show_smoothed_data and smoothing_effective
     )
     result.metadata["qa_original_spectrum_smoothed_used"] = (
         replace_original_with_smoothed
+    )
+    result.metadata["qa_smoothed_data"] = show_smoothed_trace
+    result.metadata["qa_smoothing_requested"] = smoothing_requested
+    result.metadata["qa_smoothing_effective"] = smoothing_effective
+    result.metadata["qa_smoothing_suppressed_short_spectrum"] = bool(
+        smoothing_requested and wave.size <= 4000
+    )
+    result.metadata["qa_flux_display_scale"] = display_scale
+    result.metadata["qa_flux_display_unit"] = (
+        "1e-17 cgs" if spectrum.flux_unit == "cgs" else "relative"
     )
 
     def plot_observed(
@@ -1060,7 +1142,9 @@ def _plot_qa(
                 zorder=1,
                 label="observed spectrum" if labels else "_nolegend_",
             )
-        if smoothed_values is not None:
+        if smoothed_values is not None and (
+            show_smoothed_trace or replace_original_with_smoothed
+        ):
             ax.plot(
                 wave[panel_mask],
                 smoothed_values[panel_mask],
@@ -1107,7 +1191,7 @@ def _plot_qa(
                 )
             ax.plot(
                 wave[panel_mask],
-                component[panel_mask],
+                display_scale * component[panel_mask],
                 color=color,
                 ls=linestyle,
                 lw=0.8,
@@ -1124,7 +1208,7 @@ def _plot_qa(
         labels=True,
     )
     overview_model_plot = np.where(
-        fitted_mask & overview_valid,
+        overview_valid,
         overview_full_model,
         np.nan,
     )
@@ -1136,25 +1220,10 @@ def _plot_qa(
         label="total model",
         zorder=6,
     )
-    continuum_expectation = np.where(
-        overview_valid & ~fitted_mask,
-        overview_continuum,
-        np.nan,
-    )
-    overview_axis.plot(
-        wave,
-        continuum_expectation,
-        color=_TCC_COLORS["continuum"],
-        lw=1.05,
-        ls="--",
-        alpha=0.62,
-        label="continuum model (extrapolated)",
-        zorder=3,
-    )
     if host_overview:
         overview_axis.plot(
             wave[overview_valid],
-            host_model[overview_valid],
+            host_model_display[overview_valid],
             label="host galaxy",
             zorder=3,
             **_HOST_STYLE,
@@ -1168,6 +1237,10 @@ def _plot_qa(
     overview_title = _qa_overview_title(result, config)
     result.metadata["qa_overview_title"] = overview_title
     overview_axis.set_title(overview_title, fontsize=12)
+    overview_axis.set_ylabel(
+        _flux_density_axis_label(spectrum),
+        fontsize=13,
+    )
     _configure_qa_axis(overview_axis)
     broad_label_used = False
     narrow_label_used = False
@@ -1180,7 +1253,7 @@ def _plot_qa(
         combined = _combined_broad_profile(fit)
         overview_axis.plot(
             wave[component_mask],
-            combined[component_mask],
+            display_scale * combined[component_mask],
             label="broad-line model" if not broad_label_used else "_nolegend_",
             zorder=5,
             **_COMBINED_BROAD_STYLE,
@@ -1198,7 +1271,7 @@ def _plot_qa(
                 narrow_label_used = True
             overview_axis.plot(
                 wave[component_mask],
-                component[component_mask],
+                display_scale * component[component_mask],
                 label=legend_label,
                 zorder=5,
                 **style,
@@ -1249,7 +1322,7 @@ def _plot_qa(
         result.metadata["qa_overview_upper_percentile"] = 99.8
     else:
         overview_upper = _rounded_model_upper_limit(
-            overview_full_model[overview_valid & fitted_mask]
+            overview_full_model[overview_valid]
         )
         result.metadata["qa_overview_upper_policy"] = "rounded_model"
         result.metadata["qa_overview_upper_percentile"] = None
@@ -1366,7 +1439,7 @@ def _plot_qa(
         normalized_residual[residual_mask] = (
             overview_data[residual_mask]
             - overview_full_model[residual_mask]
-        ) / spectrum.err[residual_mask]
+        ) / fit_error_display[residual_mask]
         residual_axis.plot(
             wave,
             normalized_residual,
@@ -1439,28 +1512,17 @@ def _plot_qa(
         plot_observed(
             axis,
             panel_mask,
-            data_values=spectrum.flux,
+            data_values=fit_data_display,
             smoothed_values=smoothed_fit_data,
             labels=False,
         )
-        fit_panel_mask = panel_mask & np.asarray(fit.fit_mask, dtype=bool)
         axis.plot(
             wave,
-            np.where(fit_panel_mask, full_model, np.nan),
+            np.where(panel_mask & valid, full_model_display, np.nan),
             color=_TCC_COLORS["total_model"],
             lw=1.8,
             label="_nolegend_",
             zorder=6,
-        )
-        axis.plot(
-            wave[panel_mask],
-            result.continuum.model[panel_mask],
-            color=_TCC_COLORS["continuum"],
-            lw=1.0,
-            ls="--",
-            alpha=0.65,
-            label="_nolegend_",
-            zorder=3,
         )
         plot_continuum_components(axis, panel_mask, labels=False)
         axis.set_title(title, fontsize=12)
@@ -1468,7 +1530,7 @@ def _plot_qa(
         combined = _combined_broad_profile(fit)
         axis.plot(
             wave[panel_mask],
-            combined[panel_mask],
+            display_scale * combined[panel_mask],
             label="broad-line model",
             **_COMBINED_BROAD_STYLE,
         )
@@ -1490,7 +1552,7 @@ def _plot_qa(
                     )
                 axis.plot(
                     wave[panel_mask],
-                    component[panel_mask],
+                    display_scale * component[panel_mask],
                     label=component_label,
                     **_BROAD_COMPONENT_STYLE,
                 )
@@ -1500,7 +1562,7 @@ def _plot_qa(
             style = _WING_STYLE if kind == "wing" else _NARROW_STYLE
             axis.plot(
                 wave[panel_mask],
-                component[panel_mask],
+                display_scale * component[panel_mask],
                 label=(
                     "outflow wing"
                     if kind == "wing"
@@ -1509,16 +1571,6 @@ def _plot_qa(
                 **style,
             )
         if complex_name == "lya_nv":
-            axis.plot(
-                wave[panel_mask],
-                result.continuum.model[panel_mask],
-                color=_TCC_COLORS["continuum"],
-                lw=1.0,
-                ls="--",
-                alpha=0.8,
-                label="continuum model (extrapolated)",
-                zorder=3,
-            )
             excluded = (
                 np.asarray(fit.excluded_mask, dtype=bool)
                 if fit.excluded_mask is not None
@@ -1528,7 +1580,7 @@ def _plot_qa(
             if np.any(excluded):
                 axis.scatter(
                     wave[excluded],
-                    spectrum.flux[excluded],
+                    fit_data_display[excluded],
                     marker="x",
                     s=18,
                     linewidths=0.8,
@@ -1537,7 +1589,9 @@ def _plot_qa(
                     zorder=8,
                 )
         limits = axis.get_ylim()
-        zoom_upper = _rounded_model_upper_limit(full_model[panel_mask])
+        zoom_upper = _rounded_model_upper_limit(
+            full_model_display[panel_mask]
+        )
         axis.set_ylim(0.0, max(zoom_upper if zoom_upper is not None else limits[1], 0.0))
         result.metadata.setdefault("qa_zoom_model_upper_limits", {})[
             complex_name
@@ -1559,7 +1613,6 @@ def _plot_qa(
             "outflow wing",
             "Lyα component",
             "N V component",
-            "continuum model (extrapolated)",
             "masked absorption",
         }
         local_items = [
@@ -1576,14 +1629,16 @@ def _plot_qa(
                 framealpha=0.72,
                 borderpad=0.35,
             )
+        if zoom_index == 0:
+            axis.set_ylabel(
+                _flux_density_axis_label(spectrum),
+                fontsize=13,
+            )
     if not available:
         zoom_axes[0].set_visible(False)
     fig.supxlabel(r"Rest wavelength [$\mathrm{\AA}$]", fontsize=13)
-    fig.supylabel(
-        _flux_density_axis_label(spectrum.flux_density_unit),
-        fontsize=13,
-    )
-    result.metadata["qa_shared_axis_labels"] = True
+    result.metadata["qa_shared_axis_labels"] = False
+    result.metadata["qa_y_label_policy"] = "overview_and_leftmost_zoom"
     if return_figure:
         return fig
     if resolved_paths is None:
@@ -1620,20 +1675,21 @@ def _plot_hbeta(
     if fit is None:
         raise ValueError("Hβ diagnostic requested when Hβ was not fitted.")
     view = (fit.wave_rest >= 4600.0) & (fit.wave_rest <= 5120.0)
+    display_scale = _flux_display_scale(result.spectrum)
     fig, ax = plt.subplots(
         figsize=(config.figure_width, 3.8),
         constrained_layout=True,
     )
     ax.plot(
         fit.wave_rest[view],
-        fit.flux_continuum_subtracted[view],
+        display_scale * fit.flux_continuum_subtracted[view],
         color="0.45",
         lw=0.65,
         label="continuum-subtracted data",
     )
     ax.plot(
         fit.wave_rest[view],
-        fit.model[view],
+        display_scale * fit.model[view],
         color="black",
         lw=1.8,
         label="full line model",
@@ -1656,17 +1712,17 @@ def _plot_hbeta(
             narrow_label_used = True
         ax.plot(
             fit.wave_rest[view],
-            component[view],
+            display_scale * component[view],
             label=label,
             **style,
         )
-    upper = _rounded_model_upper_limit(fit.model[view])
+    upper = _rounded_model_upper_limit(display_scale * fit.model[view])
     if upper is not None:
         ax.set_ylim(0.0, upper)
     ax.set_xlim(4600.0, 5120.0)
     ax.set_xlabel(r"Rest wavelength [$\mathrm{\AA}$]", fontsize=13)
     ax.set_ylabel(
-        _flux_density_axis_label(result.spectrum.flux_density_unit),
+        _flux_density_axis_label(result.spectrum),
         fontsize=13,
     )
     ax.set_title(

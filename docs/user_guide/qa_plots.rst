@@ -1,16 +1,16 @@
 Reading QA plots
 ================
 
-The main QA figure is designed to show what the workflow actually attempted,
-not merely a continuous model curve.
+The main QA figure combines a continuous model view with explicit shading and
+residual masks that show which pixels constrained the fit.
 
 Overview semantics
 ------------------
 
 - Thin grey: observed spectrum.
-- Darker grey: observed spectrum smoothed for display.
-- Solid near-black: total model on final fitted pixels only.
-- Faint dashed continuum: extrapolated continuum outside fitted regions.
+- Darker grey: observed spectrum smoothed for display when the input has more
+  than 4,000 wavelength pixels.
+- Solid near-black: total model across all valid displayed pixels.
 - Grey shading: pixels masked during the earlier pPXF host fit.
 - Hatched blue-grey: selected but failed, truncated, or explicitly unmodelled
   regions.
@@ -30,6 +30,13 @@ continuum-extrapolated.
 
 Scaling
 -------
+
+Physical spectra are displayed in
+:math:`10^{-17}\,\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,
+\mathring{A}^{-1}` regardless of their input ``flux_scale``. This is a
+plot-only transformation; fitted values, measurements, and archived arrays
+retain their native input scaling. Relative spectra retain relative
+:math:`F_\lambda` units.
 
 When Lyα is covered but not fitted, the overview upper limit uses the 99.8th
 percentile of the unsmoothed displayed data rather than an incomplete model.
