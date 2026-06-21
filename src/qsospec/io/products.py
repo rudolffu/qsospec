@@ -1137,8 +1137,8 @@ def _plot_qa(
                 wave[panel_mask],
                 data_values[panel_mask],
                 color=_TCC_COLORS["data"],
-                lw=0.45,
-                alpha=0.55,
+                lw=0.8,
+                alpha=0.8,
                 zorder=1,
                 label="observed spectrum" if labels else "_nolegend_",
             )
@@ -1150,7 +1150,7 @@ def _plot_qa(
                 smoothed_values[panel_mask],
                 color=_TCC_COLORS["data_smooth"],
                 lw=0.9,
-                alpha=0.75,
+                alpha=0.9,
                 zorder=2,
                 label=(
                     "observed spectrum (smoothed for display)"
@@ -1414,7 +1414,7 @@ def _plot_qa(
         fig.legend(
             handles,
             labels,
-            fontsize=9,
+            fontsize=10,
             ncol=min(5, len(handles)),
             loc="upper center",
             bbox_to_anchor=(0.5, 1.0),
