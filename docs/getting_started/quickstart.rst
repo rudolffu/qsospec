@@ -1,8 +1,8 @@
 Quick start
 ===========
 
-This example fits a synthetic in-memory spectrum. It does not need external
-dust maps because array APIs treat the input as already preprocessed.
+This example fits a synthetic in-memory spectrum. It explicitly declares the
+synthetic arrays as already corrected, so it does not need external dust maps.
 
 .. doctest::
 
@@ -12,7 +12,9 @@ dust maps because array APIs treat the input as already preprocessed.
    >>> flux = 2.0 * (wave / 4000.0) ** -1.2
    >>> err = np.full_like(wave, 0.05)
    >>> spectrum = qsospec.Spectrum.from_arrays(
-   ...     wave, flux, err=err, z=0.0, wave_frame="observed"
+   ...     wave, flux, err=err, z=0.0, wave_frame="observed",
+   ...     flux_unit="relative",
+   ...     galactic_extinction_corrected=True,
    ... )
    >>> config = qsospec.GlobalContinuumConfig(
    ...     uv_iron=None,
@@ -40,4 +42,5 @@ For ordinary science fitting, omit the simplified configuration and let
 
 Inspect ``result.continuum``, ``result.line_complexes``, ``result.warnings``,
 and ``result.metadata``. See :doc:`../user_guide/results` and
-:doc:`../user_guide/qa_plots`.
+:doc:`../user_guide/qa_plots`. For a real uncorrected spectrum with Planck
+dereddening and archived QA, continue to :doc:`../how_to/fit_j001554`.

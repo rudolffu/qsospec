@@ -7,6 +7,7 @@ Short, task-oriented recipes with one canonical path each.
    :maxdepth: 1
 
    fit_arrays
+   fit_j001554
    fit_file
    fit_with_host
    fit_parquet_batch

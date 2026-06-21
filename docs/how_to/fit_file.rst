@@ -22,9 +22,9 @@ explicit E(B-V).
 Expected outputs
 ----------------
 
-The run directory contains an immutable manifest, Parquet model and
-measurement tables, compact products, and a main QA figure. Paths are also
-available in ``result.output_files``.
+The run directory contains a concise manifest, canonical Parquet datasets,
+and a main QA figure. Primary paths are available in
+``result.output_files``.
 
 Common failures
 ---------------

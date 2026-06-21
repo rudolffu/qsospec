@@ -7,6 +7,7 @@ I/O, extinction, and archive API
 .. autofunction:: f99_dereddening_factor
 .. autofunction:: correct_spectrum
 .. autofunction:: correct_spectrum_data
+.. autofunction:: prepare_spectrum
 .. autofunction:: preflight_galactic_extinction
 .. autofunction:: open_run
 .. autofunction:: load_model

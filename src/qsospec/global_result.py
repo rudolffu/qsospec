@@ -164,24 +164,83 @@ class WorkflowResult:
             codes.extend(result.warning_codes())
         return codes
 
+    @property
+    def qa_path(self) -> Optional[str]:
+        """Primary saved QA path, when the workflow wrote one."""
+
+        return self.output_files.get("main_qa")
+
+    def plot_qa(self, plot_config=None):
+        """Return an open Matplotlib QA figure for notebook use."""
+
+        from .io.products import plot_qa_figure
+
+        return plot_qa_figure(self, plot_config)
+
+    def show_qa(self, plot_config=None):
+        """Display and return the QA figure in an interactive session."""
+
+        import matplotlib.pyplot as plt
+
+        figure = self.plot_qa(plot_config)
+        plt.show()
+        return figure
+
     def summary(self) -> Dict[str, Any]:
-        payload = {
-            "continuum_success": self.continuum_success,
-            "host_decomp_enabled": bool(self.host_decomp_enabled),
-            "continuum": self.continuum.summary(),
-            "hbeta": self.hbeta.summary() if self.hbeta is not None else None,
-            "mgii": self.mgii.summary() if self.mgii is not None else None,
-            "halpha": self.halpha.summary() if self.halpha is not None else None,
-            "complex_statuses": dict(self.complex_statuses),
-            "line_complexes": {
-                name: result.summary() for name, result in self.line_complexes.items()
-            },
-            "monte_carlo": dict(self.monte_carlo),
-            "host_warnings": list(self.host_warnings),
-            "warning_codes": self.warning_codes(),
-            "metadata": dict(self.metadata),
-            "output_files": dict(self.output_files),
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            package_version = version("qsospec")
+        except PackageNotFoundError:
+            package_version = "0.1.0"
+        power_law_parameters = {
+            name: value
+            for name, value in self.continuum.param_values.items()
+            if name.startswith("power_law.")
         }
-        if self.metadata.get("compatibility_hbeta_mode", False):
-            payload["legacy_hbeta_success"] = self.legacy_hbeta_success
-        return payload
+        continuum_samples = self.metadata.get("continuum_samples", {})
+        return {
+            "package_version": package_version,
+            "object_id": self.metadata.get("object_id"),
+            "redshift": float(self.spectrum.z),
+            "flux_unit": self.spectrum.flux_unit,
+            "flux_scale": self.spectrum.flux_scale,
+            "galactic_extinction": self.metadata.get(
+                "galactic_extinction", {}
+            ),
+            "continuum_success": self.continuum_success,
+            "continuum_reduced_chi2": float(
+                self.continuum.reduced_chi2
+            ),
+            "host_decomp_enabled": bool(self.host_decomp_enabled),
+            "host": {
+                "status": self.metadata.get("host_ppxf_status"),
+                "reduced_chi2": self.metadata.get(
+                    "host_ppxf_reduced_chi2"
+                ),
+                "template_file": self.metadata.get("host_template_file"),
+                "fractions": {
+                    name: value
+                    for name, value in continuum_samples.items()
+                    if name.startswith("fracHost_")
+                },
+            },
+            "power_law_mode": self.metadata.get(
+                "power_law_mode_selected",
+                self.continuum.metadata.get("power_law_mode_selected"),
+            ),
+            "power_law_parameters": power_law_parameters,
+            "power_law_selection": {
+                "reason": self.metadata.get("power_law_selection_reason"),
+                "single_bic": self.metadata.get("power_law_single_bic"),
+                "double_bic": self.metadata.get("power_law_double_bic"),
+                "delta_bic": self.metadata.get("power_law_delta_bic"),
+            },
+            "complex_statuses": dict(self.complex_statuses),
+            "warning_codes": self.warning_codes(),
+            "output_files": {
+                key: value
+                for key, value in self.output_files.items()
+                if key in ("run_directory", "manifest", "main_qa")
+            },
+        }

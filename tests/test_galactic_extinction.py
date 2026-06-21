@@ -27,9 +27,7 @@ def _data(**changes):
 def test_f99_override_propagates_flux_error_and_ivar():
     config = qsospec.GalacticExtinctionConfig(ebv_override=0.1)
     corrected = qsospec.correct_spectrum_data(_data(), config)
-    factor = qsospec.f99_dereddening_factor(
-        corrected.wave_obs, 0.1, rv=3.1
-    )
+    factor = qsospec.f99_dereddening_factor(corrected.wave_obs, 0.1, rv=3.1)
 
     np.testing.assert_allclose(corrected.flux, factor)
     np.testing.assert_allclose(corrected.error, 0.1 * factor)
@@ -73,9 +71,7 @@ def test_planck_alias_and_sfd_recalibration(monkeypatch):
     assert calls[1][1] == str(Path("~/dust").expanduser().resolve())
     assert planck_ebv == pytest.approx(0.2)
     assert planck["map_name"] == "planck"
-    assert planck["map_path"].endswith(
-        "COM_CompMap_Dust-GNILC-Model-Opacity_2048_R2.01.fits"
-    )
+    assert planck["map_path"].endswith("COM_CompMap_Dust-GNILC-Model-Opacity_2048_R2.01.fits")
     assert sfd_ebv == pytest.approx(0.172)
     assert sfd["raw_ebv"] == pytest.approx(0.2)
     assert sfd["applied_ebv"] == pytest.approx(0.172)
@@ -102,9 +98,7 @@ def test_negative_ebv_clipping_and_strict_coordinate_validation(monkeypatch):
         qsospec.query_galactic_ebv(
             1.0,
             2.0,
-            qsospec.GalacticExtinctionConfig(
-                clip_negative_ebv=False
-            ),
+            qsospec.GalacticExtinctionConfig(clip_negative_ebv=False),
         )
 
 
@@ -132,6 +126,7 @@ def test_disabled_and_direct_spectrum_helpers():
         np.ones(64),
         err=np.full(64, 0.1),
         z=0.2,
+        flux_unit="relative",
     )
     output, provenance = qsospec.correct_spectrum(
         spectrum,
@@ -143,9 +138,7 @@ def test_disabled_and_direct_spectrum_helpers():
 
 def test_f99_wavelength_domain_is_enforced():
     with pytest.raises(ValueError, match="outside the F99 supported range"):
-        qsospec.f99_dereddening_factor(
-            np.array([900.0, 1200.0]), 0.1
-        )
+        qsospec.f99_dereddening_factor(np.array([900.0, 1200.0]), 0.1)
 
 
 def test_run_bundle_archives_corrected_arrays_and_provenance(tmp_path):
@@ -164,60 +157,112 @@ def test_run_bundle_archives_corrected_arrays_and_provenance(tmp_path):
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=(
-                qsospec.BalmerPseudoContinuumConfig(enabled=False)
-            ),
+            balmer_pseudocontinuum=(qsospec.BalmerPseudoContinuumConfig(enabled=False)),
             clip_passes=0,
         ),
         complexes=[],
         write_qa=False,
     )
-    loaded = qsospec.load_model(
-        str(tmp_path / "corrected-run"), "dust-test"
-    )
+    loaded = qsospec.load_model(str(tmp_path / "corrected-run"), "dust-test")
 
     assert np.all(result.spectrum.flux > 1.0)
-    np.testing.assert_allclose(
-        loaded.spectrum.flux, result.spectrum.flux
-    )
+    np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
     provenance = loaded.metadata["galactic_extinction"]
     assert provenance["status"] == "applied"
     assert provenance["applied_ebv"] == pytest.approx(0.05)
-    manifest = qsospec.open_run(
-        str(tmp_path / "corrected-run")
-    ).manifest
-    assert manifest["configuration"]["galactic_extinction_config"][
-        "ebv_override"
-    ] == pytest.approx(0.05)
+    manifest = qsospec.open_run(str(tmp_path / "corrected-run")).manifest
+    assert manifest["configuration"]["galactic_extinction_config"]["ebv_override"] == pytest.approx(0.05)
 
 
-def test_fit_object_spectrum_is_treated_as_caller_preprocessed(tmp_path):
+def test_fit_object_spectrum_is_automatically_prepared(tmp_path):
     spectrum = qsospec.Spectrum.from_arrays(
         np.linspace(3500.0, 4500.0, 240),
         np.ones(240),
         err=np.full(240, 0.05),
         z=0.0,
+        ra=12.0,
+        dec=-3.0,
+        flux_unit="relative",
     )
     result = qsospec.fit_object_to_store(
         spectrum,
-        str(tmp_path / "preprocessed-run"),
-        object_id="preprocessed",
+        str(tmp_path / "prepared-run"),
+        object_id="prepared",
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(ebv_override=0.05),
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=(
-                qsospec.BalmerPseudoContinuumConfig(enabled=False)
-            ),
+            balmer_pseudocontinuum=(qsospec.BalmerPseudoContinuumConfig(enabled=False)),
             clip_passes=0,
         ),
         complexes=[],
         write_qa=False,
     )
 
-    np.testing.assert_allclose(result.spectrum.flux, 1.0)
-    assert result.metadata["galactic_extinction"]["status"] == (
-        "caller_preprocessed"
+    assert np.all(result.spectrum.flux > 1.0)
+    assert result.metadata["galactic_extinction"]["status"] == "applied"
+    assert result.spectrum.metadata.galactic_extinction_corrected
+    assert result.spectrum.metadata.ra == pytest.approx(12.0)
+
+
+def test_prepare_spectrum_declared_corrected_does_not_query_map(monkeypatch):
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 4500.0, 64),
+        np.ones(64),
+        err=np.full(64, 0.1),
+        z=0.0,
+        galactic_extinction_corrected=True,
+        flux_unit="relative",
     )
+
+    def unexpected_query(*args, **kwargs):
+        raise AssertionError("dust map should not be queried")
+
+    monkeypatch.setattr("qsospec.extinction.query_galactic_ebv", unexpected_query)
+    prepared = qsospec.prepare_spectrum(spectrum)
+
+    np.testing.assert_allclose(prepared.flux, spectrum.flux)
+    assert prepared.metadata.galactic_extinction_corrected
+    assert prepared.metadata.galactic_extinction["status"] == "declared_corrected"
+
+
+def test_prepare_spectrum_reuses_matching_and_rejects_conflicting_correction():
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 4500.0, 64),
+        np.ones(64),
+        err=np.full(64, 0.1),
+        z=0.0,
+        flux_unit="relative",
+    )
+    config = qsospec.GalacticExtinctionConfig(ebv_override=0.03)
+    prepared = qsospec.prepare_spectrum(spectrum, galactic_extinction_config=config)
+    repeated = qsospec.prepare_spectrum(prepared, galactic_extinction_config=config)
+    assert repeated is prepared
+
+    with pytest.raises(ValueError, match="different Galactic-extinction"):
+        qsospec.prepare_spectrum(
+            prepared,
+            galactic_extinction_config=qsospec.GalacticExtinctionConfig(ebv_override=0.04),
+        )
+
+
+def test_prepare_spectrum_disabled_and_missing_coordinate_guidance():
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 4500.0, 64),
+        np.ones(64),
+        err=np.full(64, 0.1),
+        z=0.0,
+        flux_unit="relative",
+    )
+    disabled = qsospec.prepare_spectrum(
+        spectrum,
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(enabled=False),
+    )
+    assert not disabled.metadata.galactic_extinction_corrected
+    assert disabled.metadata.galactic_extinction["status"] == "disabled"
+
+    with pytest.raises(ValueError, match="galactic_extinction_corrected=True"):
+        qsospec.prepare_spectrum(spectrum)
 
 
 def test_batch_records_missing_coordinates_as_failure(tmp_path, monkeypatch):
@@ -246,15 +291,11 @@ def test_batch_records_missing_coordinates_as_failure(tmp_path, monkeypatch):
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=(
-                qsospec.BalmerPseudoContinuumConfig(enabled=False)
-            ),
+            balmer_pseudocontinuum=(qsospec.BalmerPseudoContinuumConfig(enabled=False)),
         ),
         complexes=[],
     )
-    failures = qsospec.open_run(
-        str(tmp_path / "failed-run")
-    ).read_table("failures").to_pylist()
+    failures = qsospec.open_run(str(tmp_path / "failed-run")).read_table("failures").to_pylist()
 
     assert output.n_failed == 1
     assert "requires finite RA and Dec" in failures[0]["message"]
@@ -268,6 +309,4 @@ def test_preflight_propagates_missing_map_error(monkeypatch):
     with pytest.raises(FileNotFoundError, match="missing Planck map"):
         qsospec.preflight_galactic_extinction()
 
-    qsospec.preflight_galactic_extinction(
-        qsospec.GalacticExtinctionConfig(ebv_override=0.0)
-    )
+    qsospec.preflight_galactic_extinction(qsospec.GalacticExtinctionConfig(ebv_override=0.0))

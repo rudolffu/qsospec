@@ -34,8 +34,8 @@ emission-line, host-decomposition, QA, and batch workflows.
 Minimal array example
 ---------------------
 
-Array APIs treat the input spectrum as already corrected for Galactic
-extinction.
+Array spectra are uncorrected by default. Prepare them explicitly before using
+the low-level numerical fitters.
 
 .. code-block:: python
 
@@ -47,8 +47,13 @@ extinction.
        err=uncertainty,
        z=redshift,
        wave_frame="observed",
+       flux_unit="cgs",
+       ra=ra,
+       dec=dec,
    )
-   result = qsospec.fit_global_lines(spectrum)
+   result = qsospec.fit_global_lines(
+       qsospec.prepare_spectrum(spectrum)
+   )
 
    print(result.continuum_success)
    print(result.complex_statuses)
@@ -60,6 +65,7 @@ What is included
 - Coverage-aware Lyα/N V, C IV, C III], Mg II, Balmer, optical, and NIR recipes.
 - Optional pPXF host decomposition for objects with :math:`z < 1.2`.
 - Galactic dereddening for file and batch workflows.
+- User-friendly preparation of uncorrected in-memory arrays.
 - QA plots that distinguish fitted, pPXF-masked, and unmodelled regions.
 - Resumable Parquet run bundles for single objects and large samples.
 

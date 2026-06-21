@@ -41,3 +41,7 @@ Configuration
 Use :class:`qsospec.GlobalQAPlotConfig` to select raw-plus-smoothed,
 smoothed-only, or raw-only display; residuals; fitted-region shading; output
 format; and zoom count.
+
+In notebooks, call ``result.plot_qa()`` for an open Matplotlib figure or
+``result.show_qa()`` to display it immediately. Opened run bundles provide the
+same methods with an object identifier.

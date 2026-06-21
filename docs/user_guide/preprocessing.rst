@@ -24,6 +24,13 @@ Correction is applied exactly once. Reapplying a different correction to
 already-corrected ``SpectrumData`` is rejected because the raw arrays are no
 longer available.
 
+For arrays, :meth:`qsospec.Spectrum.from_arrays` defaults to
+``galactic_extinction_corrected=False``. Supply RA/Dec and call
+:func:`qsospec.prepare_spectrum`, or pass the spectrum to the high-level
+:func:`qsospec.fit_object_to_store` workflow. Set
+``galactic_extinction_corrected=True`` only when the supplied flux and
+uncertainty are already dereddened.
+
 Continuum clipping
 ------------------
 
@@ -40,6 +47,7 @@ Array APIs
 ----------
 
 ``fit_local``, ``fit_global_continuum``, and ``fit_global_lines`` do not query
-external maps. Their :class:`qsospec.Spectrum` input is assumed to be ready for
-fitting. Use :func:`qsospec.correct_spectrum` when explicit array
-dereddening is needed.
+external maps. Prepare ordinary arrays first with
+:func:`qsospec.prepare_spectrum`; already-corrected arrays may be passed
+directly. :func:`qsospec.correct_spectrum` remains available as a compatibility
+helper.

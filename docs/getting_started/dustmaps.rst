@@ -43,8 +43,20 @@ Disable the step explicitly:
    extinction = qsospec.GalacticExtinctionConfig(enabled=False)
 
 Pass the object as ``galactic_extinction_config=extinction`` to file, host, or
-batch workflows. Array-based fitting functions treat :class:`qsospec.Spectrum`
-as already corrected.
+batch workflows. Array spectra are uncorrected by default. High-level
+``fit_object_to_store`` prepares them automatically; before low-level fitting,
+call:
+
+.. code-block:: python
+
+   prepared = qsospec.prepare_spectrum(
+       spectrum,
+       galactic_extinction_config=extinction,
+   )
+
+Use ``galactic_extinction_corrected=True`` when constructing arrays that were
+already dereddened.
 
 See :doc:`../user_guide/preprocessing` for the order of operations and
-:class:`qsospec.GalacticExtinctionConfig` for every field.
+:class:`qsospec.GalacticExtinctionConfig` for every field. The complete
+single-object example is :doc:`../how_to/fit_j001554`.

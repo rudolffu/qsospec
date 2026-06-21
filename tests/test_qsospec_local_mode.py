@@ -45,7 +45,7 @@ def test_fit_local_too_few_pixels_fails_window():
     wave = np.array([4800.0, 4820.0, 4840.0, 4860.0, 4880.0])
     flux = np.ones_like(wave)
     err = np.ones_like(wave) * 0.1
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0)
+    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, flux_unit="relative")
     config = qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()], require_min_pixels=8)
 
     result = qsospec.fit_local(spec, config)

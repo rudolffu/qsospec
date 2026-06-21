@@ -174,7 +174,7 @@ def fit_line_complex(
         if amp is not None and final_iron_basis is not None:
             iron_model = float(amp) * final_iron_basis
             iron_flux_input = float(np.trapezoid(iron_model, wave_fit))
-            scale = spectrum.metadata.flux_density_scale_to_cgs
+            scale = spectrum.metadata.flux_scale
             iron_flux_cgs = iron_flux_input * float(scale) if scale is not None else float("nan")
         iron_metadata.update(
             {

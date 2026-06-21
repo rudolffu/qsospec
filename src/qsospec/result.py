@@ -94,8 +94,8 @@ class FitResult:
     def to_table(self):
         """Return Gaussian line measurements as a pandas DataFrame when available."""
 
-        scale = self.metadata.get("flux_density_scale_to_cgs")
-        flux_unit = self.metadata.get("flux_density_unit", "input")
+        scale = self.metadata.get("flux_scale")
+        flux_unit = self.metadata.get("flux_unit", "relative")
         rows = []
         component_names = sorted(
             {
@@ -134,8 +134,8 @@ class FitResult:
                     "fwhm": width * (2.0 if is_lorentzian else _GAUSSIAN_FWHM_FACTOR),
                     "line_flux_input": line_flux_input,
                     "line_flux_cgs": line_flux_cgs,
-                    "flux_density_unit": flux_unit,
-                    "flux_density_scale_to_cgs": scale,
+                    "flux_unit": flux_unit,
+                    "flux_scale": scale,
                     "success": bool(self.success),
                 }
             )
@@ -153,8 +153,8 @@ class FitResult:
                     "fwhm": np.nan,
                     "line_flux_input": iron_flux_input,
                     "line_flux_cgs": iron_flux_cgs,
-                    "flux_density_unit": flux_unit,
-                    "flux_density_scale_to_cgs": scale,
+                    "flux_unit": flux_unit,
+                    "flux_scale": scale,
                     "success": bool(self.success),
                     "iron_template": iron.get("template"),
                     "iron_amp": float(self.param_values["iron.amp"]),

@@ -27,6 +27,7 @@ from ..config import (
 )
 from ..extinction import (
     correct_spectrum_data,
+    prepare_spectrum,
     preflight_galactic_extinction,
 )
 from ..fitting.global_fit import fit_global_lines
@@ -60,7 +61,7 @@ class BatchResult:
     n_failed: int
     n_skipped: int
     n_workers: int
-    compact_outputs: Dict[str, str]
+    datasets: Dict[str, str]
 
 
 @dataclass
@@ -212,6 +213,21 @@ def _fit_spectrum_data(
             "host_fit_range": list(host_fit_range),
             "host_mask_provenance": (
                 "exact" if host_decomp_enabled else "unavailable"
+            ),
+            "host_ppxf_status": (
+                host_fit.status if host_fit is not None else None
+            ),
+            "host_ppxf_reduced_chi2": (
+                float(host_fit.reduced_chi2)
+                if host_fit is not None else None
+            ),
+            "host_template_file": (
+                host_fit.templates.source_path
+                if host_fit is not None else None
+            ),
+            "host_template_wavelength_coverage": (
+                list(host_fit.templates.wavelength_coverage)
+                if host_fit is not None else None
             ),
             "galactic_extinction": dict(
                 spectrum_data.metadata.get("galactic_extinction", {})
@@ -391,6 +407,49 @@ def _configuration(
     }
 
 
+def _configuration_overrides(configuration: Dict[str, Any]) -> Dict[str, Any]:
+    defaults = _configuration(
+        run_host_decomp=False,
+        template_root="~/tools/ppxf_data",
+        template_file="spectra_emiles_9.0.npz",
+        host_fit_range=(3600.0, 7000.0),
+        host_config=None,
+        galactic_extinction_config=GalacticExtinctionConfig(),
+        global_config=None,
+        hbeta_config=HbetaComplexConfig(),
+        mgii_config=MgIIComplexConfig(),
+        halpha_config=HalphaComplexConfig(),
+        lya_nv_config=LyaNVComplexConfig(),
+        uncertainty_config=UncertaintyConfig(),
+        complexes=None,
+    )
+
+    def diff(value, default):
+        if isinstance(value, dict) and isinstance(default, dict):
+            changed = {
+                key: diff(item, default.get(key))
+                for key, item in value.items()
+                if key not in default or item != default.get(key)
+            }
+            return {key: item for key, item in changed.items() if item != {}}
+        return value
+
+    overrides = {}
+    for key, value in configuration.items():
+        default_value = defaults.get(key)
+        if (
+            key == "global_config"
+            and isinstance(value, dict)
+            and "preset" not in value
+        ):
+            default_value = asdict(GlobalContinuumConfig())
+        if key not in defaults or value != default_value:
+            changed = diff(value, default_value)
+            if changed != {}:
+                overrides[key] = changed
+    return overrides
+
+
 def _fit_options(
     *,
     run_host_decomp,
@@ -432,6 +491,8 @@ def fit_object_to_store(
     redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     reader: str = "auto",
+    flux_unit: Optional[str] = None,
+    flux_scale: Optional[float] = None,
     run_host_decomp: bool = False,
     template_root: str = "~/tools/ppxf_data",
     template_file: str = "spectra_emiles_9.0.npz",
@@ -481,6 +542,7 @@ def fit_object_to_store(
     store = RunStore.create(
         run_directory,
         configuration=configuration,
+        configuration_summary=_configuration_overrides(configuration),
         run_id=run_id,
         resume=resume,
     )
@@ -492,6 +554,8 @@ def fit_object_to_store(
             redshift=descriptor.redshift,
             object_id=descriptor.object_id,
             reader=descriptor.reader,
+            flux_unit=flux_unit,
+            flux_scale=flux_scale,
         )
     elif isinstance(input_data, SpectrumData):
         descriptor = SpectrumInput(
@@ -502,28 +566,35 @@ def fit_object_to_store(
         )
         spectrum_data = input_data
     elif isinstance(input_data, Spectrum):
+        prepared_spectrum = prepare_spectrum(
+            input_data,
+            galactic_extinction_config=galactic_extinction_config,
+        )
         descriptor = SpectrumInput(
-            source=input_data.metadata.source or "in_memory",
+            source=prepared_spectrum.metadata.source or "in_memory",
             object_id=object_id,
-            redshift=input_data.z,
+            redshift=prepared_spectrum.z,
             reader="memory",
         )
         spectrum_data = SpectrumData(
-            wave_obs=input_data.wave_obs,
-            flux=input_data.flux,
-            error=input_data.err,
-            mask=input_data.mask,
-            redshift=input_data.z,
+            wave_obs=prepared_spectrum.wave_obs,
+            flux=prepared_spectrum.flux,
+            error=prepared_spectrum.err,
+            mask=prepared_spectrum.mask,
+            redshift=prepared_spectrum.z,
             object_id=object_id,
+            ra=prepared_spectrum.metadata.ra,
+            dec=prepared_spectrum.metadata.dec,
             metadata={
                 "input_file": descriptor.source,
-                "galactic_extinction": {
-                    "requested": bool(
-                        galactic_extinction_config.enabled
-                    ),
-                    "applied": False,
-                    "status": "caller_preprocessed",
-                },
+                "flux_unit": prepared_spectrum.flux_unit,
+                "flux_scale": prepared_spectrum.flux_scale,
+                "spectrum_metadata": (
+                    prepared_spectrum.metadata.to_dict()
+                ),
+                "galactic_extinction": dict(
+                    prepared_spectrum.metadata.galactic_extinction
+                ),
             },
         )
     else:
@@ -540,6 +611,8 @@ def fit_object_to_store(
             redshift=redshift,
             object_id=object_id,
             reader=reader,
+            flux_unit=flux_unit,
+            flux_scale=flux_scale,
         )
     result, actual_object_id = _fit_spectrum_data(
         spectrum_data,
@@ -574,10 +647,10 @@ def fit_object_to_store(
             },
         )
     )
-    compact_outputs = finalize_run(store, compact_models=True)
-    result.output_files.update(
-        {f"compact_{key}": value for key, value in compact_outputs.items()}
-    )
+    finalize_run(store)
+    result.output_files = {
+        "run_directory": str(store.path),
+    }
     result.output_files["manifest"] = str(store.path / "manifest.json")
     if write_legacy_products:
         config = qa_plot_config or GlobalQAPlotConfig()
@@ -596,6 +669,11 @@ def fit_object_to_store(
             plot_config=qa_plot_config or GlobalQAPlotConfig(),
         )
         result.output_files.update(rendered.get(actual_object_id, {}))
+        result.output_files = {
+            key: value
+            for key, value in result.output_files.items()
+            if key in ("run_directory", "manifest", "main_qa")
+        }
     return result
 
 
@@ -722,6 +800,7 @@ def fit_batch(
     store = RunStore.create(
         run_directory,
         configuration=configuration,
+        configuration_summary=_configuration_overrides(configuration),
         run_id=run_id,
         resume=resume,
     )
@@ -854,8 +933,8 @@ def fit_batch(
                                 failed_count += 1
                         for output in outputs:
                             handle(output)
-    compact_outputs = (
-        finalize_run(store, compact_models=compact_models)
+    datasets = (
+        finalize_run(store)
         if finalize and num_shards == 1 else {}
     )
     return BatchResult(
@@ -866,5 +945,5 @@ def fit_batch(
         n_failed=failed_count,
         n_skipped=skipped_count,
         n_workers=worker_count,
-        compact_outputs=compact_outputs,
+        datasets=datasets,
     )

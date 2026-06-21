@@ -34,9 +34,7 @@ def test_fit_with_optional_host_decomp_without_ppxf_path(tmp_path):
         _local_config(),
         row_index=0,
         run_host_decomp=False,
-        galactic_extinction_config=qsospec.GalacticExtinctionConfig(
-            enabled=False
-        ),
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(enabled=False),
     )
 
     assert result.local_result.success
@@ -68,15 +66,11 @@ def test_global_fit_kind_runs_without_host(tmp_path):
         str(path),
         fit_kind="global",
         row_index=0,
-        galactic_extinction_config=qsospec.GalacticExtinctionConfig(
-            enabled=False
-        ),
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(enabled=False),
         global_config=qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-                enabled=False
-            ),
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         ),
         hbeta_config=qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )

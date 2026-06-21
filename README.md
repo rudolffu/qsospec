@@ -62,8 +62,9 @@ spectrum = qsospec.Spectrum.from_arrays(
     err=uncertainty,
     z=redshift,
     wave_frame="observed",
+    flux_unit="cgs",
 )
-result = qsospec.fit_global_lines(spectrum)
+result = qsospec.fit_global_lines(qsospec.prepare_spectrum(spectrum))
 ```
 
 Lyα/N V is selected automatically when useful rest-frame coverage exists.

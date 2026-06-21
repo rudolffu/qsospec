@@ -81,7 +81,16 @@ def _spectrum_from_arrays(
     redshift: float,
     mask: Optional[np.ndarray],
     source: str,
+    spectrum_data: Optional[Any] = None,
 ) -> Spectrum:
+    source_metadata = (
+        spectrum_data.metadata.get("spectrum_metadata")
+        if spectrum_data is not None else None
+    )
+    extinction = (
+        dict(spectrum_data.metadata.get("galactic_extinction", {}))
+        if spectrum_data is not None else {}
+    )
     return Spectrum.from_arrays(
         wave_obs,
         flux,
@@ -89,8 +98,17 @@ def _spectrum_from_arrays(
         z=float(redshift),
         wave_frame="observed",
         mask=mask,
-        survey="desi",
+        survey=None if source_metadata is not None else "desi",
         source=source,
+        ra=None if spectrum_data is None else spectrum_data.ra,
+        dec=None if spectrum_data is None else spectrum_data.dec,
+        galactic_extinction_corrected=extinction.get("status") in (
+            "applied",
+            "declared_corrected",
+            "caller_preprocessed",
+        ),
+        galactic_extinction=extinction,
+        metadata=source_metadata,
     )
 
 
@@ -103,6 +121,7 @@ def _spectrum_from_spectrum_data(spectrum_data: Any, source: str) -> Spectrum:
         float(spectrum_data.redshift),
         good,
         source=source,
+        spectrum_data=spectrum_data,
     )
 
 
@@ -154,6 +173,7 @@ def _host_subtracted_spectrum(
         prep.redshift,
         np.isfinite(prep.wave_obs) & np.isfinite(prep.flux) & np.isfinite(prep.error) & (prep.error > 0),
         source=source,
+        spectrum_data=spectrum_data,
     )
     fit_spectrum = _spectrum_from_arrays(
         prep.wave_obs,
@@ -166,6 +186,7 @@ def _host_subtracted_spectrum(
         & (prep.error > 0)
         & finite_host,
         source=f"{source}; host_subtracted=ppxf_sed_grid",
+        spectrum_data=spectrum_data,
     )
     return total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, host_subtracted_flux, host_warnings
 
@@ -480,6 +501,21 @@ def fit_global_lines_workflow(
             "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
             "host_fit_range": list(host_fit_range),
             "host_mask_provenance": "exact" if host_decomp_enabled else "unavailable",
+            "host_ppxf_status": (
+                host_fit.status if host_fit is not None else None
+            ),
+            "host_ppxf_reduced_chi2": (
+                float(host_fit.reduced_chi2)
+                if host_fit is not None else None
+            ),
+            "host_template_file": (
+                host_fit.templates.source_path
+                if host_fit is not None else None
+            ),
+            "host_template_wavelength_coverage": (
+                list(host_fit.templates.wavelength_coverage)
+                if host_fit is not None else None
+            ),
             "galactic_extinction": dict(
                 spectrum_data.metadata.get("galactic_extinction", {})
             ),

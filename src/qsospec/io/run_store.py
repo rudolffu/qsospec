@@ -26,12 +26,12 @@ from ..global_result import (
     GlobalContinuumResult,
     WorkflowResult,
 )
-from ..metadata import SpectrumMetadata
+from ..metadata import resolve_spectrum_metadata
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -147,8 +147,6 @@ COMPLEX_TYPE = pa.list_(
             pa.field("dof", pa.int64()),
             pa.field("reduced_chi2", pa.float64()),
             pa.field("bic", pa.float64()),
-            pa.field("model", pa.list_(pa.float64())),
-            pa.field("flux_continuum_subtracted", pa.list_(pa.float64())),
             pa.field("fit_mask", pa.list_(pa.bool_())),
             pa.field("excluded_mask", pa.list_(pa.bool_())),
             pa.field("metadata", KEY_VALUE_TYPE),
@@ -230,10 +228,8 @@ SCHEMAS = {
             pa.field("host_model", pa.list_(pa.float64())),
             pa.field("host_fit_mask", pa.list_(pa.bool_())),
             pa.field("host_emission_mask", pa.list_(pa.bool_())),
-            pa.field("continuum_model", pa.list_(pa.float64())),
             pa.field("continuum_fit_mask", pa.list_(pa.bool_())),
             pa.field("continuum_clip_mask", pa.list_(pa.bool_())),
-            pa.field("full_model", pa.list_(pa.float64())),
             pa.field("components", COMPONENT_TYPE),
             pa.field("complexes", COMPLEX_TYPE),
             pa.field("spectrum_metadata", KEY_VALUE_TYPE),
@@ -441,10 +437,7 @@ def _model_row(
         for name, values in result.continuum.component_models.items()
     ]
     complexes = []
-    line_sum = np.zeros_like(result.continuum.model)
     for recipe_id, fit in result.line_complexes.items():
-        if fit.success:
-            line_sum += fit.model
         components.extend(
             {
                 "section": "complex",
@@ -466,10 +459,6 @@ def _model_row(
                 "dof": int(fit.dof),
                 "reduced_chi2": float(fit.reduced_chi2),
                 "bic": float(fit.bic),
-                "model": np.asarray(fit.model, dtype=float).tolist(),
-                "flux_continuum_subtracted": np.asarray(
-                    fit.flux_continuum_subtracted, dtype=float
-                ).tolist(),
                 "fit_mask": np.asarray(fit.fit_mask, dtype=bool).tolist(),
                 "excluded_mask": (
                     np.asarray(fit.excluded_mask, dtype=bool).tolist()
@@ -506,17 +495,11 @@ def _model_row(
             np.asarray(result.host_emission_mask, dtype=bool).tolist()
             if result.host_emission_mask is not None else None
         ),
-        "continuum_model": np.asarray(
-            result.continuum.model, dtype=float
-        ).tolist(),
         "continuum_fit_mask": np.asarray(
             result.continuum.fit_mask, dtype=bool
         ).tolist(),
         "continuum_clip_mask": np.asarray(
             result.continuum.clip_mask, dtype=bool
-        ).tolist(),
-        "full_model": np.asarray(
-            result.continuum.model + line_sum, dtype=float
         ).tolist(),
         "components": components,
         "complexes": complexes,
@@ -597,12 +580,23 @@ class RunStore:
     def configuration_hash(self) -> str:
         return str(self.manifest["configuration_hash"])
 
+    def plot_qa(self, identifier: str, plot_config=None):
+        """Load one archived object and return its open QA figure."""
+
+        return load_model(self, identifier).plot_qa(plot_config)
+
+    def show_qa(self, identifier: str, plot_config=None):
+        """Display and return one archived object's QA figure."""
+
+        return load_model(self, identifier).show_qa(plot_config)
+
     @classmethod
     def create(
         cls,
         path: str,
         *,
         configuration: Mapping[str, Any],
+        configuration_summary: Optional[Mapping[str, Any]] = None,
         run_id: Optional[str] = None,
         resume: bool = True,
     ) -> "RunStore":
@@ -631,7 +625,11 @@ class RunStore:
             "schema_version": SCHEMA_VERSION,
             "run_id": actual_run_id,
             "configuration_hash": config_hash,
-            "configuration": _jsonable(configuration),
+            "configuration": _jsonable(
+                configuration_summary
+                if configuration_summary is not None
+                else configuration
+            ),
             "cosmology": _jsonable(configuration.get("cosmology")),
             "units": {
                 "wavelength": "vacuum Angstrom",
@@ -659,11 +657,22 @@ class RunStore:
         return cls(root, manifest)
 
     def _ensure_directories(self) -> None:
-        for name in TABLE_NAMES:
-            (self.path / name).mkdir(parents=True, exist_ok=True)
-        (self.path / "compact").mkdir(exist_ok=True)
         (self.path / "qa").mkdir(exist_ok=True)
-        (self.path / "staging").mkdir(exist_ok=True)
+        self._staging_path().mkdir(exist_ok=True)
+
+    def _table_path(self, name: str) -> Path:
+        modern = self.path / "data" / name
+        legacy = self.path / name
+        if str(self.manifest.get("schema_version", "1")) >= "4":
+            return modern
+        if modern.exists() and not legacy.exists():
+            return modern
+        return legacy
+
+    def _staging_path(self) -> Path:
+        if str(self.manifest.get("schema_version", "1")) >= "4":
+            return self.path / ".staging"
+        return self.path / "staging"
 
     def _write_manifest(self) -> None:
         with self._manifest_lock():
@@ -673,11 +682,13 @@ class RunStore:
                 existing.update(self.manifest)
                 self.manifest = existing
             self.manifest["updated_at"] = _now()
-            if (self.path / "objects").exists():
+            if self._table_path("objects").exists():
                 self.manifest["completed_objects"] = len(self.completed_keys())
                 self.manifest["failed_objects"] = len(self.failed_keys())
                 self.manifest["shard_state"] = {
-                    name: len(tuple((self.path / name).glob("*.parquet")))
+                    name: len(
+                        tuple(self._table_path(name).glob("*.parquet"))
+                    )
                     for name in TABLE_NAMES
                 }
             temporary = self.path / f"manifest.{uuid4().hex}.tmp"
@@ -718,7 +729,7 @@ class RunStore:
 
     def clear_failure(self, object_key: str) -> None:
         digest = hashlib.sha256(object_key.encode("utf-8")).hexdigest()[:20]
-        path = self.path / "failures" / f"part-{digest}.parquet"
+        path = self._table_path("failures") / f"part-{digest}.parquet"
         if path.exists():
             path.unlink()
 
@@ -731,7 +742,7 @@ class RunStore:
         """Write one private, collision-free staging directory."""
 
         namespace = namespace or f"{os.getpid()}-{uuid4().hex}"
-        staging = self.path / "staging" / namespace
+        staging = self._staging_path() / namespace
         staging.mkdir(parents=True, exist_ok=False)
         object_keys = {
             str(row["object_key"])
@@ -782,7 +793,7 @@ class RunStore:
                 object_keys[0].encode("utf-8")
             ).hexdigest()[:20]
             for name in replace_tables:
-                old_path = self.path / name / f"part-{digest}.parquet"
+                old_path = self._table_path(name) / f"part-{digest}.parquet"
                 if old_path.exists():
                     old_path.unlink()
         for file_path in sorted(source.glob("*.parquet")):
@@ -798,7 +809,8 @@ class RunStore:
                 if table.num_rows else uuid4().hex
             )
             digest = hashlib.sha256(object_key.encode("utf-8")).hexdigest()[:20]
-            destination = self.path / name / f"part-{digest}.parquet"
+            destination = self._table_path(name) / f"part-{digest}.parquet"
+            destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(file_path, destination)
             promoted[name] = str(destination)
         shutil.rmtree(source, ignore_errors=True)
@@ -820,7 +832,7 @@ class RunStore:
     ) -> pa.Table:
         if name not in SCHEMAS:
             raise ValueError(f"Unknown run table: {name!r}")
-        files = sorted((self.path / name).glob("*.parquet"))
+        files = sorted(self._table_path(name).glob("*.parquet"))
         if not files:
             table = _empty_table(name)
             return table.select(columns) if columns else table
@@ -926,7 +938,28 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     store = open_run(run) if isinstance(run, str) else run
     row = store.object_row(identifier, table_name="models")
     object_row = store.object_row(row["object_key"], table_name="objects")
-    spectrum_metadata = SpectrumMetadata(**_from_key_values(row["spectrum_metadata"]))
+    workflow_metadata = _from_key_values(row["workflow_metadata"])
+    spectrum_metadata_values = _from_key_values(row["spectrum_metadata"])
+    extinction = dict(
+        spectrum_metadata_values.get("galactic_extinction")
+        or workflow_metadata.get("galactic_extinction")
+        or {}
+    )
+    extinction_status = extinction.get("status")
+    spectrum_metadata_values.setdefault(
+        "galactic_extinction_corrected",
+        extinction_status in (
+            "applied",
+            "declared_corrected",
+            "caller_preprocessed",
+        ),
+    )
+    spectrum_metadata_values.setdefault("galactic_extinction", extinction)
+    spectrum_metadata_values.setdefault("ra", workflow_metadata.get("ra"))
+    spectrum_metadata_values.setdefault("dec", workflow_metadata.get("dec"))
+    spectrum_metadata = resolve_spectrum_metadata(
+        metadata=spectrum_metadata_values
+    )
     spectrum = Spectrum.from_arrays(
         np.asarray(row["wave_obs"], dtype=float),
         np.asarray(row["flux"], dtype=float),
@@ -956,10 +989,32 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         for item in row["components"]
         if item["section"] == "continuum"
     }
+    continuum_model = sum(
+        continuum_components.values(),
+        np.zeros_like(spectrum.flux, dtype=float),
+    )
     continuum_values, continuum_errors = _measurement_maps(
         store, row["object_key"], "continuum_parameter", None
     )
-    workflow_metadata = _from_key_values(row["workflow_metadata"])
+    warning_rows = [
+        item
+        for item in store.read_table("warnings").to_pylist()
+        if item["object_key"] == row["object_key"]
+    ]
+
+    def archived_warnings(section: str, recipe_id=None) -> list[FitWarning]:
+        return [
+            FitWarning(
+                code=item["code"],
+                message=item["message"],
+                severity=item["severity"],
+                context=_from_key_values(item["context"]),
+            )
+            for item in warning_rows
+            if item["section"] == section
+            and item.get("recipe_id") == recipe_id
+        ]
+
     host_enabled = bool(object_row["host_decomp_enabled"])
     host_fit_mask, host_emission_mask, host_mask_provenance = (
         _archived_host_masks(
@@ -981,10 +1036,15 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         dof=0,
         reduced_chi2=float(object_row["continuum_reduced_chi2"]),
         wave_rest=spectrum.wave_rest.copy(),
-        model=np.asarray(row["continuum_model"], dtype=float),
+        model=(
+            np.asarray(row["continuum_model"], dtype=float)
+            if row.get("continuum_model") is not None
+            else continuum_model
+        ),
         component_models=continuum_components,
         fit_mask=np.asarray(row["continuum_fit_mask"], dtype=bool),
         clip_mask=np.asarray(row["continuum_clip_mask"], dtype=bool),
+        warnings=archived_warnings("continuum"),
         metadata=workflow_metadata,
     )
     complex_components: Dict[str, Dict[str, np.ndarray]] = {}
@@ -1003,6 +1063,11 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
             store, row["object_key"], "complex_metric", recipe_id
         )
         complex_metadata = _from_key_values(item.get("metadata"))
+        component_models = complex_components.get(recipe_id, {})
+        complex_model = sum(
+            component_models.values(),
+            np.zeros_like(spectrum.flux, dtype=float),
+        )
         complexes[recipe_id] = EmissionComplexResult(
             success=bool(item["success"]),
             status=int(item["status"]),
@@ -1018,13 +1083,22 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
             reduced_chi2=float(item["reduced_chi2"]),
             bic=float(item["bic"]),
             wave_rest=spectrum.wave_rest.copy(),
-            flux_continuum_subtracted=np.asarray(
-                item["flux_continuum_subtracted"], dtype=float
+            flux_continuum_subtracted=(
+                np.asarray(
+                    item["flux_continuum_subtracted"], dtype=float
+                )
+                if item.get("flux_continuum_subtracted") is not None
+                else spectrum.flux - continuum_model
             ),
             err=spectrum.err.copy(),
-            model=np.asarray(item["model"], dtype=float),
-            component_models=complex_components.get(recipe_id, {}),
+            model=(
+                np.asarray(item["model"], dtype=float)
+                if item.get("model") is not None
+                else complex_model
+            ),
+            component_models=component_models,
             fit_mask=np.asarray(item["fit_mask"], dtype=bool),
+            warnings=archived_warnings("complex", recipe_id),
             metadata={
                 "recipe_id": recipe_id,
                 **complex_metadata,
@@ -1035,15 +1109,11 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
                 else np.zeros_like(spectrum.valid_mask)
             ),
         )
-    warnings = [
-        FitWarning(
-            code=item["code"],
-            message=item["message"],
-            severity=item["severity"],
-            context=_from_key_values(item["context"]),
-        )
-        for item in store.read_table("warnings").to_pylist()
-        if item["object_key"] == row["object_key"] and item["section"] == "workflow"
+    warnings = archived_warnings("workflow")
+    host_warnings = [
+        item["message"]
+        for item in warning_rows
+        if item["section"] == "host"
     ]
     workflow = WorkflowResult(
         spectrum=spectrum,
@@ -1068,6 +1138,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         ),
         host_fit_mask=host_fit_mask,
         host_emission_mask=host_emission_mask,
+        host_warnings=host_warnings,
         warnings=warnings,
         metadata=workflow_metadata,
     )
@@ -1079,7 +1150,7 @@ def finalize_run(
     *,
     compact_models: bool = False,
 ) -> Dict[str, str]:
-    """Validate shards and materialize convenient compact Parquet files."""
+    """Validate canonical datasets and finalize a resumable run."""
 
     store = open_run(run) if isinstance(run, str) else run
     outputs = {}
@@ -1091,18 +1162,18 @@ def finalize_run(
     )
     if duplicates:
         raise ValueError(f"Duplicate object keys in run: {duplicates[:10]}")
-    for name in ("inputs", "objects", "measurements", "warnings", "failures", "derived"):
-        table = store.read_table(name)
-        output = store.path / "compact" / f"{name}.parquet"
-        pq.write_table(table, output, compression="zstd")
-        outputs[name] = str(output)
-    if compact_models:
-        output = store.path / "compact" / "models.parquet"
-        pq.write_table(store.read_table("models"), output, compression="zstd")
-        outputs["models"] = str(output)
+    for name in TABLE_NAMES:
+        store.read_table(name)
+        table_path = store._table_path(name)
+        if table_path.exists():
+            outputs[name] = str(table_path)
+    staging = store._staging_path()
+    if staging.exists() and not any(staging.iterdir()):
+        staging.rmdir()
     store.manifest["status"] = "complete"
     store.manifest["finalized_at"] = _now()
-    store.manifest["compact_outputs"] = outputs
+    store.manifest["datasets"] = outputs
+    store.manifest.pop("compact_outputs", None)
     store._write_manifest()
     return outputs
 

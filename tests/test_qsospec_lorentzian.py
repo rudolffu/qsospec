@@ -27,7 +27,7 @@ def test_local_hbeta_lorentzian_recovers_profile_and_measurements():
     wave = np.linspace(4700.0, 5100.0, 600)
     flux = 1.2 + lorentzian(wave, 4.0, 4863.0, 15.0)
     err = np.full_like(wave, 0.03)
-    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, wave_frame="rest", flux_unit="relative")
 
     result = qsospec.fit_line_complex(
         spectrum,

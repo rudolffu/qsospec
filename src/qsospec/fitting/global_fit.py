@@ -130,8 +130,30 @@ def _active_bound_warnings(result, names: Sequence[str]) -> List[FitWarning]:
     return warnings
 
 
+def _broken_power_law_basis(
+    wave: np.ndarray,
+    *,
+    pivot: float,
+    break_wave: float,
+    blue_slope: float,
+    red_slope: float,
+) -> np.ndarray:
+    wave = np.asarray(wave, dtype=float)
+    blue = wave < break_wave
+    basis = np.empty_like(wave)
+    basis[blue] = (wave[blue] / pivot) ** blue_slope
+    edge = (break_wave / pivot) ** blue_slope
+    basis[~blue] = edge * (wave[~blue] / break_wave) ** red_slope
+    return basis
+
+
 class _ContinuumContext:
-    def __init__(self, spectrum: Spectrum, config: GlobalContinuumConfig):
+    def __init__(
+        self,
+        spectrum: Spectrum,
+        config: GlobalContinuumConfig,
+        fit_mask_override: Optional[np.ndarray] = None,
+    ):
         self.spectrum = spectrum
         self.config = config
         self.wave = spectrum.wave_rest
@@ -155,6 +177,13 @@ class _ContinuumContext:
         )
         self.base_fit_mask = valid & _window_mask(self.wave, config.continuum_windows)
         self.base_fit_mask &= ~_window_mask(self.wave, config.mask_windows)
+        if fit_mask_override is not None:
+            override = np.asarray(fit_mask_override, dtype=bool)
+            if override.shape != self.wave.shape:
+                raise ValueError(
+                    "Continuum fit-mask override must match the spectrum."
+                )
+            self.base_fit_mask &= override
         self._configure_parameters()
 
     def _add(self, name: str, value: float, bounds) -> None:
@@ -171,12 +200,24 @@ class _ContinuumContext:
     def _configure_parameters(self) -> None:
         cfg = self.config
         if cfg.power_law.enabled:
+            if cfg.power_law.mode == "auto":
+                raise ValueError(
+                    "Internal continuum contexts require a resolved power-law mode."
+                )
+            if cfg.power_law.mode == "double":
+                self._validate_double_power_law_coverage()
             valid_flux = self.spectrum.flux[self.base_fit_mask]
             norm = cfg.power_law.norm
             if norm is None:
                 norm = max(float(np.nanmedian(valid_flux)) if valid_flux.size else 1.0, 1.0e-6)
             self._add("power_law.norm", norm, cfg.power_law.norm_bounds)
             self._add("power_law.slope", cfg.power_law.slope, cfg.power_law.slope_bounds)
+            if cfg.power_law.mode == "double":
+                self._add(
+                    "power_law.red_slope",
+                    cfg.power_law.red_slope,
+                    cfg.power_law.red_slope_bounds,
+                )
 
         for label, iron_cfg in (("uv_iron", cfg.uv_iron), ("optical_iron", cfg.optical_iron)):
             if iron_cfg is None or not iron_cfg.enabled:
@@ -270,6 +311,42 @@ class _ContinuumContext:
         self.index = {name: i for i, name in enumerate(self.names)}
         self._initialize_linear_amplitudes()
 
+    def _validate_double_power_law_coverage(self) -> None:
+        cfg = self.config.power_law
+        selected = self.wave[self.base_fit_mask]
+        blue = selected[selected < cfg.break_wave]
+        red = selected[selected >= cfg.break_wave]
+        minimum = int(cfg.auto_min_pixels_per_side)
+        if blue.size < minimum or red.size < minimum:
+            raise ValueError(
+                "Double power law requires at least "
+                f"{minimum} continuum pixels on each side of "
+                f"{cfg.break_wave:g} Angstrom."
+            )
+        blue_leverage = float(np.log(cfg.break_wave / np.min(blue)))
+        red_leverage = float(np.log(np.max(red) / cfg.break_wave))
+        if (
+            blue_leverage < cfg.auto_min_log_leverage
+            or red_leverage < cfg.auto_min_log_leverage
+        ):
+            raise ValueError(
+                "Double power law has insufficient wavelength leverage "
+                "around the configured break."
+            )
+
+    def _power_law_basis(self, wave: np.ndarray, theta: np.ndarray) -> np.ndarray:
+        cfg = self.config.power_law
+        blue_slope = self._get(theta, "power_law.slope")
+        if cfg.mode == "single":
+            return (wave / cfg.pivot) ** blue_slope
+        return _broken_power_law_basis(
+            wave,
+            pivot=cfg.pivot,
+            break_wave=cfg.break_wave,
+            blue_slope=blue_slope,
+            red_slope=self._get(theta, "power_law.red_slope"),
+        )
+
     def _balmer_fixed_fwhm(self) -> Optional[float]:
         config = self.config.balmer_pseudocontinuum
         if not config.fit_fwhm:
@@ -286,8 +363,7 @@ class _ContinuumContext:
         columns = []
         names = []
         if "power_law.norm" in self.index:
-            slope = self._get(self.initial, "power_law.slope")
-            columns.append((wave / self.config.power_law.pivot) ** slope)
+            columns.append(self._power_law_basis(wave, self.initial))
             names.append("power_law.norm")
         if self.uv_template is not None:
             fwhm = self._get(self.initial, "uv_iron.fwhm_kms")
@@ -375,11 +451,42 @@ class _ContinuumContext:
                 )
 
         if "power_law.norm" in self.index:
+            cfg = self.config.power_law
             slope = nonlinear_values["power_law.slope"]
-            basis = (wave / self.config.power_law.pivot) ** slope
+            if cfg.mode == "single":
+                basis = (wave / cfg.pivot) ** slope
+                derivatives = {
+                    "power_law.slope": basis
+                    * np.log(wave / cfg.pivot)
+                }
+            else:
+                red_slope = nonlinear_values["power_law.red_slope"]
+                basis = _broken_power_law_basis(
+                    wave,
+                    pivot=cfg.pivot,
+                    break_wave=cfg.break_wave,
+                    blue_slope=slope,
+                    red_slope=red_slope,
+                )
+                blue = wave < cfg.break_wave
+                derivative_blue = np.empty_like(wave)
+                derivative_red = np.zeros_like(wave)
+                derivative_blue[blue] = basis[blue] * np.log(
+                    wave[blue] / cfg.pivot
+                )
+                derivative_blue[~blue] = basis[~blue] * np.log(
+                    cfg.break_wave / cfg.pivot
+                )
+                derivative_red[~blue] = basis[~blue] * np.log(
+                    wave[~blue] / cfg.break_wave
+                )
+                derivatives = {
+                    "power_law.slope": derivative_blue,
+                    "power_law.red_slope": derivative_red,
+                }
             append_column(
                 basis,
-                {"power_law.slope": basis * np.log(wave / self.config.power_law.pivot)},
+                derivatives,
             )
         if self.uv_template is not None:
             fwhm = nonlinear_values["uv_iron.fwhm_kms"]
@@ -478,8 +585,9 @@ class _ContinuumContext:
         components: Dict[str, np.ndarray] = {}
         if "power_law.norm" in self.index:
             norm = self._get(theta, "power_law.norm")
-            slope = self._get(theta, "power_law.slope")
-            components["power_law"] = norm * (wave / self.config.power_law.pivot) ** slope
+            components["power_law"] = norm * self._power_law_basis(
+                wave, theta
+            )
         if self.uv_template is not None:
             components["uv_iron"] = self._get(theta, "uv_iron.amp") * evaluate_iron_basis(
                 self.uv_template, wave, self._get(theta, "uv_iron.fwhm_kms")
@@ -662,16 +770,19 @@ def _solve_once_with_fallback(context, wave, flux, err, start, config):
         return result, "legacy_joint", str(exc)
 
 
-def fit_global_continuum(
+def _fit_global_continuum_fixed(
     spectrum: Spectrum,
-    config: Optional[GlobalContinuumConfig] = None,
+    config: GlobalContinuumConfig,
     *,
     compute_covariance: bool = True,
+    fit_mask_override: Optional[np.ndarray] = None,
 ) -> GlobalContinuumResult:
-    """Fit the global AGN continuum on legacy line-free windows."""
+    """Fit one resolved global-continuum model."""
 
-    cfg = config or GlobalContinuumConfig()
-    context = _ContinuumContext(spectrum, cfg)
+    cfg = config
+    context = _ContinuumContext(
+        spectrum, cfg, fit_mask_override=fit_mask_override
+    )
     if np.count_nonzero(context.base_fit_mask) <= len(context.names):
         raise ValueError("Too few valid continuum-window pixels for the active global model.")
 
@@ -888,6 +999,154 @@ def fit_global_continuum(
         metadata=metadata,
         optimizer_result=result,
     )
+
+
+def _continuum_bic(result: GlobalContinuumResult) -> float:
+    n_pixels = int(np.count_nonzero(result.clip_mask))
+    n_parameters = len(result.param_values)
+    if n_pixels <= 0 or not np.isfinite(result.chi2):
+        return np.inf
+    return float(result.chi2 + n_parameters * np.log(n_pixels))
+
+
+def _power_law_slope_at_bound(result: GlobalContinuumResult) -> bool:
+    slope_names = {"power_law.slope", "power_law.red_slope"}
+    return any(
+        warning.code == "parameter_at_bound"
+        and warning.context.get("parameter") in slope_names
+        for warning in result.warnings
+    )
+
+
+def fit_global_continuum(
+    spectrum: Spectrum,
+    config: Optional[GlobalContinuumConfig] = None,
+    *,
+    compute_covariance: bool = True,
+) -> GlobalContinuumResult:
+    """Fit the global AGN continuum and resolve automatic power-law mode."""
+
+    cfg = config or GlobalContinuumConfig()
+    requested_mode = cfg.power_law.mode
+    if requested_mode != "auto":
+        result = _fit_global_continuum_fixed(
+            spectrum, cfg, compute_covariance=compute_covariance
+        )
+        result.metadata.update(
+            {
+                "power_law_mode_requested": requested_mode,
+                "power_law_mode_selected": requested_mode,
+                "power_law_break_wave": float(cfg.power_law.break_wave),
+                "power_law_selection_reason": "explicit_mode",
+                "power_law_single_bic": (
+                    _continuum_bic(result)
+                    if requested_mode == "single" else np.nan
+                ),
+                "power_law_double_bic": (
+                    _continuum_bic(result)
+                    if requested_mode == "double" else np.nan
+                ),
+                "power_law_common_mask_pixels": int(
+                    np.count_nonzero(result.clip_mask)
+                ),
+            }
+        )
+        return result
+
+    single_power_law = replace(cfg.power_law, mode="single")
+    double_power_law = replace(cfg.power_law, mode="double")
+    single_cfg = replace(cfg, power_law=single_power_law)
+    double_cfg = replace(cfg, power_law=double_power_law)
+    single_initial = _fit_global_continuum_fixed(
+        spectrum, single_cfg, compute_covariance=False
+    )
+
+    try:
+        double_initial = _fit_global_continuum_fixed(
+            spectrum, double_cfg, compute_covariance=False
+        )
+    except ValueError as exc:
+        selected = _fit_global_continuum_fixed(
+            spectrum, single_cfg, compute_covariance=compute_covariance
+        )
+        selected.metadata.update(
+            {
+                "power_law_mode_requested": "auto",
+                "power_law_mode_selected": "single",
+                "power_law_break_wave": float(cfg.power_law.break_wave),
+                "power_law_selection_reason": (
+                    "double_insufficient_coverage"
+                ),
+                "power_law_selection_detail": str(exc),
+                "power_law_single_bic": _continuum_bic(selected),
+                "power_law_double_bic": np.nan,
+                "power_law_delta_bic": np.nan,
+                "power_law_common_mask_pixels": int(
+                    np.count_nonzero(selected.clip_mask)
+                ),
+            }
+        )
+        return selected
+
+    common_mask = single_initial.clip_mask & double_initial.clip_mask
+    common_cfg_single = replace(
+        single_cfg,
+        blue_absorption_clip_enabled=False,
+        clip_passes=0,
+    )
+    common_cfg_double = replace(
+        double_cfg,
+        blue_absorption_clip_enabled=False,
+        clip_passes=0,
+    )
+    single_common = _fit_global_continuum_fixed(
+        spectrum,
+        common_cfg_single,
+        compute_covariance=compute_covariance,
+        fit_mask_override=common_mask,
+    )
+    double_common = _fit_global_continuum_fixed(
+        spectrum,
+        common_cfg_double,
+        compute_covariance=compute_covariance,
+        fit_mask_override=common_mask,
+    )
+    single_bic = _continuum_bic(single_common)
+    double_bic = _continuum_bic(double_common)
+    delta_bic = float(single_bic - double_bic)
+    double_bound = _power_law_slope_at_bound(double_common)
+    choose_double = bool(
+        single_common.success
+        and double_common.success
+        and not double_bound
+        and delta_bic >= cfg.power_law.auto_delta_bic
+    )
+    selected = double_common if choose_double else single_common
+    if choose_double:
+        reason = "double_strong_bic"
+    elif double_bound:
+        reason = "double_slope_at_bound"
+    elif not double_common.success:
+        reason = "double_fit_failed"
+    elif delta_bic < cfg.power_law.auto_delta_bic:
+        reason = "double_bic_improvement_insufficient"
+    else:
+        reason = "single_selected"
+    selected.metadata.update(
+        {
+            "power_law_mode_requested": "auto",
+            "power_law_mode_selected": (
+                "double" if choose_double else "single"
+            ),
+            "power_law_break_wave": float(cfg.power_law.break_wave),
+            "power_law_selection_reason": reason,
+            "power_law_single_bic": single_bic,
+            "power_law_double_bic": double_bic,
+            "power_law_delta_bic": delta_bic,
+            "power_law_common_mask_pixels": int(np.count_nonzero(common_mask)),
+        }
+    )
+    return selected
 
 
 def _gaussian_area_profile(wave: np.ndarray, flux: float, center: float, fwhm_kms: float) -> np.ndarray:
@@ -2231,6 +2490,19 @@ def fit_global_lines(
     continuum_initial = fit_global_continuum(
         spectrum, global_cfg, compute_covariance=uncertainty_cfg.covariance
     )
+    selected_power_law_mode = continuum_initial.metadata.get(
+        "power_law_mode_selected", global_cfg.power_law.mode
+    )
+    resolved_global_cfg = (
+        replace(
+            global_cfg,
+            power_law=replace(
+                global_cfg.power_law, mode=selected_power_law_mode
+            ),
+        )
+        if global_cfg.power_law.mode == "auto"
+        else global_cfg
+    )
     selected_recipes: List[ComplexRecipe] = []
     complex_statuses: Dict[str, str] = {}
     coverage_by_recipe = {}
@@ -2298,7 +2570,7 @@ def fit_global_lines(
             }
         )
 
-    balmer_config = global_cfg.balmer_pseudocontinuum
+    balmer_config = resolved_global_cfg.balmer_pseudocontinuum
     balmer_available = continuum_initial.metadata.get("balmer_template") is not None
     balmer_disabled_short_coverage = bool(
         continuum_initial.metadata.get(
@@ -2384,14 +2656,16 @@ def fit_global_lines(
         continuum = continuum_initial
         hbeta = hbeta_initial
         series_width = float(measured_width)
-        for iteration in range(max(int(global_cfg.balmer_width_sync_max_iterations), 1)):
+        for iteration in range(
+            max(int(resolved_global_cfg.balmer_width_sync_max_iterations), 1)
+        ):
             refined_balmer = replace(
-                global_cfg.balmer_pseudocontinuum,
+                resolved_global_cfg.balmer_pseudocontinuum,
                 fit_fwhm=False,
                 fwhm_kms=series_width,
             )
             refined_config = replace(
-                global_cfg,
+                resolved_global_cfg,
                 balmer_pseudocontinuum=refined_balmer,
             )
             candidate_continuum = fit_global_continuum(
@@ -2419,7 +2693,9 @@ def fit_global_lines(
                 )
                 break
             width_difference = float(fitted_width - series_width)
-            if abs(width_difference) <= float(global_cfg.balmer_width_sync_tolerance_kms):
+            if abs(width_difference) <= float(
+                resolved_global_cfg.balmer_width_sync_tolerance_kms
+            ):
                 continuum = candidate_continuum
                 hbeta = candidate_hbeta
                 width_converged = True
@@ -2584,7 +2860,9 @@ def fit_global_lines(
         "hbeta_sync_converged": bool(width_converged),
         "hbeta_sync_iterations": int(refinement_iterations),
         "hbeta_sync_difference_kms": float(width_difference),
-        "balmer_width_sync_tolerance_kms": float(global_cfg.balmer_width_sync_tolerance_kms),
+        "balmer_width_sync_tolerance_kms": float(
+            resolved_global_cfg.balmer_width_sync_tolerance_kms
+        ),
         "continuum_samples": samples,
         "continuum_sample_flux_density_unit": spectrum.flux_density_unit,
         "maximum_valid_rest_wavelength": continuum.metadata.get(
@@ -2606,6 +2884,24 @@ def fit_global_lines(
             and lya_coverage is not None
             and lya_coverage.fit_allowed
             else "explicit" if global_config is not None else "default"
+        ),
+        "power_law_mode_requested": continuum_initial.metadata.get(
+            "power_law_mode_requested"
+        ),
+        "power_law_mode_selected": continuum.metadata.get(
+            "power_law_mode_selected", selected_power_law_mode
+        ),
+        "power_law_selection_reason": continuum_initial.metadata.get(
+            "power_law_selection_reason"
+        ),
+        "power_law_single_bic": continuum_initial.metadata.get(
+            "power_law_single_bic"
+        ),
+        "power_law_double_bic": continuum_initial.metadata.get(
+            "power_law_double_bic"
+        ),
+        "power_law_delta_bic": continuum_initial.metadata.get(
+            "power_law_delta_bic"
         ),
         "lya_coverage_status": (
             lya_coverage.status if lya_coverage is not None else "not_requested"
@@ -2652,7 +2948,7 @@ def fit_global_lines(
     if uncertainty_cfg.monte_carlo_trials > 0:
         workflow.monte_carlo = _run_workflow_mc(
             spectrum,
-            global_cfg,
+            resolved_global_cfg,
             hbeta_cfg,
             mgii_cfg,
             halpha_cfg,

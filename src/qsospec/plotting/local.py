@@ -118,7 +118,10 @@ def plot_line_result(
         if plot_window is not None and len(plot_window) == 2:
             ax.set_xlim(float(plot_window[0]), float(plot_window[1]))
         ax.set_xlabel("Rest wavelength [Angstrom]", fontsize=10)
-        ax.set_ylabel(f"Flux density [{result.metadata.get('flux_density_unit', 'input')}]", fontsize=10)
+        ax.set_ylabel(
+            f"Flux density [{result.metadata.get('flux_unit', 'relative')}]",
+            fontsize=10,
+        )
         ax.tick_params(labelsize=9)
         ax.legend(loc="best", fontsize=8)
     if title:
@@ -147,7 +150,7 @@ def plot_local_result(
     unit = "input"
     for ax, (window, fit) in zip(axes.ravel(), result.window_results.items()):
         plot_line_result(fit, ax=ax, show_components=show_components, title=window)
-        unit = fit.metadata.get("flux_density_unit", unit)
+        unit = fit.metadata.get("flux_unit", unit)
         ax.set_ylabel("")
     fig.supylabel(f"Flux density [{unit}]", fontsize=10)
 

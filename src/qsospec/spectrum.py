@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Any, Optional
 
 import numpy as np
 
@@ -32,11 +32,14 @@ class Spectrum:
         wave_frame: str = "observed",
         mask: Optional[np.ndarray] = None,
         survey: Optional[str] = None,
-        unit_preset: Optional[str] = None,
         wave_unit: Optional[str] = None,
-        flux_density_unit: Optional[str] = None,
-        flux_density_scale_to_cgs: Optional[float] = None,
+        flux_unit: Optional[str] = None,
+        flux_scale: Optional[float] = None,
         source: Optional[str] = None,
+        ra: Optional[float] = None,
+        dec: Optional[float] = None,
+        galactic_extinction_corrected: bool = False,
+        galactic_extinction: Optional[Mapping[str, Any]] = None,
         metadata: Optional[SpectrumMetadata] = None,
     ) -> "Spectrum":
         """Build a spectrum from plain arrays.
@@ -53,6 +56,23 @@ class Spectrum:
             raise ValueError("wave and flux must have the same shape.")
         if not np.isfinite(z):
             raise ValueError("z must be finite.")
+        if metadata is None and survey is None and flux_unit is None:
+            raise ValueError(
+                "flux_unit is required for array spectra; use 'cgs' for "
+                "physical f_lambda or 'relative' for arbitrary/model spectra."
+            )
+        if ra is not None:
+            ra = float(ra)
+            if not np.isfinite(ra) or not 0.0 <= ra < 360.0:
+                raise ValueError(
+                    "ra must be finite and satisfy 0 <= ra < 360 degrees."
+                )
+        if dec is not None:
+            dec = float(dec)
+            if not np.isfinite(dec) or not -90.0 <= dec <= 90.0:
+                raise ValueError(
+                    "dec must be finite and satisfy -90 <= dec <= 90 degrees."
+                )
 
         if err is None:
             if ivar is None:
@@ -82,6 +102,11 @@ class Spectrum:
         else:
             raise ValueError("wave_frame must be 'observed' or 'rest'.")
 
+        corrected_metadata_value = (
+            galactic_extinction_corrected
+            if metadata is None or galactic_extinction_corrected
+            else None
+        )
         return cls(
             wave_obs=wave_obs.copy(),
             flux=flux.copy(),
@@ -89,11 +114,16 @@ class Spectrum:
             z=float(z),
             metadata=resolve_spectrum_metadata(
                 survey=survey,
-                unit_preset=unit_preset,
                 wave_unit=wave_unit,
-                flux_density_unit=flux_density_unit,
-                flux_density_scale_to_cgs=flux_density_scale_to_cgs,
+                flux_unit=flux_unit,
+                flux_scale=flux_scale,
                 source=source,
+                ra=ra,
+                dec=dec,
+                galactic_extinction_corrected=(
+                    corrected_metadata_value
+                ),
+                galactic_extinction=galactic_extinction,
                 metadata=metadata,
             ),
             mask=None if mask_arr is None else mask_arr.copy(),
@@ -127,13 +157,27 @@ class Spectrum:
         return self.metadata.wave_unit
 
     @property
-    def flux_density_unit(self) -> str:
-        """Flux-density unit label for the input arrays."""
+    def flux_unit(self) -> str:
+        """Flux unit kind: physical cgs or relative f_lambda."""
 
-        return self.metadata.flux_density_unit
+        return self.metadata.flux_unit
+
+    @property
+    def flux_scale(self) -> Optional[float]:
+        """Multiplicative scale from input f_lambda to physical cgs."""
+
+        return self.metadata.flux_scale
+
+    @property
+    def flux_density_unit(self) -> str:
+        """Internal display label for the input f_lambda values."""
+
+        if self.flux_unit == "cgs":
+            return "erg s^-1 cm^-2 Angstrom^-1"
+        return "relative f_lambda"
 
     @property
     def flux_density_scale_to_cgs(self) -> Optional[float]:
-        """Multiplicative scale from input flux density to cgs, if known."""
+        """Internal compatibility alias for the physical cgs scale."""
 
-        return self.metadata.flux_density_scale_to_cgs
+        return self.flux_scale

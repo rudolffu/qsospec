@@ -130,6 +130,8 @@ def spectrum_data_from_mapping(
         metadata={
             "input_file": str(source),
             "file_type": "parquet",
+            "flux_unit": "cgs",
+            "flux_scale": 1e-17,
             "row_index": row_index,
             "selected_columns": {
                 "wavelength": wave_col,
@@ -270,7 +272,12 @@ def _read_sdss(path: Path, redshift=None, object_id=None) -> SpectrumData:
         object_id=str(identity),
         ra=ra,
         dec=dec,
-        metadata={"input_file": str(path), "file_type": "sdss_fits"},
+        metadata={
+            "input_file": str(path),
+            "file_type": "sdss_fits",
+            "flux_unit": "cgs",
+            "flux_scale": 1e-17,
+        },
     )
 
 
@@ -336,7 +343,12 @@ def _read_lamost(path: Path, redshift=None, object_id=None) -> SpectrumData:
         object_id=str(object_id or header.get("OBSID") or path.stem),
         ra=ra,
         dec=dec,
-        metadata={"input_file": str(path), "file_type": "lamost_fits"},
+        metadata={
+            "input_file": str(path),
+            "file_type": "lamost_fits",
+            "flux_unit": "cgs",
+            "flux_scale": 1e-17,
+        },
     )
 
 
@@ -384,7 +396,12 @@ def _read_iraf(path: Path, redshift=None, object_id=None) -> SpectrumData:
         object_id=str(identity),
         ra=ra,
         dec=dec,
-        metadata={"input_file": str(path), "file_type": "iraf_fits"},
+        metadata={
+            "input_file": str(path),
+            "file_type": "iraf_fits",
+            "flux_unit": "relative",
+            "flux_scale": None,
+        },
     )
 
 
@@ -413,23 +430,55 @@ def read_spectrum(
     redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     reader: str = "auto",
+    flux_unit: Optional[str] = None,
+    flux_scale: Optional[float] = None,
 ) -> SpectrumData:
-    """Read a Parquet/SPARCL, SDSS, LAMOST, or IRAF spectrum."""
+    """Read a Parquet/SPARCL, SDSS, LAMOST, or IRAF spectrum.
+
+    Standard DESI/SPARCL, SDSS, and LAMOST readers infer cgs ``f_lambda``
+    values in units of ``1e-17``. IRAF files default to relative
+    ``f_lambda`` because their physical scale is not standardized. Callers
+    may override either interpretation explicitly.
+    """
 
     path = Path(source).expanduser()
     suffix = path.suffix.lower()
     if suffix == ".parquet":
-        return read_sparcli_spectrum(
+        spectrum = read_sparcli_spectrum(
             str(path),
             row_index=row_index,
             redshift=redshift,
             object_id=object_id,
         )
-    selected = detect_fits_reader(str(path)) if reader == "auto" else reader
-    readers = {"sdss": _read_sdss, "lamost": _read_lamost, "iraf": _read_iraf}
-    if selected not in readers:
-        raise ValueError(f"Unknown spectrum reader: {selected!r}")
-    return readers[selected](path, redshift=redshift, object_id=object_id)
+    else:
+        selected = detect_fits_reader(str(path)) if reader == "auto" else reader
+        readers = {"sdss": _read_sdss, "lamost": _read_lamost, "iraf": _read_iraf}
+        if selected not in readers:
+            raise ValueError(f"Unknown spectrum reader: {selected!r}")
+        spectrum = readers[selected](
+            path,
+            redshift=redshift,
+            object_id=object_id,
+        )
+
+    metadata = dict(spectrum.metadata)
+    resolved_unit = metadata.get("flux_unit") if flux_unit is None else flux_unit
+    resolved_unit = str(resolved_unit).strip().lower()
+    if resolved_unit not in ("cgs", "relative"):
+        raise ValueError("flux_unit must be 'cgs' or 'relative'.")
+    resolved_scale = metadata.get("flux_scale") if flux_scale is None else flux_scale
+    if resolved_unit == "relative":
+        if flux_scale is not None:
+            raise ValueError("flux_scale is forbidden for relative spectra.")
+        resolved_scale = None
+    else:
+        resolved_scale = 1.0 if resolved_scale is None else float(resolved_scale)
+        if not np.isfinite(resolved_scale) or resolved_scale <= 0:
+            raise ValueError("flux_scale must be finite and positive.")
+    metadata["flux_unit"] = resolved_unit
+    metadata["flux_scale"] = resolved_scale
+    spectrum.metadata = metadata
+    return spectrum
 
 
 def discover_fits_inputs(

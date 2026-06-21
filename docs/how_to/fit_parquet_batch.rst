@@ -21,9 +21,9 @@ redshift, RA, Dec, and an object identifier.
 Expected outputs
 ----------------
 
-The run bundle contains one authoritative shard per input object plus compact
-tables after finalization. Repeating the command with the same configuration
-resumes the run.
+The run bundle contains canonical resumable Parquet datasets. Finalization
+validates them without producing duplicate compact tables. Repeating the
+command with the same configuration resumes the run.
 
 Common failures
 ---------------

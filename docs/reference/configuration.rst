@@ -19,6 +19,17 @@ Lyα-safe continuum windows:
 
    global_config = qsospec.GlobalContinuumConfig.lya_safe()
 
+Automatic single/broken power-law selection:
+
+.. code-block:: python
+
+   global_config = qsospec.GlobalContinuumConfig(
+       power_law=qsospec.PowerLawConfig(mode="auto")
+   )
+
+The broken law is selected only with adequate wavelength leverage on both
+sides of 4661 Å and a default BIC improvement of at least 10.
+
 Known foreground E(B-V):
 
 .. code-block:: python

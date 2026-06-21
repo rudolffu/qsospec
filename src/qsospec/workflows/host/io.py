@@ -23,7 +23,7 @@ REDSHIFT_ALIASES = ("redshift", "z", "z_desi", "z_vi")
 OBJECT_ID_ALIASES = ("targetid", "target_id", "object_id", "sparcl_id", "specid")
 RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
-DEFAULT_FLUX_DENSITY_UNIT = "1e-17 erg cm^-2 s^-1 Angstrom^-1"
+DEFAULT_FLUX_SCALE = 1e-17
 
 
 @dataclass
@@ -177,7 +177,8 @@ def read_sparcli_spectrum(
     metadata = {
         "input_file": str(input_path),
         "file_type": file_type,
-        "flux_density_unit": DEFAULT_FLUX_DENSITY_UNIT,
+        "flux_unit": "cgs",
+        "flux_scale": DEFAULT_FLUX_SCALE,
         "columns": list(map(str, columns)),
         "selected_columns": {
             "wavelength": wave_col,

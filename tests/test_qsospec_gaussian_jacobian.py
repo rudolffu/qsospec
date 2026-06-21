@@ -17,8 +17,8 @@ def test_gaussian_partials_match_finite_difference():
         lo = theta.copy()
         hi[i] += eps[i]
         lo[i] -= eps[i]
-        finite_difference[:, i] = (
-            gaussian(wave, hi[0], hi[1], hi[2]) - gaussian(wave, lo[0], lo[1], lo[2])
-        ) / (2.0 * eps[i])
+        finite_difference[:, i] = (gaussian(wave, hi[0], hi[1], hi[2]) - gaussian(wave, lo[0], lo[1], lo[2])) / (
+            2.0 * eps[i]
+        )
 
     np.testing.assert_allclose(analytic, finite_difference, rtol=1e-5, atol=1e-7)

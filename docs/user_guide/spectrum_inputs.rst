@@ -15,12 +15,17 @@ Create :class:`qsospec.Spectrum` from observed- or rest-frame wavelengths:
        z=redshift,
        wave_frame="observed",
        mask=good_pixel_mask,
-       survey="desi",
+       flux_unit="cgs",      # or "relative"
+       flux_scale=1.0,       # omit for relative spectra
+       ra=ra,
+       dec=dec,
    )
 
 Internally, wavelengths are stored in the observed frame and
 ``spectrum.wave_rest`` is derived from redshift. The boolean ``mask`` uses
-``True`` for valid pixels.
+``True`` for valid pixels. In-memory arrays are assumed not to be corrected
+for Galactic extinction unless ``galactic_extinction_corrected=True`` is
+supplied. See :doc:`preprocessing`.
 
 Files and tables
 ----------------
@@ -41,14 +46,30 @@ Supported paths include DESI/SPARCL-like vector-row Parquet, SDSS/LAMOST/IRAF
 FITS, and input manifests. Inspect reader selection with
 :func:`qsospec.detect_fits_reader`.
 
+DESI/SPARCL, SDSS, and LAMOST readers infer cgs :math:`f_\lambda` with the
+usual :math:`10^{-17}` scale. IRAF inputs default to relative
+:math:`f_\lambda` because their calibration is not standardized. Override a
+reader explicitly when needed:
+
+.. code-block:: python
+
+   data = qsospec.read_spectrum(
+       "spectrum.fits",
+       flux_unit="cgs",
+       flux_scale=1.0,
+   )
+
 Units and metadata
 ------------------
 
-``SpectrumMetadata`` records wavelength and flux-density units, survey,
-source, and an optional scale to cgs. DESI and SDSS presets use
+Every array spectrum must declare physical ``"cgs"`` or arbitrary
+``"relative"`` :math:`f_\lambda`. For cgs arrays, ``flux_scale`` converts the
+supplied values to
+:math:`\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}` and defaults to one.
+Relative spectra cannot set a scale. A DESI or SDSS survey preset counts as
+unit confirmation and supplies
 :math:`10^{-17}\,\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}}`.
-If the scale is unknown, fitting still works but physical cgs quantities may
-be omitted.
+Physical cgs measurements are omitted for relative spectra.
 
 Common checks
 -------------

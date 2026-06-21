@@ -18,10 +18,7 @@ def _write_template(path, wave, flux):
 
 def _iron_template_file(tmp_path):
     wave = np.linspace(4550.0, 5150.0, 301)
-    flux = (
-        np.exp(-0.5 * ((wave - 4740.0) / 35.0) ** 2)
-        + 0.6 * np.exp(-0.5 * ((wave - 5030.0) / 45.0) ** 2)
-    )
+    flux = np.exp(-0.5 * ((wave - 4740.0) / 35.0) ** 2) + 0.6 * np.exp(-0.5 * ((wave - 5030.0) / 45.0) ** 2)
     return _write_template(tmp_path / "external_iron.txt", wave, flux)
 
 
@@ -170,7 +167,7 @@ def test_bundled_template_aliases_work_in_recipes():
         wave = np.linspace(4700.0, 5100.0, 220)
         flux = 1.0 + 5.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
         err = np.full_like(wave, 0.05)
-        spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+        spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", flux_unit="relative")
         result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_hbeta(iron_template=template_name))
         assert result.success
         assert "iron.amp" in result.param_values
@@ -179,7 +176,7 @@ def test_bundled_template_aliases_work_in_recipes():
     wave = np.linspace(2700.0, 2900.0, 180)
     flux = 1.0 + 4.0 * np.exp(-0.5 * ((wave - 2798.75) / 18.0) ** 2)
     err = np.full_like(wave, 0.05)
-    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", flux_unit="relative")
     result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_mgii(iron_template="vw01"))
 
     assert result.success
@@ -190,7 +187,7 @@ def test_no_overlap_warns_and_drops_iron_parameter():
     wave = np.linspace(4700.0, 5100.0, 160)
     flux = 1.0 + 4.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
     err = np.full_like(wave, 0.05)
-    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", flux_unit="relative")
 
     result = qsospec.fit_line_complex(spectrum, qsospec.recipes.local_hbeta(iron_template="vw01"))
 
@@ -206,7 +203,7 @@ def test_fit_local_no_overlap_warning_does_not_crash_other_windows():
     hb = 4.0 * np.exp(-0.5 * ((wave - 4861.33) / 22.0) ** 2)
     flux = 1.0 + mgii + hb
     err = np.full_like(wave, 0.05)
-    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", flux_unit="relative")
     config = qsospec.LocalFitConfig(
         windows=[
             qsospec.recipes.local_hbeta(iron_template="vw01"),

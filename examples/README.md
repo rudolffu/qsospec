@@ -11,10 +11,18 @@ spectrum = qsospec.Spectrum.from_arrays(
     err=uncertainty,
     z=redshift,
     wave_frame="observed",
+    flux_unit="cgs",
+    ra=ra,
+    dec=dec,
 )
 
-result = qsospec.fit_global_lines(spectrum)
+result = qsospec.fit_global_lines(qsospec.prepare_spectrum(spectrum))
 ```
 
-See [the run-bundle guide](../docs/run_bundles.md) for single-object and batch
-archive examples.
+The included
+[`spec_J001554.18+560257.5_LJT.csv`](data/spec_J001554.18+560257.5_LJT.csv)
+is used by the
+[single-object tutorial](../docs/how_to/fit_j001554.rst).
+
+See the [run-bundle reference](../docs/reference/run_bundles.rst) for
+single-object and batch archives.

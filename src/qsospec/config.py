@@ -254,11 +254,38 @@ class PowerLawConfig:
     """Pivoted global ``f_lambda`` power-law configuration."""
 
     enabled: bool = True
+    mode: str = "single"
     pivot: float = 3000.0
+    break_wave: float = 4661.0
     norm: Optional[float] = None
     norm_bounds: Bounds = (0.0, None)
     slope: float = -1.5
     slope_bounds: Bounds = (-5.0, 3.0)
+    red_slope: float = -1.5
+    red_slope_bounds: Bounds = (-5.0, 3.0)
+    auto_delta_bic: float = 10.0
+    auto_min_pixels_per_side: int = 20
+    auto_min_log_leverage: float = 0.08
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("single", "double", "auto"):
+            raise ValueError(
+                "PowerLawConfig.mode must be 'single', 'double', or 'auto'."
+            )
+        if self.pivot <= 0 or self.break_wave <= 0:
+            raise ValueError(
+                "PowerLawConfig pivot and break_wave must be positive."
+            )
+        if self.auto_delta_bic < 0:
+            raise ValueError("PowerLawConfig.auto_delta_bic must be non-negative.")
+        if self.auto_min_pixels_per_side < 2:
+            raise ValueError(
+                "PowerLawConfig.auto_min_pixels_per_side must be at least two."
+            )
+        if self.auto_min_log_leverage <= 0:
+            raise ValueError(
+                "PowerLawConfig.auto_min_log_leverage must be positive."
+            )
 
 
 @dataclass(frozen=True)

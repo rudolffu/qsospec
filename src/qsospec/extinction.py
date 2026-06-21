@@ -13,6 +13,7 @@ from astropy.coordinates import SkyCoord
 from dust_extinction.parameter_averages import F99
 
 from .config import GalacticExtinctionConfig
+from .metadata import SpectrumMetadata
 from .spectrum import Spectrum
 from .workflows.host.io import SpectrumData
 
@@ -251,8 +252,20 @@ def correct_spectrum_data(
     metadata = dict(spectrum.metadata)
     existing = metadata.get(_PROVENANCE_KEY)
     if isinstance(existing, dict):
-        if existing.get("status") == "caller_preprocessed":
+        if existing.get("status") in (
+            "caller_preprocessed",
+            "declared_corrected",
+        ):
             return spectrum
+        if existing.get("status") == "disabled":
+            if not cfg.enabled and _same_correction(
+                existing, cfg, spectrum.ra, spectrum.dec
+            ):
+                return spectrum
+            metadata.pop(_PROVENANCE_KEY, None)
+            spectrum = replace(spectrum, metadata=metadata)
+            existing = None
+    if isinstance(existing, dict):
         if _same_correction(existing, cfg, spectrum.ra, spectrum.dec):
             return spectrum
         raise ValueError(
@@ -293,6 +306,149 @@ def correct_spectrum_data(
     )
 
 
+def _updated_spectrum_metadata(
+    metadata: SpectrumMetadata,
+    *,
+    ra: Optional[float],
+    dec: Optional[float],
+    corrected: bool,
+    provenance: Dict[str, Any],
+) -> SpectrumMetadata:
+    return replace(
+        metadata,
+        ra=ra,
+        dec=dec,
+        galactic_extinction_corrected=bool(corrected),
+        galactic_extinction=dict(provenance),
+        notes=list(metadata.notes),
+    )
+
+
+def prepare_spectrum(
+    spectrum: Spectrum,
+    *,
+    galactic_extinction_config: Optional[
+        GalacticExtinctionConfig
+    ] = None,
+) -> Spectrum:
+    """Prepare an in-memory spectrum for fitting.
+
+    Array spectra are assumed to be uncorrected unless constructed with
+    ``galactic_extinction_corrected=True``. Correction is performed in the
+    observed frame and its provenance is embedded in the returned spectrum.
+    """
+
+    cfg = _resolved_config(galactic_extinction_config)
+    ra = spectrum.metadata.ra
+    dec = spectrum.metadata.dec
+    existing = dict(spectrum.metadata.galactic_extinction)
+    status = existing.get("status")
+
+    if status in ("declared_corrected", "caller_preprocessed"):
+        metadata = _updated_spectrum_metadata(
+            spectrum.metadata,
+            ra=ra,
+            dec=dec,
+            corrected=True,
+            provenance=existing,
+        )
+        return (
+            spectrum
+            if metadata == spectrum.metadata
+            else replace(spectrum, metadata=metadata)
+        )
+
+    if status == "applied":
+        if not _same_correction(existing, cfg, ra, dec):
+            raise ValueError(
+                "Spectrum already contains a different Galactic-extinction "
+                "correction and the raw arrays are unavailable."
+            )
+        metadata = _updated_spectrum_metadata(
+            spectrum.metadata,
+            ra=ra,
+            dec=dec,
+            corrected=True,
+            provenance=existing,
+        )
+        return (
+            spectrum
+            if metadata == spectrum.metadata
+            else replace(spectrum, metadata=metadata)
+        )
+
+    if spectrum.metadata.galactic_extinction_corrected:
+        provenance = _config_provenance(cfg)
+        provenance.update(
+            {
+                "requested": bool(cfg.enabled),
+                "applied": False,
+                "status": "declared_corrected",
+                "ra": ra,
+                "dec": dec,
+                "raw_ebv": None,
+                "applied_ebv": None,
+                "warning": None,
+            }
+        )
+        return replace(
+            spectrum,
+            metadata=_updated_spectrum_metadata(
+                spectrum.metadata,
+                ra=ra,
+                dec=dec,
+                corrected=True,
+                provenance=provenance,
+            ),
+        )
+
+    if not cfg.enabled:
+        _, provenance = query_galactic_ebv(ra, dec, cfg)
+        return replace(
+            spectrum,
+            metadata=_updated_spectrum_metadata(
+                spectrum.metadata,
+                ra=ra,
+                dec=dec,
+                corrected=False,
+                provenance=provenance,
+            ),
+        )
+
+    try:
+        ebv, provenance = query_galactic_ebv(ra, dec, cfg)
+    except ValueError as exc:
+        if "requires finite RA and Dec" in str(exc):
+            raise ValueError(
+                "This array spectrum is marked as not corrected for Galactic "
+                "extinction. Supply finite ra and dec to Spectrum.from_arrays, "
+                "set GalacticExtinctionConfig(ebv_override=...), or set "
+                "galactic_extinction_corrected=True when the supplied arrays "
+                "have already been dereddened."
+            ) from exc
+        raise
+
+    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
+    provenance.update(
+        {
+            "correction_factor_min": float(np.min(factor)),
+            "correction_factor_max": float(np.max(factor)),
+        }
+    )
+    return replace(
+        spectrum,
+        flux=np.asarray(spectrum.flux, dtype=float) * factor,
+        err=np.asarray(spectrum.err, dtype=float) * factor,
+        metadata=_updated_spectrum_metadata(
+            spectrum.metadata,
+            ra=ra,
+            dec=dec,
+            corrected=True,
+            provenance=provenance,
+        ),
+    )
+
+
 def correct_spectrum(
     spectrum: Spectrum,
     *,
@@ -302,23 +458,16 @@ def correct_spectrum(
 ) -> Tuple[Spectrum, Dict[str, Any]]:
     """Return a corrected in-memory spectrum and correction provenance."""
 
-    cfg = _resolved_config(config)
-    ebv, provenance = query_galactic_ebv(ra, dec, cfg)
-    if not cfg.enabled:
-        return spectrum, provenance
-    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
-    corrected = Spectrum.from_arrays(
-        spectrum.wave_obs,
-        spectrum.flux * factor,
-        err=spectrum.err * factor,
-        z=spectrum.z,
-        mask=spectrum.mask,
-        metadata=spectrum.metadata,
+    metadata = replace(
+        spectrum.metadata,
+        ra=spectrum.metadata.ra if ra is None else float(ra),
+        dec=spectrum.metadata.dec if dec is None else float(dec),
+        galactic_extinction_corrected=False,
+        galactic_extinction={},
+        notes=list(spectrum.metadata.notes),
     )
-    provenance.update(
-        {
-            "correction_factor_min": float(np.min(factor)),
-            "correction_factor_max": float(np.max(factor)),
-        }
+    corrected = prepare_spectrum(
+        replace(spectrum, metadata=metadata),
+        galactic_extinction_config=config,
     )
-    return corrected, provenance
+    return corrected, dict(corrected.metadata.galactic_extinction)

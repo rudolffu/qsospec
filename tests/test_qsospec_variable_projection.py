@@ -81,49 +81,33 @@ def test_iron_width_derivative_matches_centered_difference(template_name, wave):
 )
 def test_balmer_pseudocontinuum_derivatives_match_centered_differences(wave):
     template = load_balmer_template(provenance="sh95_k13full_ext")
-    _, _, _, derivative_fwhm, derivative_velocity = (
-        evaluate_balmer_pseudocontinuum_with_derivatives(
-            template, wave, 2800.0, 250.0
-        )
+    _, _, _, derivative_fwhm, derivative_velocity = evaluate_balmer_pseudocontinuum_with_derivatives(
+        template, wave, 2800.0, 250.0
     )
     finite_fwhm = _centered_difference(
-        lambda width: evaluate_balmer_pseudocontinuum(
-            template, wave, width, 250.0
-        ),
+        lambda width: evaluate_balmer_pseudocontinuum(template, wave, width, 250.0),
         2800.0,
         0.1,
     )
     finite_velocity = _centered_difference(
-        lambda velocity: evaluate_balmer_pseudocontinuum(
-            template, wave, 2800.0, velocity
-        ),
+        lambda velocity: evaluate_balmer_pseudocontinuum(template, wave, 2800.0, velocity),
         250.0,
         0.01,
     )
-    assert derivative_fwhm == pytest.approx(
-        finite_fwhm, rel=2.0e-5, abs=1.0e-12
-    )
-    assert derivative_velocity == pytest.approx(
-        finite_velocity, rel=2.0e-5, abs=1.0e-12
-    )
+    assert derivative_fwhm == pytest.approx(finite_fwhm, rel=2.0e-5, abs=1.0e-12)
+    assert derivative_velocity == pytest.approx(finite_velocity, rel=2.0e-5, abs=1.0e-12)
 
 
 def test_gaussian_velocity_and_width_derivatives_match_centered_difference():
     wave = np.linspace(4600.0, 5100.0, 1000)
-    _, derivative_velocity, derivative_width = _gaussian_unit_profile_with_derivatives(
-        wave, 4862.68, -320.0, 2800.0
-    )
+    _, derivative_velocity, derivative_width = _gaussian_unit_profile_with_derivatives(wave, 4862.68, -320.0, 2800.0)
     finite_velocity = _centered_difference(
-        lambda velocity: _gaussian_unit_profile_with_derivatives(
-            wave, 4862.68, velocity, 2800.0
-        )[0],
+        lambda velocity: _gaussian_unit_profile_with_derivatives(wave, 4862.68, velocity, 2800.0)[0],
         -320.0,
         0.01,
     )
     finite_width = _centered_difference(
-        lambda width: _gaussian_unit_profile_with_derivatives(
-            wave, 4862.68, -320.0, width
-        )[0],
+        lambda width: _gaussian_unit_profile_with_derivatives(wave, 4862.68, -320.0, width)[0],
         2800.0,
         0.01,
     )
@@ -138,6 +122,7 @@ def test_continuum_design_derivatives_match_centered_differences():
         2.0 * (wave / 3000.0) ** -1.2,
         err=np.full_like(wave, 0.05),
         wave_frame="rest",
+        flux_unit="relative",
     )
     context = _ContinuumContext(spectrum, qsospec.GlobalContinuumConfig())
     _, _, nonlinear, _ = context.separable_initial_and_bounds()
@@ -222,6 +207,7 @@ def test_continuum_variable_projection_matches_legacy_joint():
         model,
         err=np.full_like(wave, 0.03),
         wave_frame="rest",
+        flux_unit="relative",
     )
     base = qsospec.GlobalContinuumConfig(
         power_law=qsospec.PowerLawConfig(norm=2.4, slope=-1.1),
@@ -234,12 +220,8 @@ def test_continuum_variable_projection_matches_legacy_joint():
         ),
         clip_passes=0,
     )
-    optimized = qsospec.fit_global_continuum(
-        spectrum, replace(base, optimizer_method="variable_projection")
-    )
-    legacy = qsospec.fit_global_continuum(
-        spectrum, replace(base, optimizer_method="legacy_joint")
-    )
+    optimized = qsospec.fit_global_continuum(spectrum, replace(base, optimizer_method="variable_projection"))
+    legacy = qsospec.fit_global_continuum(spectrum, replace(base, optimizer_method="legacy_joint"))
 
     assert optimized.metadata["optimizer_used"] == "variable_projection"
     assert not optimized.metadata["optimizer_fallback"]
@@ -263,7 +245,11 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
     flux[300] += 2.0
     flux[900] -= 2.0
     spectrum = qsospec.Spectrum.from_arrays(
-        wave, flux, err=np.full_like(wave, 0.04), wave_frame="rest"
+        wave,
+        flux,
+        err=np.full_like(wave, 0.04),
+        wave_frame="rest",
+        flux_unit="relative",
     )
     base = qsospec.GlobalContinuumConfig(
         uv_iron=None,
@@ -274,19 +260,13 @@ def test_continuum_parity_with_partial_coverage_clipping_and_fixed_balmer_width(
             fwhm_kms=2800.0,
         ),
     )
-    optimized = qsospec.fit_global_continuum(
-        spectrum, replace(base, optimizer_method="variable_projection")
-    )
-    legacy = qsospec.fit_global_continuum(
-        spectrum, replace(base, optimizer_method="legacy_joint")
-    )
+    optimized = qsospec.fit_global_continuum(spectrum, replace(base, optimizer_method="variable_projection"))
+    legacy = qsospec.fit_global_continuum(spectrum, replace(base, optimizer_method="legacy_joint"))
 
     assert np.array_equal(optimized.clip_mask, legacy.clip_mask)
     assert optimized.reduced_chi2 <= legacy.reduced_chi2 + 1.0e-5
     assert optimized.metadata["balmer_pseudocontinuum_fwhm_fixed"]
-    assert optimized.param_values["power_law.norm"] == pytest.approx(
-        legacy.param_values["power_law.norm"], rel=5.0e-3
-    )
+    assert optimized.param_values["power_law.norm"] == pytest.approx(legacy.param_values["power_law.norm"], rel=5.0e-3)
 
 
 def test_hbeta_variable_projection_matches_legacy_wing_selection():
@@ -296,17 +276,14 @@ def test_hbeta_variable_projection_matches_legacy_wing_selection():
     line += _gaussian_area_profile(wave, 35.0, 5008.24, 320.0)
     line += _gaussian_area_profile(wave, 35.0 / 2.98, 4960.30, 320.0)
     wing_velocity = -350.0
-    line += _gaussian_area_profile(
-        wave, 30.0, 5008.24 * np.exp(wing_velocity / C_KMS), 1100.0
-    )
-    line += _gaussian_area_profile(
-        wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0
-    )
+    line += _gaussian_area_profile(wave, 30.0, 5008.24 * np.exp(wing_velocity / C_KMS), 1100.0)
+    line += _gaussian_area_profile(wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0)
     spectrum = qsospec.Spectrum.from_arrays(
         wave,
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
+        flux_unit="relative",
     )
     continuum_result = _known_continuum(spectrum, continuum)
     optimized = qsospec.fit_hbeta_complex(
@@ -322,13 +299,9 @@ def test_hbeta_variable_projection_matches_legacy_wing_selection():
 
     assert optimized.selected_model == legacy.selected_model == "wing"
     assert optimized.reduced_chi2 <= legacy.reduced_chi2 + 1.0e-4
-    assert optimized.metrics["Hb_broad_flux_input"] == pytest.approx(
-        legacy.metrics["Hb_broad_flux_input"], rel=5.0e-3
-    )
+    assert optimized.metrics["Hb_broad_flux_input"] == pytest.approx(legacy.metrics["Hb_broad_flux_input"], rel=5.0e-3)
     tolerance = max(5.0, 0.002 * legacy.metrics["Hb_broad_fwhm_kms"])
-    assert abs(
-        optimized.metrics["Hb_broad_fwhm_kms"] - legacy.metrics["Hb_broad_fwhm_kms"]
-    ) <= tolerance
+    assert abs(optimized.metrics["Hb_broad_fwhm_kms"] - legacy.metrics["Hb_broad_fwhm_kms"]) <= tolerance
 
 
 def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
@@ -343,46 +316,43 @@ def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
         continuum + line,
         err=np.full_like(wave, 0.02),
         wave_frame="rest",
+        flux_unit="relative",
     )
     continuum_result = _known_continuum(spectrum, continuum)
     optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(
-            heii_enabled=True, optimizer_method="variable_projection"
-        ),
+        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="variable_projection"),
     )
     legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(
-            heii_enabled=True, optimizer_method="legacy_joint"
-        ),
+        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "core"
     assert optimized.param_values["HeII_broad.flux"] == pytest.approx(
         legacy.param_values["HeII_broad.flux"], rel=5.0e-3
     )
-    assert optimized.metrics["Hb_broad_flux_input"] == pytest.approx(
-        legacy.metrics["Hb_broad_flux_input"], rel=5.0e-3
-    )
+    assert optimized.metrics["Hb_broad_flux_input"] == pytest.approx(legacy.metrics["Hb_broad_flux_input"], rel=5.0e-3)
 
 
 def test_auto_optimizer_falls_back_and_required_variable_projection_raises(monkeypatch):
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
     spectrum = qsospec.Spectrum.from_arrays(
-        wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest"
+        wave,
+        flux,
+        err=np.full_like(wave, 0.05),
+        wave_frame="rest",
+        flux_unit="relative",
     )
 
     def fail(*args, **kwargs):
         raise VariableProjectionError("forced failure")
 
     monkeypatch.setattr(global_fit, "_solve_separable_once", fail)
-    automatic = qsospec.fit_global_continuum(
-        spectrum, qsospec.GlobalContinuumConfig(optimizer_method="auto")
-    )
+    automatic = qsospec.fit_global_continuum(spectrum, qsospec.GlobalContinuumConfig(optimizer_method="auto"))
     assert automatic.metadata["optimizer_used"] == "legacy_joint"
     assert automatic.metadata["optimizer_fallback"]
     assert "optimizer_fallback_legacy" in automatic.warning_codes()
@@ -398,7 +368,11 @@ def test_reduced_two_point_jacobian_mode_is_available():
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
     spectrum = qsospec.Spectrum.from_arrays(
-        wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest"
+        wave,
+        flux,
+        err=np.full_like(wave, 0.05),
+        wave_frame="rest",
+        flux_unit="relative",
     )
     result = qsospec.fit_global_continuum(
         spectrum,

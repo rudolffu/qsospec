@@ -24,6 +24,7 @@ def _spectrum(lower, upper, count=900, mask=None):
         err=np.full_like(wave, 0.03),
         mask=mask,
         wave_frame="rest",
+        flux_unit="relative",
     )
 
 
@@ -52,6 +53,7 @@ def test_lya_coverage_uses_sampled_valid_fraction():
         err=spectrum.err,
         mask=valid,
         wave_frame="rest",
+        flux_unit="relative",
     )
     coverage = classify_lya_coverage(masked)
     assert coverage.valid_pixel_fraction == pytest.approx(0.5, rel=0.01)
@@ -62,10 +64,7 @@ def test_lya_safe_continuum_preset_and_explicit_override():
     safe = qsospec.GlobalContinuumConfig.lya_safe()
     assert (1150.0, 1170.0) not in safe.continuum_windows
     assert (1275.0, 1290.0) in safe.continuum_windows
-    assert all(
-        not (lo < 1275.0 and hi > 1170.0)
-        for lo, hi in safe.continuum_windows
-    )
+    assert all(not (lo < 1275.0 and hi > 1170.0) for lo, hi in safe.continuum_windows)
 
     spectrum = _spectrum(1150.0, 2050.0, 1800)
     automatic = qsospec.fit_global_lines(
@@ -76,9 +75,7 @@ def test_lya_safe_continuum_preset_and_explicit_override():
     explicit_config = qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-            enabled=False
-        ),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         continuum_windows=((1150.0, 1170.0), (1275.0, 1290.0)),
         mask_windows=(),
         clip_passes=0,
@@ -90,9 +87,7 @@ def test_lya_safe_continuum_preset_and_explicit_override():
         uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
     )
     assert automatic.metadata["continuum_preset"] == "lya_safe"
-    assert (1150.0, 1170.0) not in automatic.continuum.metadata[
-        "continuum_windows"
-    ]
+    assert (1150.0, 1170.0) not in automatic.continuum.metadata["continuum_windows"]
     assert explicit.metadata["continuum_preset"] == "explicit"
     assert explicit.continuum.metadata["continuum_windows"] == [
         (1150.0, 1170.0),
@@ -107,9 +102,7 @@ def test_lya_recipe_modes_and_width_only_tie():
     assert default.components[0].multiplicity == 2
     assert default.components[1].line_ids == ("nv_blend",)
 
-    equal = qsospec.complex_recipes.lya_nv_recipe(
-        qsospec.LyaNVComplexConfig(nv_mode="equal_doublet")
-    )
+    equal = qsospec.complex_recipes.lya_nv_recipe(qsospec.LyaNVComplexConfig(nv_mode="equal_doublet"))
     assert equal.components[1].line_ids == ("nv_1239", "nv_1243")
 
     tied = qsospec.complex_recipes.lya_nv_recipe(
@@ -125,12 +118,8 @@ def test_lya_recipe_modes_and_width_only_tie():
         tuple(component.id for component in tied.components),
         50.0,
     )
-    width_names = [
-        name for name in context.names if name.endswith(".fwhm_kms")
-    ]
-    velocity_names = [
-        name for name in context.names if name.endswith(".velocity_kms")
-    ]
+    width_names = [name for name in context.names if name.endswith(".fwhm_kms")]
+    velocity_names = [name for name in context.names if name.endswith(".velocity_kms")]
     assert len(width_names) == 2
     assert len(velocity_names) == 4
 
@@ -179,6 +168,7 @@ def _synthetic_lya_result(
         flux,
         err=np.full_like(wave, 0.03),
         wave_frame="rest",
+        flux_unit="relative",
     )
     continuum = GlobalContinuumResult(
         True,
@@ -215,9 +205,7 @@ def test_lya_full_recovery_absorption_mask_and_metrics():
     assert result.metadata["lya_coverage_status"] == "full"
     assert result.metadata["lya_absorption_masked_fraction"] > 0
     assert np.any(result.excluded_mask)
-    assert result.metrics["lya_1216_broad_flux_input"] == pytest.approx(
-        135.0, rel=0.08
-    )
+    assert result.metrics["lya_1216_broad_flux_input"] == pytest.approx(135.0, rel=0.08)
     assert np.isfinite(result.metrics["lya_1216_broad_fwhm_kms"])
     assert np.isfinite(result.metrics["nv_blend_broad_ew_rest"])
 
@@ -262,20 +250,16 @@ def test_lya_red_side_is_limited_and_edge_is_skipped():
 def test_lya_unreliable_warning_outcomes():
     no_covariance, _, _ = _synthetic_lya_result(covariance=False)
     assert no_covariance.metadata["lya_fit_reliable"] is False
-    assert "lya_reliability_covariance_unavailable" in (
-        no_covariance.warning_codes()
-    )
+    assert "lya_reliability_covariance_unavailable" in (no_covariance.warning_codes())
 
     absorption_dominated, _, _ = _synthetic_lya_result(
-        config=qsospec.LyaNVComplexConfig(
-            reliable_max_absorption_fraction=0.0
-        )
+        config=qsospec.LyaNVComplexConfig(reliable_max_absorption_fraction=0.0)
     )
     assert absorption_dominated.metadata["lya_fit_reliable"] is False
     assert "lya_absorption_dominated" in absorption_dominated.warning_codes()
 
 
-def test_lya_schema_v3_round_trip(tmp_path):
+def test_lya_schema_v4_round_trip(tmp_path):
     fit, spectrum, continuum = _synthetic_lya_result()
     workflow = qsospec.WorkflowResult(
         spectrum=spectrum,
@@ -309,14 +293,14 @@ def test_lya_schema_v3_round_trip(tmp_path):
     )
     loaded = qsospec.load_model(store, "lya-object")
     loaded_fit = loaded.line_complexes["lya_nv"]
-    assert store.manifest["schema_version"] == "3"
+    assert store.manifest["schema_version"] == "4"
     assert loaded_fit.metadata["lya_coverage_status"] == "full"
     np.testing.assert_array_equal(
         loaded_fit.excluded_mask,
         fit.excluded_mask,
     )
 
-    model_path = next((store.path / "models").glob("*.parquet"))
+    model_path = next((store.path / "data" / "models").glob("*.parquet"))
     old_rows = pq.read_table(model_path).to_pylist()
     for item in old_rows[0]["complexes"]:
         item.pop("excluded_mask", None)

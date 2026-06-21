@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .config import DEFAULT_LINE_CENTERS
-from .io import DEFAULT_FLUX_DENSITY_UNIT, SpectrumData
+from .io import SpectrumData
 from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
 
 
@@ -444,7 +444,8 @@ def _summary_dict(
         "ra": spectrum.ra,
         "dec": spectrum.dec,
         "input_file": input_file,
-        "flux_density_unit": spectrum.metadata.get("flux_density_unit", DEFAULT_FLUX_DENSITY_UNIT),
+        "flux_unit": spectrum.metadata.get("flux_unit", "cgs"),
+        "flux_scale": spectrum.metadata.get("flux_scale", 1e-17),
         "template_file_used": fit.templates.source_path,
         "template_wavelength_min": fit.templates.wavelength_coverage[0],
         "template_wavelength_max": fit.templates.wavelength_coverage[1],

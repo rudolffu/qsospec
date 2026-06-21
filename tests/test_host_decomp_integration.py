@@ -11,6 +11,7 @@ from qsospec.workflows.host.io import SpectrumData
 from qsospec.workflows.host.ppxf_host import prepare_desi_for_host_decomp, predict_host_sed, run_ppxf_host_fit
 from qsospec.workflows.host.templates import load_ppxf_npz_templates
 
+
 def test_local_ppxf_template_fit_smoke():
     if importlib.util.find_spec("ppxf") is None:
         pytest.skip("pPXF is not installed")

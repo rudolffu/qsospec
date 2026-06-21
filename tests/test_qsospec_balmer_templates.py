@@ -40,9 +40,7 @@ def test_balmer_series_broadening_conserves_integrated_flux():
     wave = np.linspace(3400.0, 4300.0, 30000)
     basis = evaluate_balmer_series(template, wave, 3000.0)
 
-    assert np.trapezoid(basis, wave) == pytest.approx(
-        np.sum(template.rel_flux_hbeta), rel=3.0e-3
-    )
+    assert np.trapezoid(basis, wave) == pytest.approx(np.sum(template.rel_flux_hbeta), rel=3.0e-3)
 
 
 def test_balmer_series_fwhm_is_velocity_broadened():
@@ -60,28 +58,20 @@ def test_balmer_series_fwhm_is_velocity_broadened():
 @pytest.mark.parametrize("fwhm", [1500.0, 5000.0, 12000.0])
 @pytest.mark.parametrize("velocity", [-1500.0, 0.0, 1500.0])
 def test_balmer_pseudocontinuum_is_continuous_at_edge(fwhm, velocity):
-    template = qsospec.load_balmer_template(
-        provenance="sh95_k13full_ext"
-    )
+    template = qsospec.load_balmer_template(provenance="sh95_k13full_ext")
     epsilon = 1.0e-6
     wave = np.array([3646.0 - epsilon, 3646.0, 3646.0 + epsilon])
-    basis = qsospec.evaluate_balmer_pseudocontinuum(
-        template, wave, fwhm, velocity
-    )
+    basis = qsospec.evaluate_balmer_pseudocontinuum(template, wave, fwhm, velocity)
 
     assert basis[0] == pytest.approx(basis[1], rel=1.0e-6, abs=1.0e-12)
     assert basis[2] == pytest.approx(basis[1], rel=1.0e-6, abs=1.0e-12)
 
 
 def test_balmer_pseudocontinuum_branches_do_not_overlap():
-    template = qsospec.load_balmer_template(
-        provenance="sh95_k13full_ext"
-    )
+    template = qsospec.load_balmer_template(provenance="sh95_k13full_ext")
     wave = np.array([1800.0, 2000.0, 3000.0, 3646.0, 3700.0])
-    combined, bound_free, high_order, _, _ = (
-        qsospec.evaluate_balmer_pseudocontinuum_with_derivatives(
-            template, wave, 5000.0, 200.0
-        )
+    combined, bound_free, high_order, _, _ = qsospec.evaluate_balmer_pseudocontinuum_with_derivatives(
+        template, wave, 5000.0, 200.0
     )
 
     assert np.all(high_order[wave <= 3646.0] == 0.0)
@@ -91,13 +81,9 @@ def test_balmer_pseudocontinuum_branches_do_not_overlap():
 
 
 def test_balmer_pseudocontinuum_has_no_2000_angstrom_step():
-    template = qsospec.load_balmer_template(
-        provenance="sh95_k13full_ext"
-    )
+    template = qsospec.load_balmer_template(provenance="sh95_k13full_ext")
     wave = np.array([1999.999, 2000.0, 2000.001])
-    basis = qsospec.evaluate_balmer_pseudocontinuum(
-        template, wave, 5000.0
-    )
+    basis = qsospec.evaluate_balmer_pseudocontinuum(template, wave, 5000.0)
 
     left_change = basis[1] - basis[0]
     right_change = basis[2] - basis[1]

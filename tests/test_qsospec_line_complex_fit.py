@@ -13,7 +13,7 @@ def _synthetic_spectrum(local_continuum="linear", z=0.12):
     line = 8.0 * np.exp(-0.5 * ((wave_rest - 4862.2) / 24.0) ** 2)
     err = np.full_like(wave_rest, 0.08)
     flux = continuum + line + rng.normal(0.0, err)
-    return qsospec.Spectrum.from_arrays(wave_rest * (1.0 + z), flux, err=err, z=z), wave_rest
+    return qsospec.Spectrum.from_arrays(wave_rest * (1.0 + z), flux, err=err, z=z, flux_unit="relative"), wave_rest
 
 
 def _config(local_continuum="linear", jacobian="analytic_dense"):
@@ -79,7 +79,9 @@ def test_invalid_pixels_are_ignored():
     err[20] = -1.0
     mask = np.ones_like(flux, dtype=bool)
     mask[30] = False
-    spec = qsospec.Spectrum.from_arrays(wave_rest * (1.0 + spec.z), flux, err=err, z=spec.z, mask=mask)
+    spec = qsospec.Spectrum.from_arrays(
+        wave_rest * (1.0 + spec.z), flux, err=err, z=spec.z, mask=mask, flux_unit="relative"
+    )
 
     result = qsospec.fit_line_complex(spec, _config(local_continuum="linear"))
 
@@ -92,7 +94,7 @@ def test_fit_windows_and_mask_windows_select_fitted_pixels():
     line = 5.0 * np.exp(-0.5 * ((wave - 4861.33) / 18.0) ** 2)
     flux = 1.0 + line
     err = np.full_like(wave, 0.05)
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest")
+    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, wave_frame="rest", flux_unit="relative")
     config = qsospec.LineComplexConfig(
         center=4861.33,
         window=(4800.0, 4920.0),
@@ -118,8 +120,6 @@ def test_fit_windows_and_mask_windows_select_fitted_pixels():
     assert np.any((result.wave_rest_window >= 4880.0) & (result.wave_rest_window <= 4890.0))
     assert result.model_window.shape == result.wave_rest_window.shape
     assert result.fit_used_window.shape == result.wave_rest_window.shape
-    assert not np.any(
-        result.fit_used_window[(result.wave_rest_window >= 4880.0) & (result.wave_rest_window <= 4890.0)]
-    )
+    assert not np.any(result.fit_used_window[(result.wave_rest_window >= 4880.0) & (result.wave_rest_window <= 4890.0)])
     assert result.metadata["fit_windows"] == [(4800.0, 4850.0), (4860.0, 4920.0)]
     assert result.metadata["mask_windows"] == [(4880.0, 4890.0)]

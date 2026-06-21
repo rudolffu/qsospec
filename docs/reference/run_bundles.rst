@@ -10,21 +10,20 @@ adding a new Parquet column.
 
    run_directory/
      manifest.json
-     inputs/
-     objects/
-     measurements/
-     warnings/
-     models/
-     failures/
-     derived/
-     compact/
+     data/
+       inputs/
+       objects/
+       measurements/
+       warnings/
+       models/
+       failures/
+       derived/
      qa/
-     staging/
+     .staging/
 
-The table directories contain canonical, collision-free object shards.
-``compact/`` contains convenient scalar tables produced by finalization.
-Single-object runs also compact the model table. JSON is used only for
-run-level provenance and shard state.
+The datasets contain canonical, collision-free object shards. Finalization
+validates them without creating duplicate compact copies and removes empty
+staging state. JSON is used only for concise run-level provenance.
 
 Single object
 -------------
@@ -135,8 +134,21 @@ query against the object table. Main QA figures distinguish final fitted
 pixels, pPXF emission masks, and configured not-modelled windows. Run bundles
 written with schema version 2 or later preserve the pPXF masks exactly;
 schema-version-1 bundles infer them from their archived host configuration
-when possible. Schema version 3 additionally preserves per-complex metadata
-and excluded-pixel masks, including Lyα absorption rejection.
+when possible. Schema version 3 preserves per-complex metadata and
+excluded-pixel masks. Schema version 4 uses the streamlined layout and
+reconstructs redundant model totals from archived component arrays.
 
 Model rows store the corrected arrays actually fitted plus Galactic-extinction
 provenance. Raw uncorrected flux arrays are not duplicated.
+
+Notebook display
+----------------
+
+.. code-block:: python
+
+   figure = model.plot_qa()
+   model.show_qa()
+   run.plot_qa("scientific-object-id")
+
+These methods return open Matplotlib figures and do not create additional
+files. ``model.qa_path`` points to the primary saved QA image when available.

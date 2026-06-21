@@ -5,7 +5,7 @@ Prerequisites
 -------------
 
 You need aligned wavelength, flux, and uncertainty arrays plus a finite
-redshift. Arrays should already be corrected for Galactic extinction.
+redshift. Arrays are treated as uncorrected by default.
 
 .. code-block:: python
 
@@ -17,9 +17,16 @@ redshift. Arrays should already be corrected for Galactic extinction.
        err=error,
        z=redshift,
        wave_frame="observed",
-       survey="desi",
+       flux_unit="cgs",
+       flux_scale=1e-17,
+       ra=ra,
+       dec=dec,
    )
-   result = qsospec.fit_global_lines(spectrum)
+   prepared = qsospec.prepare_spectrum(spectrum)
+   result = qsospec.fit_global_lines(prepared)
+
+If the arrays are already dereddened, construct the spectrum with
+``galactic_extinction_corrected=True`` and fit it directly.
 
 Expected outputs
 ----------------
@@ -34,6 +41,8 @@ Common failures
 - Shape mismatch: verify all arrays are one-dimensional and aligned.
 - No cgs metrics: supply the survey/unit preset or explicit metadata.
 - Unexpected missing complex: inspect ``complex_statuses`` and rest coverage.
+- Missing dust coordinates: provide RA/Dec, use ``ebv_override``, or declare
+  already-corrected arrays explicitly.
 
 Next: :doc:`../user_guide/global_fitting` and
-:doc:`../user_guide/results`.
+:doc:`fit_j001554`.

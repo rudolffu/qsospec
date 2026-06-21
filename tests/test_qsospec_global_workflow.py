@@ -89,13 +89,12 @@ def test_blue_absorption_rejection_is_one_sided_and_below_3500():
         flux,
         err=err,
         wave_frame="rest",
+        flux_unit="relative",
     )
     config = qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-            enabled=False
-        ),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         continuum_windows=((3000.0, 4000.0),),
         mask_windows=(),
         blue_absorption_clip_enabled=True,
@@ -123,15 +122,14 @@ def test_blue_absorption_rejection_can_be_disabled():
         flux,
         err=np.full_like(wave, 0.05),
         wave_frame="rest",
+        flux_unit="relative",
     )
     result = qsospec.fit_global_continuum(
         spectrum,
         qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-                enabled=False
-            ),
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
             continuum_windows=((3000.0, 3400.0),),
             mask_windows=(),
             blue_absorption_clip_enabled=False,
@@ -147,7 +145,9 @@ def test_blue_absorption_rejection_can_be_disabled():
 def test_global_continuum_disables_uncovered_components():
     wave = np.linspace(4700.0, 5500.0, 600)
     flux = 2.0 * (wave / 3000.0) ** -1.2
-    spectrum = qsospec.Spectrum.from_arrays(wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.05), wave_frame="rest", flux_unit="relative"
+    )
 
     result = qsospec.fit_global_continuum(spectrum)
 
@@ -165,19 +165,16 @@ def test_global_continuum_disables_uncovered_components():
         ((3646.1, 4260.0), 35.0),
     ],
 )
-def test_balmer_pseudocontinuum_recovers_full_and_red_only_coverage(
-    wave_range, expected_velocity_tolerance
-):
+def test_balmer_pseudocontinuum_recovers_full_and_red_only_coverage(wave_range, expected_velocity_tolerance):
     wave = np.linspace(*wave_range, 2400)
     template = load_balmer_template(provenance="sh95_k13full_ext")
-    model = 30.0 * qsospec.evaluate_balmer_pseudocontinuum(
-        template, wave, 3400.0, -420.0
-    )
+    model = 30.0 * qsospec.evaluate_balmer_pseudocontinuum(template, wave, 3400.0, -420.0)
     spectrum = qsospec.Spectrum.from_arrays(
         wave,
         model,
         err=np.full_like(wave, 0.002),
         wave_frame="rest",
+        flux_unit="relative",
     )
     result = qsospec.fit_global_continuum(
         spectrum,
@@ -197,15 +194,11 @@ def test_balmer_pseudocontinuum_recovers_full_and_red_only_coverage(
         ),
     )
 
-    assert result.param_values[
-        "balmer_pseudocontinuum.amp"
-    ] == pytest.approx(30.0, rel=2.0e-3)
-    assert result.param_values[
-        "balmer_pseudocontinuum.fwhm_kms"
-    ] == pytest.approx(3400.0, rel=2.0e-3)
-    assert result.param_values[
-        "balmer_pseudocontinuum.velocity_kms"
-    ] == pytest.approx(-420.0, abs=expected_velocity_tolerance)
+    assert result.param_values["balmer_pseudocontinuum.amp"] == pytest.approx(30.0, rel=2.0e-3)
+    assert result.param_values["balmer_pseudocontinuum.fwhm_kms"] == pytest.approx(3400.0, rel=2.0e-3)
+    assert result.param_values["balmer_pseudocontinuum.velocity_kms"] == pytest.approx(
+        -420.0, abs=expected_velocity_tolerance
+    )
 
 
 def test_balmer_pseudocontinuum_requires_red_edge_pixels():
@@ -215,6 +208,7 @@ def test_balmer_pseudocontinuum_requires_red_edge_pixels():
         np.ones_like(wave),
         err=np.full_like(wave, 0.05),
         wave_frame="rest",
+        flux_unit="relative",
     )
     result = qsospec.fit_global_continuum(
         spectrum,
@@ -269,14 +263,10 @@ def test_hbeta_wing_selection_accepts_strong_broad_wing():
     line += _gaussian_area_profile(wave, 35.0, 5008.24, 320.0)
     line += _gaussian_area_profile(wave, 35.0 / 2.98, 4960.30, 320.0)
     wing_velocity = -350.0
-    line += _gaussian_area_profile(
-        wave, 30.0, 5008.24 * np.exp(wing_velocity / C_KMS), 1100.0
-    )
-    line += _gaussian_area_profile(
-        wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0
-    )
+    line += _gaussian_area_profile(wave, 30.0, 5008.24 * np.exp(wing_velocity / C_KMS), 1100.0)
+    line += _gaussian_area_profile(wave, 30.0 / 2.98, 4960.30 * np.exp(wing_velocity / C_KMS), 1100.0)
     err = np.full_like(wave, 0.02)
-    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", flux_unit="relative")
 
     result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum))
 
@@ -293,7 +283,7 @@ def test_hbeta_wing_selection_rejects_absent_wing_and_can_fit_heii():
     line += _gaussian_area_profile(wave, 30.0 / 2.98, 4960.30, 350.0)
     line += _gaussian_area_profile(wave, 12.0, 4687.02, 1800.0)
     err = np.full_like(wave, 0.02)
-    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", flux_unit="relative")
 
     result = qsospec.fit_hbeta_complex(
         spectrum,
@@ -312,17 +302,13 @@ def test_global_workflow_refines_balmer_width_and_writes_products(tmp_path):
     continuum = 2.0 * (wave / 3000.0) ** -1.2
     line = _gaussian_area_profile(wave, 100.0, 4862.68, 2800.0)
     err = np.full_like(wave, 0.04)
-    spectrum = qsospec.Spectrum.from_arrays(
-        wave, continuum + line, err=err, wave_frame="rest", survey="desi"
-    )
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", survey="desi")
     result = qsospec.fit_global_hbeta(
         spectrum,
         qsospec.GlobalContinuumConfig(
             uv_iron=None,
             optical_iron=None,
-            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-                enabled=False
-            ),
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         ),
         qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
@@ -356,9 +342,7 @@ def test_balmer_pseudocontinuum_width_converges_and_velocity_stays_free():
     )
     line = _gaussian_area_profile(wave, 100.0, 4862.68, 2800.0)
     err = np.full_like(wave, 0.04)
-    spectrum = qsospec.Spectrum.from_arrays(
-        wave, continuum + balmer + line, err=err, wave_frame="rest", survey="desi"
-    )
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + balmer + line, err=err, wave_frame="rest", survey="desi")
     result = qsospec.fit_global_hbeta(
         spectrum,
         qsospec.GlobalContinuumConfig(
@@ -375,13 +359,11 @@ def test_balmer_pseudocontinuum_width_converges_and_velocity_stays_free():
 
     assert result.legacy_hbeta_success
     assert result.metadata["hbeta_sync_converged"]
-    assert abs(
-        result.continuum.metadata["balmer_pseudocontinuum_fwhm_kms"]
-        - result.hbeta.metrics["Hb_broad_fwhm_kms"]
-    ) <= result.metadata["balmer_width_sync_tolerance_kms"]
-    assert result.continuum.metadata[
-        "balmer_pseudocontinuum_velocity_kms"
-    ] == pytest.approx(350.0, abs=100.0)
+    assert (
+        abs(result.continuum.metadata["balmer_pseudocontinuum_fwhm_kms"] - result.hbeta.metrics["Hb_broad_fwhm_kms"])
+        <= result.metadata["balmer_width_sync_tolerance_kms"]
+    )
+    assert result.continuum.metadata["balmer_pseudocontinuum_velocity_kms"] == pytest.approx(350.0, abs=100.0)
 
 
 def test_global_workflow_monte_carlo_reports_percentiles():
@@ -389,13 +371,11 @@ def test_global_workflow_monte_carlo_reports_percentiles():
     continuum = 2.0 * (wave / 3000.0) ** -1.2
     line = _gaussian_area_profile(wave, 80.0, 4862.68, 2400.0)
     err = np.full_like(wave, 0.05)
-    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest")
+    spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", flux_unit="relative")
     config = qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-            enabled=False
-        ),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
     )
 
     result = qsospec.fit_global_hbeta(

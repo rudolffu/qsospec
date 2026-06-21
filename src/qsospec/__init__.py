@@ -32,6 +32,7 @@ from .extinction import (
     correct_spectrum,
     correct_spectrum_data,
     f99_dereddening_factor,
+    prepare_spectrum,
     preflight_galactic_extinction,
     query_galactic_ebv,
 )
@@ -159,6 +160,7 @@ __all__ = [
     "load_iron_template",
     "load_model",
     "open_run",
+    "prepare_spectrum",
     "preflight_galactic_extinction",
     "query_galactic_ebv",
     "plot_line_result",

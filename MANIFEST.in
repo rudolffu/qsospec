@@ -2,5 +2,6 @@ include CHANGELOG.md
 include LICENSE
 include README.md
 recursive-include docs *.css *.md *.py *.rst
-recursive-include examples *.md
+prune docs/_build
+recursive-include examples *.csv *.md
 recursive-include src/qsospec/data *.csv *.txt

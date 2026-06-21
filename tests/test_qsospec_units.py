@@ -31,49 +31,57 @@ def _config():
     )
 
 
-def test_survey_presets_set_cgs_scale_and_normalize_aliases():
+def test_survey_presets_confirm_cgs_scale_and_normalize_aliases():
     wave, flux, err = _arrays()
     for survey in ["desi", "DESI", "desi-dr1", "desi_edr", "sdss", "SDSS"]:
-        spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, survey=survey)
+        spec = qsospec.Spectrum.from_arrays(
+            wave, flux, err=err, z=0.0, survey=survey
+        )
         expected = "sdss" if survey.lower() == "sdss" else "desi"
         assert spec.metadata.survey == expected
         assert spec.wave_unit == "Angstrom"
-        assert spec.flux_density_unit == "1e-17 erg s^-1 cm^-2 Angstrom^-1"
-        assert spec.flux_density_scale_to_cgs == 1e-17
+        assert spec.flux_unit == "cgs"
+        assert spec.flux_scale == 1e-17
 
 
-def test_unit_preset_and_input_units():
+def test_explicit_cgs_and_relative_units():
     wave, flux, err = _arrays()
-    scaled = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, unit_preset="1e-17cgs")
-    unknown = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, unit_preset="input")
-
-    assert scaled.flux_density_scale_to_cgs == 1e-17
-    assert unknown.flux_density_unit == "input"
-    assert unknown.flux_density_scale_to_cgs is None
-
-
-def test_explicit_metadata_overrides_presets():
-    wave, flux, err = _arrays()
-    spec = qsospec.Spectrum.from_arrays(
-        wave,
-        flux,
-        err=err,
-        z=0.0,
-        survey="desi",
-        flux_density_unit="1e-16 erg s^-1 cm^-2 Angstrom^-1",
-        flux_density_scale_to_cgs=1e-16,
-        source="manual",
+    physical = qsospec.Spectrum.from_arrays(
+        wave, flux, err=err, flux_unit="cgs", flux_scale=1e-16
+    )
+    relative = qsospec.Spectrum.from_arrays(
+        wave, flux, err=err, flux_unit="relative"
     )
 
-    assert spec.metadata.survey == "desi"
-    assert spec.flux_density_unit == "1e-16 erg s^-1 cm^-2 Angstrom^-1"
-    assert spec.flux_density_scale_to_cgs == 1e-16
-    assert spec.metadata.source == "manual"
+    assert physical.flux_unit == "cgs"
+    assert physical.flux_scale == 1e-16
+    assert relative.flux_unit == "relative"
+    assert relative.flux_scale is None
 
 
-def test_unknown_units_fit_but_do_not_report_cgs_flux():
+def test_units_are_required_and_strictly_validated():
     wave, flux, err = _arrays()
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0)
+    with pytest.raises(ValueError, match="flux_unit is required"):
+        qsospec.Spectrum.from_arrays(wave, flux, err=err)
+    with pytest.raises(ValueError, match="must be 'cgs' or 'relative'"):
+        qsospec.Spectrum.from_arrays(
+            wave, flux, err=err, flux_unit="mystery"
+        )
+    with pytest.raises(ValueError, match="only valid"):
+        qsospec.Spectrum.from_arrays(
+            wave, flux, err=err, flux_unit="relative", flux_scale=2.0
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        qsospec.Spectrum.from_arrays(
+            wave, flux, err=err, flux_unit="cgs", flux_scale=0.0
+        )
+
+
+def test_relative_units_fit_but_do_not_report_cgs_flux():
+    wave, flux, err = _arrays()
+    spec = qsospec.Spectrum.from_arrays(
+        wave, flux, err=err, z=0.0, flux_unit="relative"
+    )
     result = qsospec.fit_line_complex(spec, _config())
     row = result.to_table().iloc[0]
 
@@ -85,7 +93,9 @@ def test_unknown_units_fit_but_do_not_report_cgs_flux():
 
 def test_cgs_line_flux_is_scaled_when_known():
     wave, flux, err = _arrays()
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, survey="sdss")
+    spec = qsospec.Spectrum.from_arrays(
+        wave, flux, err=err, z=0.0, survey="sdss"
+    )
     result = qsospec.fit_line_complex(spec, _config())
     row = result.to_table().iloc[0]
     expected_input = row["amp"] * row["sigma"] * np.sqrt(2.0 * np.pi)
@@ -94,9 +104,9 @@ def test_cgs_line_flux_is_scaled_when_known():
     assert np.isclose(row["line_flux_cgs"], expected_input * 1e-17)
 
 
-def test_unknown_presets_raise_clear_errors():
+def test_unknown_survey_raises_clear_error():
     wave, flux, err = _arrays()
     with pytest.raises(ValueError, match="Unknown qsospec survey preset"):
-        qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, survey="mystery")
-    with pytest.raises(ValueError, match="Unknown qsospec unit preset"):
-        qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, unit_preset="mystery")
+        qsospec.Spectrum.from_arrays(
+            wave, flux, err=err, z=0.0, survey="mystery"
+        )

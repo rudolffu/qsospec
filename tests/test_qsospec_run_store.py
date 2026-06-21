@@ -17,9 +17,7 @@ def _continuum_config():
     return qsospec.GlobalContinuumConfig(
         uv_iron=None,
         optical_iron=None,
-        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
-            enabled=False
-        ),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         clip_passes=0,
     )
 
@@ -73,11 +71,14 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     )
 
     assert Path(result.output_files["manifest"]).exists()
-    assert Path(result.output_files["compact_models"]).exists()
+    assert Path(result.output_files["run_directory"]).is_dir()
+    assert "compact_models" not in result.output_files
+    assert "host" in result.summary()
     store = qsospec.open_run(str(run))
     loaded = qsospec.load_model(store, "object-1")
     np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
     np.testing.assert_allclose(loaded.continuum.model, result.continuum.model)
+    assert sorted(loaded.warning_codes()) == sorted(result.warning_codes())
     assert store.read_table("objects").num_rows == 1
     assert store.read_table("models").num_rows == 1
 
@@ -119,13 +120,9 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
 
 def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
     wave = np.linspace(3300.0, 4300.0, 1000)
-    template = qsospec.load_balmer_template(
-        provenance="sh95_k13full_ext"
-    )
+    template = qsospec.load_balmer_template(provenance="sh95_k13full_ext")
     flux = 2.0 * (wave / 4000.0) ** -1.1
-    flux += 25.0 * qsospec.evaluate_balmer_pseudocontinuum(
-        template, wave, 3200.0, -250.0
-    )
+    flux += 25.0 * qsospec.evaluate_balmer_pseudocontinuum(template, wave, 3200.0, -250.0)
     data = SpectrumData(
         wave_obs=wave,
         flux=flux,
@@ -164,15 +161,9 @@ def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
         loaded.continuum.model,
         result.continuum.model,
     )
-    assert loaded.continuum.metadata[
-        "balmer_pseudocontinuum_template_provenance"
-    ] == "sh95_k13full_ext"
-    measurements = qsospec.open_run(str(run)).read_table(
-        "measurements"
-    ).to_pandas()
-    assert "balmer_pseudocontinuum_velocity_kms" in set(
-        measurements["quantity"]
-    )
+    assert loaded.continuum.metadata["balmer_pseudocontinuum_template_provenance"] == "sh95_k13full_ext"
+    measurements = qsospec.open_run(str(run)).read_table("measurements").to_pandas()
+    assert "balmer_pseudocontinuum_velocity_kms" in set(measurements["quantity"])
 
 
 def test_host_masks_round_trip_and_schema_v1_inference(tmp_path):
@@ -226,19 +217,13 @@ def test_host_masks_round_trip_and_schema_v1_inference(tmp_path):
         )
     )
     loaded = qsospec.load_model(store, "host-mask-object")
-    np.testing.assert_array_equal(
-        loaded.host_fit_mask, result.host_fit_mask
-    )
-    np.testing.assert_array_equal(
-        loaded.host_emission_mask, result.host_emission_mask
-    )
+    np.testing.assert_array_equal(loaded.host_fit_mask, result.host_fit_mask)
+    np.testing.assert_array_equal(loaded.host_emission_mask, result.host_emission_mask)
     assert loaded.metadata["host_mask_provenance"] == "exact"
-    assert store.manifest["schema_version"] == "3"
+    assert store.manifest["schema_version"] == "4"
 
-    model_path = next((run_path / "models").glob("*.parquet"))
-    old_table = pq.read_table(model_path).drop(
-        ["host_fit_mask", "host_emission_mask"]
-    )
+    model_path = next((run_path / "data" / "models").glob("*.parquet"))
+    old_table = pq.read_table(model_path).drop(["host_fit_mask", "host_emission_mask"])
     pq.write_table(old_table, model_path)
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -267,7 +252,7 @@ def test_serial_batch_resume_and_configuration_guard(tmp_path):
     )
     assert first.n_completed == 2
     assert first.n_failed == 0
-    assert Path(first.compact_outputs["objects"]).exists()
+    assert Path(first.datasets["objects"]).exists()
 
     resumed = qsospec.fit_batch(
         str(source),
@@ -315,9 +300,7 @@ def test_duplicate_object_ids_get_row_safe_qa_names(tmp_path):
         complexes=[],
     )
     rendered = qsospec.render_qa(str(run))
-    paths = sorted(
-        Path(payload["main_qa"]).name for payload in rendered.values()
-    )
+    paths = sorted(Path(payload["main_qa"]).name for payload in rendered.values())
     assert len(rendered) == 2
     assert paths == [
         "main_qa_duplicate_row_0.png",
@@ -411,13 +394,12 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
         fits.Column(name="flux", array=flux, format="D"),
         fits.Column(name="ivar", array=np.ones_like(flux), format="D"),
     ]
-    fits.HDUList(
-        [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]
-    ).writeto(sdss)
+    fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]).writeto(sdss)
     assert qsospec.detect_fits_reader(str(sdss)) == "sdss"
-    np.testing.assert_allclose(
-        qsospec.read_spectrum(str(sdss), redshift=0.2).wave_obs, wave
-    )
+    sdss_data = qsospec.read_spectrum(str(sdss), redshift=0.2)
+    np.testing.assert_allclose(sdss_data.wave_obs, wave)
+    assert sdss_data.metadata["flux_unit"] == "cgs"
+    assert sdss_data.metadata["flux_scale"] == pytest.approx(1e-17)
 
     lamost = tmp_path / "lamost.fits"
     columns = [
@@ -425,13 +407,9 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
         fits.Column(name="FLUX", array=flux, format="D"),
         fits.Column(name="ERROR", array=np.ones_like(flux), format="D"),
     ]
-    fits.HDUList(
-        [fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]
-    ).writeto(lamost)
+    fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)]).writeto(lamost)
     assert qsospec.detect_fits_reader(str(lamost)) == "lamost"
-    np.testing.assert_allclose(
-        qsospec.read_spectrum(str(lamost), redshift=0.2).flux, flux
-    )
+    np.testing.assert_allclose(qsospec.read_spectrum(str(lamost), redshift=0.2).flux, flux)
 
     iraf = tmp_path / "iraf.fits"
     header = fits.Header()
@@ -439,9 +417,26 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     header["CDELT1"] = wave[1] - wave[0]
     fits.PrimaryHDU(flux, header=header).writeto(iraf)
     assert qsospec.detect_fits_reader(str(iraf)) == "iraf"
-    np.testing.assert_allclose(
-        qsospec.read_spectrum(str(iraf), redshift=0.2).wave_obs, wave
+    iraf_data = qsospec.read_spectrum(str(iraf), redshift=0.2)
+    np.testing.assert_allclose(iraf_data.wave_obs, wave)
+    assert iraf_data.metadata["flux_unit"] == "relative"
+    assert iraf_data.metadata["flux_scale"] is None
+
+    calibrated_iraf = qsospec.read_spectrum(
+        str(iraf),
+        redshift=0.2,
+        flux_unit="cgs",
+        flux_scale=2e-16,
     )
+    assert calibrated_iraf.metadata["flux_unit"] == "cgs"
+    assert calibrated_iraf.metadata["flux_scale"] == pytest.approx(2e-16)
+    with pytest.raises(ValueError, match="forbidden"):
+        qsospec.read_spectrum(
+            str(iraf),
+            redshift=0.2,
+            flux_unit="relative",
+            flux_scale=2.0,
+        )
 
 
 def test_manifest_records_schema_and_shard_state(tmp_path):
@@ -457,5 +452,7 @@ def test_manifest_records_schema_and_shard_state(tmp_path):
     manifest = json.loads((run / "manifest.json").read_text())
     assert manifest["schema_version"]
     assert manifest["configuration_hash"]
+    assert manifest["package_version"]
+    assert "hbeta_config" not in manifest["configuration"]
     assert manifest["shard_state"]["models"] == 1
-    assert pads.dataset(run / "models", format="parquet").count_rows() == 1
+    assert pads.dataset(run / "data" / "models", format="parquet").count_rows() == 1

@@ -882,11 +882,13 @@ def _plot_host_context(
 @_science_plot_style
 def _plot_qa(
     result: WorkflowResult,
-    paths: Union[Path, Mapping[str, Path]],
+    paths: Optional[Union[Path, Mapping[str, Path]]] = None,
     plot_config: Optional[GlobalQAPlotConfig] = None,
-) -> Dict[str, str]:
+    *,
+    return_figure: bool = False,
+):
     import matplotlib.pyplot as plt
-    paths = _coerce_plot_paths(paths)
+    resolved_paths = None if paths is None else _coerce_plot_paths(paths)
 
     config = plot_config or GlobalQAPlotConfig()
     available, omitted = _select_zoom_complexes(
@@ -1582,9 +1584,27 @@ def _plot_qa(
         fontsize=13,
     )
     result.metadata["qa_shared_axis_labels"] = True
-    saved = _save_figure(fig, paths)
+    if return_figure:
+        return fig
+    if resolved_paths is None:
+        raise ValueError("QA output paths are required when saving a figure.")
+    saved = _save_figure(fig, resolved_paths)
     plt.close(fig)
     return saved
+
+
+def plot_qa_figure(
+    result: WorkflowResult,
+    plot_config: Optional[GlobalQAPlotConfig] = None,
+):
+    """Return an open Matplotlib QA figure without writing a file."""
+
+    return _plot_qa(
+        result,
+        None,
+        plot_config or GlobalQAPlotConfig(),
+        return_figure=True,
+    )
 
 
 @_science_plot_style

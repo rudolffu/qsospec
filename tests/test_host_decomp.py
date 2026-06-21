@@ -140,7 +140,9 @@ def test_desi_diagnostic_host_sed_prediction_is_outside_ppxf_fit():
 
 
 def test_plot_percentile_limits_ignore_extreme_spikes():
-    limits = _finite_percentile_limits([np.array([0.0, 1.0, 2.0, 3.0, 1000.0])], percentiles=(0.0, 75.0), pad_fraction=0.0)
+    limits = _finite_percentile_limits(
+        [np.array([0.0, 1.0, 2.0, 3.0, 1000.0])], percentiles=(0.0, 75.0), pad_fraction=0.0
+    )
 
     assert limits == (0.0, 3.0)
 
@@ -197,7 +199,13 @@ def test_output_schema_writes_summary_files(tmp_path):
         reduced_chi2=1.0,
         status="success",
     )
-    sed = HostSED(wave_rest=templates.wave, host_flux=np.ones_like(templates.wave), samples={}, flags={"nir_extrapolation_reliable": False}, warnings=[])
+    sed = HostSED(
+        wave_rest=templates.wave,
+        host_flux=np.ones_like(templates.wave),
+        samples={},
+        flags={"nir_extrapolation_reliable": False},
+        warnings=[],
+    )
     sed.samples = {
         "fHost_4000": 1.0,
         "fHost_5100": 1.0,
@@ -206,13 +214,21 @@ def test_output_schema_writes_summary_files(tmp_path):
         "fHost_1p6um": np.nan,
         "fHost_2p2um": np.nan,
     }
-    sed.flags.update({"template_covers_1um": True, "template_covers_1p6um": False, "template_covers_2p2um": False, "nir_extrapolation_not_available": True})
+    sed.flags.update(
+        {
+            "template_covers_1um": True,
+            "template_covers_1p6um": False,
+            "template_covers_2p2um": False,
+            "nir_extrapolation_not_available": True,
+        }
+    )
 
     files, summary = write_host_decomp_outputs(tmp_path, spec, fit, sed, np.zeros_like(wave))
 
     assert "host_decomp_summary_json" in files
     assert "fHost_5100" in summary
-    assert summary["flux_density_unit"] == "1e-17 erg cm^-2 s^-1 Angstrom^-1"
+    assert summary["flux_unit"] == "cgs"
+    assert summary["flux_scale"] == pytest.approx(1e-17)
     assert np.isfinite(summary["fracHost_4000"])
     assert np.isnan(summary["fracHost_5100"])
     assert np.isnan(summary["fAGN_5100"])

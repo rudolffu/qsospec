@@ -18,7 +18,11 @@ Schlafly & Finkbeiner (2011).
 Power law and Fe II
 -------------------
 
-The AGN continuum includes a pivoted power law,
+The AGN continuum includes a pivoted power law. ``mode="single"`` uses one
+slope. ``mode="double"`` uses a continuous broken law with independent slopes
+on either side of a configurable 4661 Å break. ``mode="auto"`` compares both
+models on a shared accepted-pixel mask and selects the broken law only for a
+default :math:`\Delta\mathrm{BIC}\ge10`.
 
 .. math::
 
