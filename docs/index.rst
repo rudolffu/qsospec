@@ -1,99 +1,108 @@
 qsospec
 =======
 
-|Release|
-|License| |Python|
+Fit UV, optical, and near-infrared quasar spectra with reproducible continuum,
+emission-line, host-decomposition, QA, and batch workflows.
 
-.. |Release| image:: https://img.shields.io/badge/release-v0.1.0-blue
-   :target: https://pypi.org/project/qsospec/
-.. |License| image:: https://img.shields.io/badge/license-GPLv3-green
-   :target: https://github.com/rudolffu/qsospec/blob/main/LICENSE
-.. |Python| image:: https://img.shields.io/badge/python-3.9|3.10|3.11|3.12|3.13-blue
-   :target: https://pypi.org/project/qsospec/
+.. grid:: 2 2 4 4
+   :gutter: 2
 
-:Repository: `github.com/rudolffu/qsospec <https://github.com/rudolffu/qsospec>`_
+   .. grid-item-card:: Start fitting
+      :link: getting_started/quickstart
+      :link-type: doc
 
-A Python package for fitting UV, optical, and near-infrared quasar spectra.
-Provides array-based local and global fitting, recipe-driven emission
-complexes, bundled iron and Balmer templates, optional pPXF host
-subtraction, and resumable Parquet batch runs.
+      Install |project_name| and fit a spectrum with the default global model.
 
-Installation
-------------
+   .. grid-item-card:: Choose a workflow
+      :link: getting_started/choose_workflow
+      :link-type: doc
 
-Install from PyPI:
+      Compare array, file, host-decomposition, and batch interfaces.
 
-.. code-block:: bash
+   .. grid-item-card:: Interpret QA
+      :link: user_guide/qa_plots
+      :link-type: doc
 
-   python -m pip install qsospec
+      Read fitted, masked, unmodelled, and residual regions correctly.
 
-With optional pPXF host decomposition:
+   .. grid-item-card:: Browse recipes
+      :link: reference/recipes
+      :link-type: doc
 
-.. code-block:: bash
+      See the built-in line complexes and their current coverage rules.
 
-   python -m pip install "qsospec[host]"
+Minimal array example
+---------------------
 
-Install from source (development):
-
-.. code-block:: bash
-
-   git clone https://github.com/rudolffu/qsospec.git
-   cd qsospec
-   python -m pip install -e ".[dev,host,docs]"
-
-Configure Galactic dust maps
-----------------------------
-
-File-based and batch workflows apply Galactic dereddening by default using
-the Planck Collaboration (2016) GNILC map.  Configure the external
-``dustmaps`` data directory and fetch the maps after installation:
+Array APIs treat the input spectrum as already corrected for Galactic
+extinction.
 
 .. code-block:: python
 
-   from dustmaps.config import config
+   import qsospec
 
-   config["data_dir"] = "/path/to/dustmaps"
+   spectrum = qsospec.Spectrum.from_arrays(
+       wavelength,
+       flux,
+       err=uncertainty,
+       z=redshift,
+       wave_frame="observed",
+   )
+   result = qsospec.fit_global_lines(spectrum)
 
-   from dustmaps import planck, sfd
-   planck.fetch(which="GNILC")
-   sfd.fetch()
+   print(result.continuum_success)
+   print(result.complex_statuses)
 
-The directory will contain ``planck/`` and ``sfd/`` subdirectories.  Missing
-coordinates or map files raise an error while correction is enabled.  See
-:doc:`user_guide/configuration` for map selection, disabling the correction,
-and supplying an explicit E(B-V).
+What is included
+----------------
+
+- Global power-law, Fe II, and continuous Balmer pseudo-continuum fitting.
+- Coverage-aware Lyα/N V, C IV, C III], Mg II, Balmer, optical, and NIR recipes.
+- Optional pPXF host decomposition for objects with :math:`z < 1.2`.
+- Galactic dereddening for file and batch workflows.
+- QA plots that distinguish fitted, pPXF-masked, and unmodelled regions.
+- Resumable Parquet run bundles for single objects and large samples.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Start Here
+
+   getting_started/index
 
 .. toctree::
    :maxdepth: 2
    :caption: User Guide
 
-   user_guide/configuration
-   user_guide/workflows
-   user_guide/results_warnings
+   user_guide/index
 
 .. toctree::
    :maxdepth: 2
+   :caption: How-to Guides
+
+   how_to/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Science Model
+
+   science/index
+
+.. toctree::
+   :maxdepth: 3
    :caption: Reference
 
-   recipe_reference
-   scientific_definitions
-   api
+   reference/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: Examples
+   :caption: Contributing
 
-   examples
+   contributing/index
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Development
+Project links
+-------------
 
-   run_bundles
-   development_plan
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Background
-
-   references
+`GitHub <https://github.com/rudolffu/qsospec>`__ ·
+`PyPI <https://pypi.org/project/qsospec/>`__ ·
+`Issues <https://github.com/rudolffu/qsospec/issues>`__ ·
+`GPLv3 license <https://github.com/rudolffu/qsospec/blob/main/LICENSE>`__

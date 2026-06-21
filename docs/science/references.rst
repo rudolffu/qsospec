@@ -1,5 +1,5 @@
-References and Related Software
-================================
+References and related software
+===============================
 
 The references below are grouped by the modelling components that appear in
 ``qsospec``: global continuum, Balmer continuum, Fe II pseudo-continuum,
@@ -228,7 +228,7 @@ Quasar/AGN spectral-fitting packages
   `Guo et al. (2018) <https://ui.adsabs.harvard.edu/abs/2018ascl.soft09008G/abstract>`__
   and `Shen et al. (2019) <https://ui.adsabs.harvard.edu/abs/2019ApJS..241...34S/abstract>`__.
 
-- `qsofitmore <https://github.com/rudolffu/qsofitmore>`__
+- `qsofitmore <https://zenodo.org/records/4893734>`__
   — extended PyQSOFit-family package for UV–optical quasar spectra, DESI/LAMOST
   use cases, Fe II/Balmer updates, and host-decomposition experiments; described in
   `Fu et al. (2022), 2022ApJS..261...32F <https://ui.adsabs.harvard.edu/abs/2022ApJS..261...32F/abstract>`__.
@@ -261,7 +261,7 @@ Quasar/AGN spectral-fitting packages
 Host-galaxy and stellar-continuum fitting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- `pPXF <https://github.com/micappe/ppxf>`__
+- `pPXF <https://pypi.org/project/ppxf/>`__
   — penalized pixel-fitting code for stellar and gas kinematics, stellar
   populations, and full-spectrum fitting.
 

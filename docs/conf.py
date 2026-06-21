@@ -1,20 +1,28 @@
 import os
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
 sys.path.insert(0, os.path.abspath("../src"))
 
 project = "qsospec"
 copyright = "2026, Yuming Fu"
 author = "Yuming Fu"
-release = "0.1.0"
+try:
+    release = version("qsospec")
+except PackageNotFoundError:
+    release = "0.1.0"
+version = release
 
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
+    "sphinx.ext.doctest",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
+    "sphinx_design",
+    "sphinx_reredirects",
     "myst_parser",
 ]
 
@@ -58,3 +66,33 @@ html_theme_options = {
     "collapse_navigation": False,
 }
 html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+
+html_context = {
+    "display_github": True,
+    "github_user": "rudolffu",
+    "github_repo": "qsospec",
+    "github_version": "main",
+    "conf_py_path": "/docs/",
+}
+
+rst_prolog = """
+.. |project_name| replace:: qsospec
+.. |python_versions| replace:: 3.9–3.13
+.. |repository| replace:: https://github.com/rudolffu/qsospec
+.. |issues| replace:: https://github.com/rudolffu/qsospec/issues
+.. |pypi| replace:: https://pypi.org/project/qsospec/
+"""
+
+redirects = {
+    "examples": "how_to/index.html",
+    "recipe_reference": "reference/recipes.html",
+    "scientific_definitions": "science/measurements.html",
+    "run_bundles": "reference/run_bundles.html",
+    "api": "reference/api/index.html",
+    "references": "science/references.html",
+    "development_plan": "contributing/roadmap.html",
+    "user_guide/configuration": "../reference/configuration.html",
+    "user_guide/workflows": "index.html",
+    "user_guide/results_warnings": "results.html",
+}

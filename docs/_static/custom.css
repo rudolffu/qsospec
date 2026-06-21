@@ -1,0 +1,20 @@
+/* Keep reference tables readable inside the RTD content column. */
+.wy-table-responsive table {
+  width: 100%;
+}
+
+.wy-table-responsive table th,
+.wy-table-responsive table td {
+  vertical-align: top;
+  white-space: normal;
+}
+
+.wy-table-responsive table code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* Cards should remain balanced without forcing a fixed height. */
+.sd-card {
+  height: 100%;
+}

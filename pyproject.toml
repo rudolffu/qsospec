@@ -52,6 +52,8 @@ dev = [
 docs = [
     "sphinx",
     "sphinx-rtd-theme",
+    "sphinx-design",
+    "sphinx-reredirects",
     "myst-parser",
 ]
 
