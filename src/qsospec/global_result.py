@@ -192,7 +192,7 @@ class WorkflowResult:
         try:
             package_version = version("qsospec")
         except PackageNotFoundError:
-            package_version = "0.1.0"
+            package_version = "0.1.1"
         power_law_parameters = {
             name: value
             for name, value in self.continuum.param_values.items()
