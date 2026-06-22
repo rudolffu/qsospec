@@ -488,7 +488,7 @@ def test_qa_percentiles_and_component_styles():
     assert _CONTINUUM_STYLES["uv_iron"] == _CONTINUUM_STYLES["optical_iron"]
     assert _CONTINUUM_STYLES["power_law"][0] == "#b03766"
     assert _CONTINUUM_STYLES["balmer_bound_free"] == _CONTINUUM_STYLES["balmer_high_order_series"]
-    assert {style[1] for style in _CONTINUUM_STYLES.values()} == {"--", ":", "-."}
+    assert {style[1] for style in _CONTINUUM_STYLES.values()} == {"-", "--", "-."}
     assert _TCC_COLORS["total_model"] == "#28292b"
     assert _TCC_COLORS["unmodelled_span"] == "#e4ecf0"
     label = _flux_density_axis_label("1e-17 erg cm^-2 s^-1 Angstrom^-1")
@@ -571,7 +571,7 @@ def test_qa_applies_display_scale_without_mutating_fit_arrays(
     observed = next(
         line
         for line in figure.axes[0].lines
-        if line.get_label() == "Input spectrum\nrest-frame $F_\\lambda$"
+        if line.get_label() == "Input spectrum"
     )
     expected_scale = 25.0
     np.testing.assert_allclose(
@@ -754,10 +754,10 @@ def test_qa_title_smoothing_and_tick_helpers():
         "RA = 151.12346   Dec = -2.34568   $E(B-V) = 0.1235$"
     )
     assert _input_spectrum_label(result) == (
-        "Input spectrum\nrest-frame $F_\\lambda$\nMW extinction corrected"
+        "Input spectrum\nMW extinction corrected"
     )
     assert _input_spectrum_label(result, smoothed=True) == (
-        "Input spectrum\nrest-frame $F_\\lambda$\n"
+        "Input spectrum\n"
         "MW extinction corrected\nsmoothed for display"
     )
     assert (
@@ -873,10 +873,10 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert all(axis.get_ylabel() == "" for axis in figure.axes[3:])
     overview_labels = overview_axis.get_legend_handles_labels()[1]
     assert overview_labels.count(
-        "Input spectrum\nrest-frame $F_\\lambda$"
+        "Input spectrum"
     ) == 1
     assert overview_labels.count(
-        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        "Input spectrum\nsmoothed for display"
     ) == 1
     assert overview_labels.count("Fe II") <= 1
     assert overview_labels.count("broad-line model") == 1
@@ -921,11 +921,11 @@ def test_qa_smoothing_pixel_threshold(
     figure = plt.gcf()
     labels = figure.axes[0].get_legend_handles_labels()[1]
     assert (
-        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        "Input spectrum\nsmoothed for display"
         in labels
     ) is expect_smoothed
     assert (
-        "Input spectrum\nrest-frame $F_\\lambda$" in labels
+        "Input spectrum" in labels
     ) is (not expect_smoothed)
     assert result.metadata["qa_smoothing_effective"] is expect_smoothed
     assert result.metadata[
@@ -1000,16 +1000,16 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
     figure = plt.gcf()
     overview_labels = figure.axes[0].get_legend_handles_labels()[1]
     assert (
-        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        "Input spectrum\nsmoothed for display"
         in overview_labels
     )
-    assert "Input spectrum\nrest-frame $F_\\lambda$" not in overview_labels
+    assert "Input spectrum" not in overview_labels
     assert "host galaxy" in overview_labels
     assert "total model" in overview_labels
     assert "continuum model (extrapolated)" not in overview_labels
     for axis in figure.axes[2:]:
         zoom_labels = axis.get_legend_handles_labels()[1]
-        assert "Input spectrum\nrest-frame $F_\\lambda$" not in zoom_labels
+        assert "Input spectrum" not in zoom_labels
         assert "host galaxy" not in zoom_labels
     assert result.metadata["qa_host_context_overview_requested"] is True
     assert result.metadata["qa_host_context_overview_used"] is True
@@ -1032,7 +1032,7 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
         line
         for line in figure.axes[0].lines
         if line.get_label()
-        == "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        == "Input spectrum\nsmoothed for display"
     )
     expected_smoothed = _masked_running_median(
         result.total_spectrum.flux,
