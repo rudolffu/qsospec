@@ -510,8 +510,10 @@ class HbetaComplexConfig:
     narrow_velocity_bounds_kms: Tuple[float, float] = (-1000.0, 1000.0)
     oiii_ratio_5007_4959: float = 2.98
     fit_oiii_wings: bool = True
-    wing_bic_delta: float = 10.0
-    wing_min_snr: float = 3.0
+    wing_bic_delta: float = 20.0
+    wing_min_snr: float = 5.0
+    wing_min_fwhm_ratio: float = 2.0
+    wing_min_velocity_separation_kms: float = 150.0
     heii_enabled: bool = False
     heii_mask: Window = (4660.0, 4715.0)
     optimizer_method: str = "auto"
@@ -519,6 +521,19 @@ class HbetaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
+        for value, name in (
+            (self.wing_bic_delta, "wing_bic_delta"),
+            (self.wing_min_snr, "wing_min_snr"),
+            (self.wing_min_fwhm_ratio, "wing_min_fwhm_ratio"),
+            (
+                self.wing_min_velocity_separation_kms,
+                "wing_min_velocity_separation_kms",
+            ),
+        ):
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(
+                    f"HbetaComplexConfig.{name} must be positive and finite."
+                )
         if self.optimizer_method not in ("auto", "variable_projection", "legacy_joint"):
             raise ValueError(
                 "optimizer_method must be 'auto', 'variable_projection', or 'legacy_joint'."

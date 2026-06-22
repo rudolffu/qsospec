@@ -11,7 +11,14 @@ def _two_window_spectrum():
     ha = 9.0 * np.exp(-0.5 * ((wave - 6562.8) / 35.0) ** 2)
     flux = 1.0 + 0.0002 * (wave - 5500.0) + hb + ha
     err = np.full_like(wave, 0.08)
-    return qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, survey="desi")
+    return qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        survey="desi",
+    )
 
 
 def test_fit_local_two_independent_windows():
@@ -45,7 +52,14 @@ def test_fit_local_too_few_pixels_fails_window():
     wave = np.array([4800.0, 4820.0, 4840.0, 4860.0, 4880.0])
     flux = np.ones_like(wave)
     err = np.ones_like(wave) * 0.1
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, flux_unit="relative")
+    spec = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
+    )
     config = qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()], require_min_pixels=8)
 
     result = qsospec.fit_local(spec, config)

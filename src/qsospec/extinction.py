@@ -22,6 +22,7 @@ _PLANCK_GNILC_FILENAME = (
     "COM_CompMap_Dust-GNILC-Model-Opacity_2048_R2.01.fits"
 )
 _PROVENANCE_KEY = "galactic_extinction"
+_REST_FRAME_KEY = "rest_frame_conversion"
 
 
 def _resolved_config(
@@ -256,18 +257,18 @@ def correct_spectrum_data(
             "caller_preprocessed",
             "declared_corrected",
         ):
-            return spectrum
+            return _prepare_spectrum_data_rest_frame(spectrum)
         if existing.get("status") == "disabled":
             if not cfg.enabled and _same_correction(
                 existing, cfg, spectrum.ra, spectrum.dec
             ):
-                return spectrum
+                return _prepare_spectrum_data_rest_frame(spectrum)
             metadata.pop(_PROVENANCE_KEY, None)
             spectrum = replace(spectrum, metadata=metadata)
             existing = None
     if isinstance(existing, dict):
         if _same_correction(existing, cfg, spectrum.ra, spectrum.dec):
-            return spectrum
+            return _prepare_spectrum_data_rest_frame(spectrum)
         raise ValueError(
             "SpectrumData already contains a different Galactic-extinction "
             "correction and the raw arrays are unavailable."
@@ -276,7 +277,9 @@ def correct_spectrum_data(
     ebv, provenance = query_galactic_ebv(spectrum.ra, spectrum.dec, cfg)
     if not cfg.enabled:
         metadata[_PROVENANCE_KEY] = provenance
-        return replace(spectrum, metadata=metadata)
+        return _prepare_spectrum_data_rest_frame(
+            replace(spectrum, metadata=metadata)
+        )
 
     factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
     flux = np.asarray(spectrum.flux, dtype=float) * factor
@@ -297,12 +300,110 @@ def correct_spectrum_data(
         }
     )
     metadata[_PROVENANCE_KEY] = provenance
+    return _prepare_spectrum_data_rest_frame(
+        replace(
+            spectrum,
+            flux=flux,
+            error=error,
+            ivar=ivar,
+            metadata=metadata,
+        )
+    )
+
+
+def _rest_frame_provenance(
+    redshift: float,
+    *,
+    input_frame: str,
+    status: str,
+) -> Dict[str, Any]:
+    factor = 1.0 + float(redshift)
+    if not np.isfinite(factor) or factor <= 0:
+        raise ValueError("Rest-frame conversion requires finite z with 1 + z > 0.")
+    return {
+        "status": status,
+        "input_flux_frame": input_frame,
+        "output_flux_frame": "rest",
+        "redshift": float(redshift),
+        "flux_error_factor": float(factor),
+        "inverse_variance_factor": float(1.0 / factor**2),
+    }
+
+
+def _metadata_with_rest_frame(
+    metadata: Dict[str, Any],
+    provenance: Dict[str, Any],
+) -> Dict[str, Any]:
+    output = dict(metadata)
+    output["flux_frame"] = "rest"
+    output[_REST_FRAME_KEY] = dict(provenance)
+    nested = output.get("spectrum_metadata")
+    if isinstance(nested, dict):
+        nested = dict(nested)
+        nested["flux_frame"] = "rest"
+        nested[_REST_FRAME_KEY] = dict(provenance)
+        output["spectrum_metadata"] = nested
+    return output
+
+
+def _prepare_spectrum_data_rest_frame(
+    spectrum: SpectrumData,
+) -> SpectrumData:
+    metadata = dict(spectrum.metadata)
+    frame = str(metadata.get("flux_frame", "observed")).lower()
+    if spectrum.redshift is None or not np.isfinite(spectrum.redshift):
+        raise ValueError("Rest-frame conversion requires a finite redshift.")
+    if frame == "rest":
+        existing = metadata.get(_REST_FRAME_KEY)
+        if isinstance(existing, dict) and existing:
+            expected = _rest_frame_provenance(
+                float(spectrum.redshift),
+                input_frame="observed",
+                status="applied",
+            )
+            if (
+                existing.get("output_flux_frame") != "rest"
+                or not np.isclose(
+                    float(existing.get("redshift", np.nan)),
+                    expected["redshift"],
+                )
+                or not np.isclose(
+                    float(existing.get("flux_error_factor", np.nan)),
+                    expected["flux_error_factor"],
+                )
+            ):
+                raise ValueError(
+                    "SpectrumData contains conflicting rest-frame conversion "
+                    "provenance."
+                )
+        return spectrum
+    if frame != "observed":
+        raise ValueError("SpectrumData flux_frame must be 'observed' or 'rest'.")
+    if metadata.get(_REST_FRAME_KEY):
+        raise ValueError(
+            "SpectrumData is marked observed but already contains rest-frame "
+            "conversion provenance."
+        )
+    provenance = _rest_frame_provenance(
+        float(spectrum.redshift),
+        input_frame="observed",
+        status="applied",
+    )
+    factor = provenance["flux_error_factor"]
     return replace(
         spectrum,
-        flux=flux,
-        error=error,
-        ivar=ivar,
-        metadata=metadata,
+        flux=np.asarray(spectrum.flux, dtype=float) * factor,
+        error=(
+            None
+            if spectrum.error is None
+            else np.asarray(spectrum.error, dtype=float) * factor
+        ),
+        ivar=(
+            None
+            if spectrum.ivar is None
+            else np.asarray(spectrum.ivar, dtype=float) / factor**2
+        ),
+        metadata=_metadata_with_rest_frame(metadata, provenance),
     )
 
 
@@ -324,6 +425,58 @@ def _updated_spectrum_metadata(
     )
 
 
+def _prepare_spectrum_rest_frame(spectrum: Spectrum) -> Spectrum:
+    if spectrum.flux_frame == "rest":
+        existing = spectrum.metadata.rest_frame_conversion
+        if existing:
+            expected = _rest_frame_provenance(
+                spectrum.z,
+                input_frame="observed",
+                status="applied",
+            )
+            if (
+                existing.get("output_flux_frame") != "rest"
+                or not np.isclose(
+                    float(existing.get("redshift", np.nan)),
+                    expected["redshift"],
+                )
+                or not np.isclose(
+                    float(existing.get("flux_error_factor", np.nan)),
+                    expected["flux_error_factor"],
+                )
+            ):
+                raise ValueError(
+                    "Spectrum contains conflicting rest-frame conversion "
+                    "provenance."
+                )
+        return spectrum
+    if spectrum.flux_frame != "observed":
+        raise ValueError("Spectrum flux_frame must be 'observed' or 'rest'.")
+    if spectrum.metadata.rest_frame_conversion:
+        raise ValueError(
+            "Spectrum is marked observed but already contains rest-frame "
+            "conversion provenance."
+        )
+    provenance = _rest_frame_provenance(
+        spectrum.z,
+        input_frame="observed",
+        status="applied",
+    )
+    factor = provenance["flux_error_factor"]
+    metadata = replace(
+        spectrum.metadata,
+        flux_frame="rest",
+        rest_frame_conversion=dict(provenance),
+        notes=list(spectrum.metadata.notes),
+    )
+    return replace(
+        spectrum,
+        flux=np.asarray(spectrum.flux, dtype=float) * factor,
+        err=np.asarray(spectrum.err, dtype=float) * factor,
+        metadata=metadata,
+    )
+
+
 def prepare_spectrum(
     spectrum: Spectrum,
     *,
@@ -335,7 +488,8 @@ def prepare_spectrum(
 
     Array spectra are assumed to be uncorrected unless constructed with
     ``galactic_extinction_corrected=True``. Correction is performed in the
-    observed frame and its provenance is embedded in the returned spectrum.
+    observed frame, then flux and uncertainty are normalized to rest-frame
+    F_lambda. Both operations are recorded and applied exactly once.
     """
 
     cfg = _resolved_config(galactic_extinction_config)
@@ -352,11 +506,12 @@ def prepare_spectrum(
             corrected=True,
             provenance=existing,
         )
-        return (
+        prepared = (
             spectrum
             if metadata == spectrum.metadata
             else replace(spectrum, metadata=metadata)
         )
+        return _prepare_spectrum_rest_frame(prepared)
 
     if status == "applied":
         if not _same_correction(existing, cfg, ra, dec):
@@ -371,11 +526,12 @@ def prepare_spectrum(
             corrected=True,
             provenance=existing,
         )
-        return (
+        prepared = (
             spectrum
             if metadata == spectrum.metadata
             else replace(spectrum, metadata=metadata)
         )
+        return _prepare_spectrum_rest_frame(prepared)
 
     if spectrum.metadata.galactic_extinction_corrected:
         provenance = _config_provenance(cfg)
@@ -391,28 +547,32 @@ def prepare_spectrum(
                 "warning": None,
             }
         )
-        return replace(
-            spectrum,
-            metadata=_updated_spectrum_metadata(
-                spectrum.metadata,
-                ra=ra,
-                dec=dec,
-                corrected=True,
-                provenance=provenance,
-            ),
+        return _prepare_spectrum_rest_frame(
+            replace(
+                spectrum,
+                metadata=_updated_spectrum_metadata(
+                    spectrum.metadata,
+                    ra=ra,
+                    dec=dec,
+                    corrected=True,
+                    provenance=provenance,
+                ),
+            )
         )
 
     if not cfg.enabled:
         _, provenance = query_galactic_ebv(ra, dec, cfg)
-        return replace(
-            spectrum,
-            metadata=_updated_spectrum_metadata(
-                spectrum.metadata,
-                ra=ra,
-                dec=dec,
-                corrected=False,
-                provenance=provenance,
-            ),
+        return _prepare_spectrum_rest_frame(
+            replace(
+                spectrum,
+                metadata=_updated_spectrum_metadata(
+                    spectrum.metadata,
+                    ra=ra,
+                    dec=dec,
+                    corrected=False,
+                    provenance=provenance,
+                ),
+            )
         )
 
     try:
@@ -435,17 +595,19 @@ def prepare_spectrum(
             "correction_factor_max": float(np.max(factor)),
         }
     )
-    return replace(
-        spectrum,
-        flux=np.asarray(spectrum.flux, dtype=float) * factor,
-        err=np.asarray(spectrum.err, dtype=float) * factor,
-        metadata=_updated_spectrum_metadata(
-            spectrum.metadata,
-            ra=ra,
-            dec=dec,
-            corrected=True,
-            provenance=provenance,
-        ),
+    return _prepare_spectrum_rest_frame(
+        replace(
+            spectrum,
+            flux=np.asarray(spectrum.flux, dtype=float) * factor,
+            err=np.asarray(spectrum.err, dtype=float) * factor,
+            metadata=_updated_spectrum_metadata(
+                spectrum.metadata,
+                ra=ra,
+                dec=dec,
+                corrected=True,
+                provenance=provenance,
+            ),
+        )
     )
 
 

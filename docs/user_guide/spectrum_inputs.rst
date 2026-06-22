@@ -25,7 +25,10 @@ Internally, wavelengths are stored in the observed frame and
 ``spectrum.wave_rest`` is derived from redshift. The boolean ``mask`` uses
 ``True`` for valid pixels. In-memory arrays are assumed not to be corrected
 for Galactic extinction unless ``galactic_extinction_corrected=True`` is
-supplied. See :doc:`preprocessing`.
+supplied. ``wave_frame`` declares both the wavelength frame and the matching
+flux-density frame: observed inputs contain
+:math:`F_{\lambda,\rm obs}`, while ``"rest"`` inputs contain
+:math:`F_{\lambda,\rm rest}`. See :doc:`preprocessing`.
 
 Files and tables
 ----------------
@@ -76,6 +79,8 @@ Common checks
 
 - Wavelength, flux, and uncertainty arrays must be one-dimensional and aligned.
 - A finite redshift is required.
+- ``wave_frame="rest"`` must only be used when wavelength, flux, and
+  uncertainty have all already been transformed to the rest frame.
 - Invalid uncertainties and masked pixels are excluded.
 - File-based Galactic correction requires RA/Dec unless ``ebv_override`` is
   supplied.

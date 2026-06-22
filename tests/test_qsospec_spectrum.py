@@ -24,6 +24,7 @@ def test_spectrum_from_arrays_valid_mask_and_rest_frame():
     np.testing.assert_allclose(spec.wave_rest, wave_rest)
     np.testing.assert_allclose(spec.wave_obs, wave_rest * 1.5)
     np.testing.assert_array_equal(spec.valid_mask, [True, False, False, True])
+    assert spec.flux_frame == "rest"
 
 
 def test_spectrum_accepts_ivar():
@@ -34,6 +35,7 @@ def test_spectrum_accepts_ivar():
 
     np.testing.assert_allclose(spec.err[0], 0.5)
     assert not spec.valid_mask[1]
+    assert spec.flux_frame == "observed"
 
 
 def test_spectrum_from_arrays_extinction_metadata_and_coordinates():

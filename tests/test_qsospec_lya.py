@@ -1,8 +1,6 @@
 """Coverage, fitting, archive, and QA tests for Lyα/N V."""
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 import qsospec
@@ -293,25 +291,17 @@ def test_lya_schema_v4_round_trip(tmp_path):
     )
     loaded = qsospec.load_model(store, "lya-object")
     loaded_fit = loaded.line_complexes["lya_nv"]
-    assert store.manifest["schema_version"] == "4"
+    assert store.manifest["schema_version"] == "5"
     assert loaded_fit.metadata["lya_coverage_status"] == "full"
     np.testing.assert_array_equal(
         loaded_fit.excluded_mask,
         fit.excluded_mask,
     )
 
-    model_path = next((store.path / "data" / "models").glob("*.parquet"))
-    old_rows = pq.read_table(model_path).to_pylist()
-    for item in old_rows[0]["complexes"]:
-        item.pop("excluded_mask", None)
-        item.pop("metadata", None)
-    pq.write_table(pa.Table.from_pylist(old_rows), model_path)
-    store.manifest["schema_version"] = "2"
+    store.manifest["schema_version"] = "4"
     store._write_manifest()
-    legacy = qsospec.load_model(str(store.path), "lya-object")
-    legacy_fit = legacy.line_complexes["lya_nv"]
-    assert legacy_fit.metadata == {"recipe_id": "lya_nv"}
-    assert not np.any(legacy_fit.excluded_mask)
+    with pytest.raises(ValueError, match="requires schema 5"):
+        qsospec.open_run(str(store.path))
 
 
 def test_lya_qa_zoom_marks_absorption(tmp_path):

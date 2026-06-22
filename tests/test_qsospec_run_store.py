@@ -4,7 +4,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as pads
-import pyarrow.parquet as pq
 import pytest
 from astropy.io import fits
 
@@ -76,8 +75,12 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert "host" in result.summary()
     store = qsospec.open_run(str(run))
     loaded = qsospec.load_model(store, "object-1")
+    model_table = store.read_table("models")
     np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
     np.testing.assert_allclose(loaded.continuum.model, result.continuum.model)
+    assert "wave_rest" in model_table.column_names
+    assert "wave_obs" not in model_table.column_names
+    assert loaded.spectrum.flux_frame == "rest"
     assert sorted(loaded.warning_codes()) == sorted(result.warning_codes())
     assert store.read_table("objects").num_rows == 1
     assert store.read_table("models").num_rows == 1
@@ -166,13 +169,14 @@ def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
     assert "balmer_pseudocontinuum_velocity_kms" in set(measurements["quantity"])
 
 
-def test_host_masks_round_trip_and_schema_v1_inference(tmp_path):
+def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     data = _spectrum_data("host-mask-object")
     spectrum = qsospec.Spectrum.from_arrays(
         data.wave_obs,
         data.flux,
         err=data.error,
         z=data.redshift,
+        wave_frame="rest",
         survey="desi",
     )
     result = qsospec.fit_global_lines(
@@ -220,22 +224,15 @@ def test_host_masks_round_trip_and_schema_v1_inference(tmp_path):
     np.testing.assert_array_equal(loaded.host_fit_mask, result.host_fit_mask)
     np.testing.assert_array_equal(loaded.host_emission_mask, result.host_emission_mask)
     assert loaded.metadata["host_mask_provenance"] == "exact"
-    assert store.manifest["schema_version"] == "4"
+    assert store.manifest["schema_version"] == "5"
 
-    model_path = next((run_path / "data" / "models").glob("*.parquet"))
-    old_table = pq.read_table(model_path).drop(["host_fit_mask", "host_emission_mask"])
-    pq.write_table(old_table, model_path)
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["schema_version"] = "1"
+    manifest["schema_version"] = "4"
     manifest_path.write_text(json.dumps(manifest))
 
-    inferred = qsospec.load_model(str(run_path), "host-mask-object")
-    assert inferred.metadata["host_mask_provenance"] == "inferred"
-    assert np.any(inferred.host_fit_mask)
-    assert np.any(inferred.host_emission_mask)
-    assert inferred.host_fit_mask.shape == wave.shape
-    assert inferred.host_emission_mask.shape == wave.shape
+    with pytest.raises(ValueError, match="requires schema 5"):
+        qsospec.open_run(str(run_path))
 
 
 def test_serial_batch_resume_and_configuration_guard(tmp_path):

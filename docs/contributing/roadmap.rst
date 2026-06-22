@@ -13,7 +13,7 @@ Current production scope
 - Optional pPXF host decomposition with an object-level redshift gate.
 - Galactic dereddening before file and batch workflows.
 - Covariance and Monte Carlo uncertainty summaries.
-- Resumable schema-v3 Parquet run bundles and QA regeneration.
+- Resumable schema-v5 Parquet run bundles and QA regeneration.
 
 Near-term priorities
 --------------------
@@ -28,7 +28,8 @@ Compatibility
 -------------
 
 Scientific defaults, result fields, warning codes, and archive schemas should
-change deliberately and with migration notes. Existing run archives remain
-readable; they are not rewritten in place.
+change deliberately and with migration notes. During pre-release development,
+obsolete run schemas may be rejected when recreating runs is safer than
+carrying ambiguous scientific conventions forward.
 
 Detailed change history is in :doc:`changelog`.

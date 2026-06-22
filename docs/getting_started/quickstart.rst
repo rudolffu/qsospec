@@ -12,7 +12,7 @@ synthetic arrays as already corrected, so it does not need external dust maps.
    >>> flux = 2.0 * (wave / 4000.0) ** -1.2
    >>> err = np.full_like(wave, 0.05)
    >>> spectrum = qsospec.Spectrum.from_arrays(
-   ...     wave, flux, err=err, z=0.0, wave_frame="observed",
+   ...     wave, flux, err=err, z=0.0, wave_frame="rest",
    ...     flux_unit="relative",
    ...     galactic_extinction_corrected=True,
    ... )

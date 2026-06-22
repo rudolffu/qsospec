@@ -10,8 +10,9 @@ For a line model :math:`f_\lambda^\mathrm{line}`,
 
    F = \int f_\lambda^\mathrm{line}(\lambda)\,d\lambda.
 
-The result reports input-unit flux and cgs flux when the input metadata
-provides a cgs scale.
+The result reports input-unit flux integrated from the prepared rest-frame
+:math:`F_\lambda`, and cgs flux when the input metadata provides a cgs scale.
+No additional redshift factor is applied during measurement conversion.
 
 Profile centroid and dispersion
 -------------------------------

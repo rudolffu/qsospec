@@ -9,7 +9,14 @@ def test_plot_local_result_writes_png(tmp_path):
     wave = np.linspace(4700.0, 5100.0, 160)
     flux = 1.0 + 5.0 * np.exp(-0.5 * ((wave - 4861.33) / 20.0) ** 2)
     err = np.full_like(wave, 0.08)
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, survey="desi")
+    spec = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        survey="desi",
+    )
     config = qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()])
     result = qsospec.fit_local(spec, config)
 

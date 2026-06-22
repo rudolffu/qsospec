@@ -28,15 +28,29 @@ def test_f99_override_propagates_flux_error_and_ivar():
     config = qsospec.GalacticExtinctionConfig(ebv_override=0.1)
     corrected = qsospec.correct_spectrum_data(_data(), config)
     factor = qsospec.f99_dereddening_factor(corrected.wave_obs, 0.1, rv=3.1)
+    rest_factor = 1.2
 
-    np.testing.assert_allclose(corrected.flux, factor)
-    np.testing.assert_allclose(corrected.error, 0.1 * factor)
-    np.testing.assert_allclose(corrected.ivar, 100.0 / factor**2)
+    np.testing.assert_allclose(corrected.flux, factor * rest_factor)
+    np.testing.assert_allclose(
+        corrected.error, 0.1 * factor * rest_factor
+    )
+    np.testing.assert_allclose(
+        corrected.ivar, 100.0 / (factor * rest_factor) ** 2
+    )
     provenance = corrected.metadata["galactic_extinction"]
     assert provenance["source"] == "override"
     assert provenance["raw_ebv"] == pytest.approx(0.1)
     assert provenance["applied_ebv"] == pytest.approx(0.1)
     assert provenance["correction_factor_max"] > 1.0
+    assert corrected.metadata["flux_frame"] == "rest"
+    assert corrected.metadata["rest_frame_conversion"] == {
+        "status": "applied",
+        "input_flux_frame": "observed",
+        "output_flux_frame": "rest",
+        "redshift": 0.2,
+        "flux_error_factor": 1.2,
+        "inverse_variance_factor": pytest.approx(1.0 / 1.2**2),
+    }
 
 
 def test_planck_alias_and_sfd_recalibration(monkeypatch):
@@ -118,8 +132,9 @@ def test_correction_is_idempotent_and_rejects_changed_provenance():
 def test_disabled_and_direct_spectrum_helpers():
     disabled = qsospec.GalacticExtinctionConfig(enabled=False)
     corrected = qsospec.correct_spectrum_data(_data(ra=None, dec=None), disabled)
-    np.testing.assert_allclose(corrected.flux, 1.0)
+    np.testing.assert_allclose(corrected.flux, 1.2)
     assert corrected.metadata["galactic_extinction"]["status"] == "disabled"
+    assert corrected.metadata["flux_frame"] == "rest"
 
     spectrum = qsospec.Spectrum.from_arrays(
         np.linspace(3500.0, 7500.0, 64),
@@ -132,8 +147,9 @@ def test_disabled_and_direct_spectrum_helpers():
         spectrum,
         config=qsospec.GalacticExtinctionConfig(ebv_override=0.05),
     )
-    assert np.all(output.flux > spectrum.flux)
+    assert np.all(output.flux > 1.2 * spectrum.flux)
     assert provenance["applied_ebv"] == pytest.approx(0.05)
+    assert output.flux_frame == "rest"
 
 
 def test_f99_wavelength_domain_is_enforced():
@@ -201,6 +217,8 @@ def test_fit_object_spectrum_is_automatically_prepared(tmp_path):
 
     assert np.all(result.spectrum.flux > 1.0)
     assert result.metadata["galactic_extinction"]["status"] == "applied"
+    assert result.metadata["flux_frame"] == "rest"
+    assert result.metadata["rest_frame_conversion"]["redshift"] == 0.0
     assert result.spectrum.metadata.galactic_extinction_corrected
     assert result.spectrum.metadata.ra == pytest.approx(12.0)
 
@@ -210,7 +228,7 @@ def test_prepare_spectrum_declared_corrected_does_not_query_map(monkeypatch):
         np.linspace(3500.0, 4500.0, 64),
         np.ones(64),
         err=np.full(64, 0.1),
-        z=0.0,
+        z=0.5,
         galactic_extinction_corrected=True,
         flux_unit="relative",
     )
@@ -221,7 +239,11 @@ def test_prepare_spectrum_declared_corrected_does_not_query_map(monkeypatch):
     monkeypatch.setattr("qsospec.extinction.query_galactic_ebv", unexpected_query)
     prepared = qsospec.prepare_spectrum(spectrum)
 
-    np.testing.assert_allclose(prepared.flux, spectrum.flux)
+    np.testing.assert_allclose(prepared.wave_rest, spectrum.wave_obs / 1.5)
+    np.testing.assert_allclose(prepared.flux, 1.5 * spectrum.flux)
+    np.testing.assert_allclose(prepared.err, 1.5 * spectrum.err)
+    assert prepared.flux_frame == "rest"
+    assert prepared.metadata.rest_frame_conversion["status"] == "applied"
     assert prepared.metadata.galactic_extinction_corrected
     assert prepared.metadata.galactic_extinction["status"] == "declared_corrected"
 
@@ -251,7 +273,7 @@ def test_prepare_spectrum_disabled_and_missing_coordinate_guidance():
         np.linspace(3500.0, 4500.0, 64),
         np.ones(64),
         err=np.full(64, 0.1),
-        z=0.0,
+        z=0.25,
         flux_unit="relative",
     )
     disabled = qsospec.prepare_spectrum(
@@ -260,8 +282,61 @@ def test_prepare_spectrum_disabled_and_missing_coordinate_guidance():
     )
     assert not disabled.metadata.galactic_extinction_corrected
     assert disabled.metadata.galactic_extinction["status"] == "disabled"
+    np.testing.assert_allclose(disabled.flux, 1.25 * spectrum.flux)
+    np.testing.assert_allclose(disabled.err, 1.25 * spectrum.err)
+    assert disabled.flux_frame == "rest"
 
     with pytest.raises(ValueError, match="galactic_extinction_corrected=True"):
+        qsospec.prepare_spectrum(spectrum)
+
+
+def test_prepare_spectrum_leaves_declared_rest_frame_arrays_unchanged():
+    wave = np.linspace(1200.0, 2200.0, 64)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        np.linspace(1.0, 2.0, wave.size),
+        err=np.full(wave.size, 0.1),
+        z=2.0,
+        wave_frame="rest",
+        galactic_extinction_corrected=True,
+        flux_unit="relative",
+    )
+
+    prepared = qsospec.prepare_spectrum(spectrum)
+
+    np.testing.assert_allclose(prepared.wave_rest, wave)
+    np.testing.assert_allclose(prepared.flux, spectrum.flux)
+    np.testing.assert_allclose(prepared.err, spectrum.err)
+    assert prepared.flux_frame == "rest"
+    assert prepared.metadata.rest_frame_conversion == {}
+
+
+def test_prepare_spectrum_rejects_conflicting_frame_provenance():
+    wave = np.linspace(1200.0, 2200.0, 64)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        np.ones(wave.size),
+        err=np.full(wave.size, 0.1),
+        z=1.0,
+        wave_frame="rest",
+        galactic_extinction_corrected=True,
+        flux_unit="relative",
+        metadata=qsospec.SpectrumMetadata(
+            flux_unit="relative",
+            flux_frame="rest",
+            galactic_extinction_corrected=True,
+            rest_frame_conversion={
+                "status": "applied",
+                "input_flux_frame": "observed",
+                "output_flux_frame": "rest",
+                "redshift": 2.0,
+                "flux_error_factor": 3.0,
+                "inverse_variance_factor": 1.0 / 9.0,
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="conflicting rest-frame"):
         qsospec.prepare_spectrum(spectrum)
 
 

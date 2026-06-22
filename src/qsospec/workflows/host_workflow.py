@@ -91,6 +91,32 @@ def _spectrum_from_arrays(
         dict(spectrum_data.metadata.get("galactic_extinction", {}))
         if spectrum_data is not None else {}
     )
+    if spectrum_data is not None:
+        base_metadata = dict(source_metadata or {})
+        for key in (
+            "flux_unit",
+            "flux_scale",
+            "flux_frame",
+            "rest_frame_conversion",
+        ):
+            if key in spectrum_data.metadata:
+                base_metadata[key] = spectrum_data.metadata[key]
+        base_metadata.update(
+            {
+                "source": source,
+                "ra": spectrum_data.ra,
+                "dec": spectrum_data.dec,
+                "galactic_extinction_corrected": extinction.get("status")
+                in (
+                    "applied",
+                    "declared_corrected",
+                    "caller_preprocessed",
+                ),
+                "galactic_extinction": extinction,
+            }
+        )
+    else:
+        base_metadata = source_metadata
     return Spectrum.from_arrays(
         wave_obs,
         flux,
@@ -98,7 +124,7 @@ def _spectrum_from_arrays(
         z=float(redshift),
         wave_frame="observed",
         mask=mask,
-        survey=None if source_metadata is not None else "desi",
+        survey=None if base_metadata is not None else "desi",
         source=source,
         ra=None if spectrum_data is None else spectrum_data.ra,
         dec=None if spectrum_data is None else spectrum_data.dec,
@@ -108,7 +134,7 @@ def _spectrum_from_arrays(
             "caller_preprocessed",
         ),
         galactic_extinction=extinction,
-        metadata=source_metadata,
+        metadata=base_metadata,
     )
 
 
@@ -495,6 +521,10 @@ def fit_global_lines_workflow(
             "dec": spectrum_data.dec,
             "redshift": fit_spectrum.z,
             "fit_kind": "global",
+            "flux_frame": fit_spectrum.flux_frame,
+            "rest_frame_conversion": dict(
+                fit_spectrum.metadata.rest_frame_conversion
+            ),
             "host_decomp_requested": bool(run_host_decomp),
             "host_decomp_enabled": host_decomp_enabled,
             "host_decomp_skip_reason": host_skip_reason,

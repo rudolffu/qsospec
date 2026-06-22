@@ -10,7 +10,7 @@ from ..solvers.least_squares import run_least_squares
 from ..parameters import pack_line_complex_parameters
 from ..residuals import iron_basis_vector, model_and_residual, model_components, model_vector
 from ..result import FitResult, LocalFitResult
-from ..spectrum import Spectrum
+from ..spectrum import Spectrum, require_rest_frame_flux
 from ..warnings import FitWarning
 
 
@@ -98,6 +98,7 @@ def fit_line_complex(
 ) -> FitResult:
     """Fit one local Gaussian line complex on the spectrum rest-frame grid."""
 
+    require_rest_frame_flux(spectrum)
     wave_rest = spectrum.wave_rest
     lo, hi = map(float, config.window)
     fit_mask = _fit_pixel_mask(spectrum, config)
@@ -317,6 +318,7 @@ def _validate_local_window(
 def fit_local(spectrum: Spectrum, config: LocalFitConfig) -> LocalFitResult:
     """Fit one or more local line-complex windows independently."""
 
+    require_rest_frame_flux(spectrum)
     window_results = {}
     all_warnings: List[FitWarning] = []
     for index, window_config in enumerate(config.windows):

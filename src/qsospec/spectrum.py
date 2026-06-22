@@ -44,8 +44,9 @@ class Spectrum:
     ) -> "Spectrum":
         """Build a spectrum from plain arrays.
 
-        ``wave_frame`` may be ``"observed"`` or ``"rest"``. Internally the
-        observed wavelength is stored and rest wavelength is derived from ``z``.
+        ``wave_frame`` may be ``"observed"`` or ``"rest"`` and declares the
+        frame of both wavelength and F_lambda. Internally the observed
+        wavelength is stored and rest wavelength is derived from ``z``.
         """
 
         wave = np.asarray(wave, dtype=float)
@@ -56,6 +57,8 @@ class Spectrum:
             raise ValueError("wave and flux must have the same shape.")
         if not np.isfinite(z):
             raise ValueError("z must be finite.")
+        if 1.0 + float(z) <= 0:
+            raise ValueError("z must satisfy 1 + z > 0.")
         if metadata is None and survey is None and flux_unit is None:
             raise ValueError(
                 "flux_unit is required for array spectra; use 'cgs' for "
@@ -117,6 +120,7 @@ class Spectrum:
                 wave_unit=wave_unit,
                 flux_unit=flux_unit,
                 flux_scale=flux_scale,
+                flux_frame=(frame if metadata is None else None),
                 source=source,
                 ra=ra,
                 dec=dec,
@@ -169,6 +173,12 @@ class Spectrum:
         return self.metadata.flux_scale
 
     @property
+    def flux_frame(self) -> str:
+        """Flux-density frame: ``observed`` or ``rest``."""
+
+        return self.metadata.flux_frame
+
+    @property
     def flux_density_unit(self) -> str:
         """Internal display label for the input f_lambda values."""
 
@@ -181,3 +191,14 @@ class Spectrum:
         """Internal compatibility alias for the physical cgs scale."""
 
         return self.flux_scale
+
+
+def require_rest_frame_flux(spectrum: Spectrum) -> None:
+    """Raise when a numerical fitter receives observed-frame flux density."""
+
+    if spectrum.flux_frame != "rest":
+        raise ValueError(
+            "This fitter requires rest-frame F_lambda. Call "
+            "qsospec.prepare_spectrum(spectrum) first, or construct model/"
+            "composite arrays with wave_frame='rest'."
+        )

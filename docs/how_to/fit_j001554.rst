@@ -2,8 +2,11 @@ Fit J001554.18+560257.5
 ========================
 
 This example adapts the single-object qsofitmore tutorial to qsospec. The
-quasar was observed with the Lijiang 2.4 m Telescope and appears in the
-Galactic-plane quasar survey of Fu et al. (2022).
+quasar was observed with the Lijiang 2.4 m Telescope and belongs to the sample
+of Galactic-plane quasars in `Fu et al. (2022)
+<https://ui.adsabs.harvard.edu/abs/2022ApJS..261...32F/abstract>`_. Its
+relatively large :math:`E(B-V)` is expected from that Galactic-plane
+selection.
 
 Prerequisites
 -------------
@@ -59,8 +62,23 @@ foreground Galactic extinction.
    )
 
 ``fit_object_to_store`` queries Planck, applies the F99 correction in the
-observed frame, runs pPXF on the corrected spectrum, subtracts the inferred
+observed frame, converts wavelength and flux density to the rest frame, runs
+pPXF on the corrected rest-frame-normalized spectrum, subtracts the inferred
 host, selects the single or broken power law, and writes the run and QA plot.
+
+The resulting QA figure shows the corrected total spectrum in the overview.
+Because host decomposition is enabled, its zoom panels show the
+host-subtracted spectrum and model. The title reports the applied Planck
+:math:`E(B-V)`. Both wavelength and :math:`F_\lambda` use the prepared
+rest-frame convention.
+
+.. figure:: ../_static/j001554_auto_host_qa.png
+   :alt: QA figure for J001554.18+560257.5 after Planck correction and pPXF host decomposition
+   :width: 100%
+
+   J001554.18+560257.5 fitted with automatic power-law selection and pPXF host
+   decomposition. The overview information box identifies the
+   host-subtracted zoom-panel convention.
 
 Inspect the outputs
 -------------------
@@ -109,5 +127,6 @@ Way extinction, declare that when constructing the spectrum:
 The high-level workflow then preserves the arrays and records
 ``declared_corrected`` provenance.
 
-The Galactic correction always occurs before pPXF. See :doc:`fit_with_host`
-for alternative host-template configuration.
+The Galactic correction and rest-frame conversion always occur before pPXF,
+in that order. See :doc:`fit_with_host` for alternative host-template
+configuration.

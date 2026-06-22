@@ -31,7 +31,7 @@ from ..global_result import (
     HbetaComplexResult,
     WorkflowResult,
 )
-from ..spectrum import Spectrum
+from ..spectrum import Spectrum, require_rest_frame_flux
 from ..templates import (
     evaluate_balmer_pseudocontinuum,
     evaluate_balmer_pseudocontinuum_with_derivatives,
@@ -960,7 +960,8 @@ def _fit_global_continuum_fixed(
             {
                 "balmer_pseudocontinuum_implied_hbeta_flux_input": balmer_amp,
                 "balmer_pseudocontinuum_implied_hbeta_flux_cgs": (
-                    balmer_amp * (1.0 + spectrum.z) * float(scale) if scale is not None else np.nan
+                    balmer_amp * float(scale)
+                    if scale is not None else np.nan
                 ),
                 "balmer_pseudocontinuum_fwhm_kms": float(balmer_fwhm),
                 "balmer_pseudocontinuum_velocity_kms": balmer_velocity,
@@ -1026,6 +1027,7 @@ def fit_global_continuum(
 ) -> GlobalContinuumResult:
     """Fit the global AGN continuum and resolve automatic power-law mode."""
 
+    require_rest_frame_flux(spectrum)
     cfg = config or GlobalContinuumConfig()
     requested_mode = cfg.power_law.mode
     if requested_mode != "auto":
@@ -1797,7 +1799,7 @@ def _hbeta_metrics(
     centroid = float(np.trapezoid(grid * profile, grid) / area) if area > 0 else np.nan
     variance = float(np.trapezoid((grid - centroid) ** 2 * profile, grid) / area) if area > 0 else np.nan
     sigma_kms = np.sqrt(max(variance, 0.0)) / HBETA_WAVE * C_KMS if np.isfinite(variance) else np.nan
-    physical = area * (1.0 + z) * flux_scale_to_cgs if flux_scale_to_cgs is not None else np.nan
+    physical = area * flux_scale_to_cgs if flux_scale_to_cgs is not None else np.nan
     return {
         "Hb_broad_flux_input": area,
         "Hb_broad_flux_cgs": float(physical),
@@ -1935,7 +1937,7 @@ def _broad_complex_metrics(
         else np.nan
     )
     physical = (
-        area * (1.0 + z) * flux_scale_to_cgs
+        area * flux_scale_to_cgs
         if flux_scale_to_cgs is not None
         else np.nan
     )
@@ -1960,14 +1962,14 @@ def _broad_complex_metrics(
             value = context.get(theta, f"{name}.flux")
             metrics[f"{name}_flux_input"] = value
             metrics[f"{name}_flux_cgs"] = (
-                value * (1.0 + z) * flux_scale_to_cgs
+                value * flux_scale_to_cgs
                 if flux_scale_to_cgs is not None
                 else np.nan
             )
         nii6549 = context.get(theta, "NII6585.flux") / ratio
         metrics["NII6549_flux_input"] = nii6549
         metrics["NII6549_flux_cgs"] = (
-            nii6549 * (1.0 + z) * flux_scale_to_cgs
+            nii6549 * flux_scale_to_cgs
             if flux_scale_to_cgs is not None
             else np.nan
         )
@@ -1975,7 +1977,7 @@ def _broad_complex_metrics(
         narrow_flux = context.get(theta, "MgII_narrow.flux")
         metrics["MgII_narrow_flux_input"] = narrow_flux
         metrics["MgII_narrow_flux_cgs"] = (
-            narrow_flux * (1.0 + z) * flux_scale_to_cgs
+            narrow_flux * flux_scale_to_cgs
             if flux_scale_to_cgs is not None
             else np.nan
         )
@@ -2086,7 +2088,7 @@ def _fit_separable_emission_complex(
             "complex_name": complex_name,
             "coverage": coverage,
             "continuum_at_line": continuum_at_line,
-            "line_flux_cgs_conversion": "(1+z)*flux_density_scale_to_cgs",
+            "line_flux_cgs_conversion": "flux_density_scale_to_cgs",
             "optimizer_requested": config.optimizer_method,
             "optimizer_used": optimizer_used,
             "jacobian_method": (
@@ -2135,6 +2137,7 @@ def fit_mgii_complex(
 ) -> EmissionComplexResult:
     """Fit two broad Mg II components plus one narrow component."""
 
+    require_rest_frame_flux(spectrum)
     cfg = config or MgIIComplexConfig()
     return _fit_separable_emission_complex(
         spectrum,
@@ -2160,6 +2163,7 @@ def fit_halpha_complex(
 ) -> EmissionComplexResult:
     """Fit broad H-alpha plus tied narrow H-alpha/[N II]/[S II]."""
 
+    require_rest_frame_flux(spectrum)
     cfg = config or HalphaComplexConfig()
     result = _fit_separable_emission_complex(
         spectrum,
@@ -2259,7 +2263,7 @@ def _fit_hbeta_candidate(
         {
             "oiii_ratio_5007_4959": config.oiii_ratio_5007_4959,
             "continuum_at_hbeta": continuum_at_hbeta,
-            "line_flux_cgs_conversion": "(1+z)*flux_density_scale_to_cgs",
+            "line_flux_cgs_conversion": "flux_density_scale_to_cgs",
             "optimizer_requested": config.optimizer_method,
             "optimizer_used": optimizer_used,
             "jacobian_method": (
@@ -2308,6 +2312,7 @@ def fit_hbeta_complex(
 ) -> HbetaComplexResult:
     """Fit core-only and optional wing H-beta/[O III] candidates."""
 
+    require_rest_frame_flux(spectrum)
     cfg = config or HbetaComplexConfig()
     candidate_covariance = compute_covariance or cfg.fit_oiii_wings
     core = _fit_hbeta_candidate(
@@ -2327,13 +2332,30 @@ def fit_hbeta_complex(
     wing_snr = wing_flux / wing_error if np.isfinite(wing_error) and wing_error > 0 else 0.0
     wing_width = wing.param_values.get("wing.fwhm_kms", 0.0)
     core_width = wing.param_values.get("narrow.fwhm_kms", np.inf)
-    bic_improvement = core.bic - wing.bic
-    accepted = (
-        wing.success
-        and bic_improvement >= cfg.wing_bic_delta
-        and wing_snr >= cfg.wing_min_snr
-        and wing_width > core_width
+    wing_velocity = wing.param_values.get("wing.velocity_kms", np.nan)
+    core_velocity = wing.param_values.get("narrow.velocity_kms", np.nan)
+    fwhm_ratio = (
+        wing_width / core_width
+        if np.isfinite(core_width) and core_width > 0
+        else 0.0
     )
+    velocity_separation = (
+        abs(wing_velocity - core_velocity)
+        if np.isfinite(wing_velocity) and np.isfinite(core_velocity)
+        else 0.0
+    )
+    bic_improvement = core.bic - wing.bic
+    criteria = {
+        "fit_success": bool(wing.success),
+        "bic": bool(bic_improvement >= cfg.wing_bic_delta),
+        "snr": bool(wing_snr >= cfg.wing_min_snr),
+        "fwhm_ratio": bool(fwhm_ratio >= cfg.wing_min_fwhm_ratio),
+        "velocity_separation": bool(
+            velocity_separation
+            >= cfg.wing_min_velocity_separation_kms
+        ),
+    }
+    accepted = all(criteria.values())
     selected = wing if accepted else core
     selected.metadata["wing_candidate"] = {
         "accepted": bool(accepted),
@@ -2341,12 +2363,31 @@ def fit_hbeta_complex(
         "wing_snr": float(wing_snr),
         "wing_fwhm_kms": float(wing_width),
         "core_fwhm_kms": float(core_width),
+        "fwhm_ratio": float(fwhm_ratio),
+        "wing_velocity_kms": float(wing_velocity),
+        "core_velocity_kms": float(core_velocity),
+        "velocity_separation_kms": float(velocity_separation),
+        "thresholds": {
+            "bic_improvement": float(cfg.wing_bic_delta),
+            "snr": float(cfg.wing_min_snr),
+            "fwhm_ratio": float(cfg.wing_min_fwhm_ratio),
+            "velocity_separation_kms": float(
+                cfg.wing_min_velocity_separation_kms
+            ),
+        },
+        "criteria": criteria,
+        "rejection_reasons": [
+            name for name, passed in criteria.items() if not passed
+        ],
     }
     if not accepted:
         selected.warnings.append(
             FitWarning(
                 code="oiii_wing_rejected",
-                message="The [O III] wing candidate did not pass the BIC, S/N, and width criteria.",
+                message=(
+                    "The [O III] wing candidate did not pass the BIC, S/N, "
+                    "width-ratio, and velocity-separation criteria."
+                ),
                 severity="info",
                 context=selected.metadata["wing_candidate"],
             )
@@ -2463,6 +2504,7 @@ def fit_global_lines(
 ) -> WorkflowResult:
     """Fit the global continuum and adaptively selected emission recipes."""
 
+    require_rest_frame_flux(spectrum)
     lya_cfg = lya_nv_config or LyaNVComplexConfig()
     requested_recipes = _resolve_requested_recipes(complexes)
     requested_recipes = [
@@ -2865,6 +2907,10 @@ def fit_global_lines(
         ),
         "continuum_samples": samples,
         "continuum_sample_flux_density_unit": spectrum.flux_density_unit,
+        "flux_frame": spectrum.flux_frame,
+        "rest_frame_conversion": dict(
+            spectrum.metadata.rest_frame_conversion
+        ),
         "maximum_valid_rest_wavelength": continuum.metadata.get(
             "maximum_valid_rest_wavelength"
         ),

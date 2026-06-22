@@ -20,6 +20,11 @@ Profiles and roles
   relevant recipe supports them.
 - Fixed ratios and shared kinematics are encoded in recipe metadata.
 
+For [O III], the default wing candidate must improve BIC by at least 20, have
+flux S/N of at least 5, be at least twice as broad as the narrow core, and
+have a centroid separated from the core by at least 150 km/s. The candidate
+diagnostics and rejection reasons are retained in result metadata.
+
 Current UV defaults
 -------------------
 

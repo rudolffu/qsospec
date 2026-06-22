@@ -25,8 +25,11 @@ redshift. Arrays are treated as uncorrected by default.
    prepared = qsospec.prepare_spectrum(spectrum)
    result = qsospec.fit_global_lines(prepared)
 
-If the arrays are already dereddened, construct the spectrum with
-``galactic_extinction_corrected=True`` and fit it directly.
+If observed-frame arrays are already dereddened, construct the spectrum with
+``galactic_extinction_corrected=True`` and still call
+``prepare_spectrum`` to perform the rest-frame flux conversion. Only arrays
+that already contain rest wavelength and rest-frame :math:`F_\lambda` should
+use ``wave_frame="rest"`` and enter a low-level fitter directly.
 
 Expected outputs
 ----------------

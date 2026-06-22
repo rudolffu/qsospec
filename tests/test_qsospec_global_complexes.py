@@ -32,6 +32,7 @@ from qsospec.io.products import (
     _line_groups,
     _host_fraction_annotation,
     _has_host_context,
+    _input_spectrum_label,
     _masked_running_median,
     _percentile_limits,
     _plot_qa,
@@ -294,6 +295,7 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
     assert full.metadata["qa_overview_annotation"] == {
         "continuum_reduced_chi2": full.continuum.reduced_chi2,
         "host_state": "decomposed with pPXF",
+        "zoom_spectrum": "input",
         "host_fractions": "",
         "ra": None,
         "dec": None,
@@ -569,7 +571,7 @@ def test_qa_applies_display_scale_without_mutating_fit_arrays(
     observed = next(
         line
         for line in figure.axes[0].lines
-        if line.get_label() == "observed spectrum"
+        if line.get_label() == "Input spectrum\nrest-frame $F_\\lambda$"
     )
     expected_scale = 25.0
     np.testing.assert_allclose(
@@ -741,9 +743,23 @@ def test_qa_title_smoothing_and_tick_helpers():
             "redshift": 0.75,
             "ra": 151.123456,
             "dec": -2.345678,
+            "galactic_extinction": {
+                "status": "applied",
+                "applied_ebv": 0.12345,
+            },
         }
     )
-    assert _qa_overview_title(result) == "Object abc   z = 0.7500"
+    assert _qa_overview_title(result) == (
+        "Object abc   z = 0.7500\n"
+        "RA = 151.12346   Dec = -2.34568   $E(B-V) = 0.1235$"
+    )
+    assert _input_spectrum_label(result) == (
+        "Input spectrum\nrest-frame $F_\\lambda$\nMW extinction corrected"
+    )
+    assert _input_spectrum_label(result, smoothed=True) == (
+        "Input spectrum\nrest-frame $F_\\lambda$\n"
+        "MW extinction corrected\nsmoothed for display"
+    )
     assert (
         _qa_overview_title(
             result,
@@ -832,6 +848,7 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert variants["one"].metadata["qa_overview_annotation"] == {
         "continuum_reduced_chi2": variants["one"].continuum.reduced_chi2,
         "host_state": "not decomposed",
+        "zoom_spectrum": "input",
         "host_fractions": "",
         "ra": None,
         "dec": None,
@@ -855,8 +872,12 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert "F_\\lambda" in figure.axes[2].get_ylabel()
     assert all(axis.get_ylabel() == "" for axis in figure.axes[3:])
     overview_labels = overview_axis.get_legend_handles_labels()[1]
-    assert overview_labels.count("observed spectrum") == 1
-    assert overview_labels.count("observed spectrum (smoothed for display)") == 1
+    assert overview_labels.count(
+        "Input spectrum\nrest-frame $F_\\lambda$"
+    ) == 1
+    assert overview_labels.count(
+        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+    ) == 1
     assert overview_labels.count("Fe II") <= 1
     assert overview_labels.count("broad-line model") == 1
     assert overview_labels.count("narrow-line model") == 1
@@ -900,9 +921,12 @@ def test_qa_smoothing_pixel_threshold(
     figure = plt.gcf()
     labels = figure.axes[0].get_legend_handles_labels()[1]
     assert (
-        "observed spectrum (smoothed for display)" in labels
+        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        in labels
     ) is expect_smoothed
-    assert ("observed spectrum" in labels) is (not expect_smoothed)
+    assert (
+        "Input spectrum\nrest-frame $F_\\lambda$" in labels
+    ) is (not expect_smoothed)
     assert result.metadata["qa_smoothing_effective"] is expect_smoothed
     assert result.metadata[
         "qa_smoothing_suppressed_short_spectrum"
@@ -933,6 +957,8 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
         {
             "object_id": "host-test",
             "redshift": 0.5,
+            "ra": 151.123456,
+            "dec": -2.345678,
             "host_decomp_enabled": True,
             "continuum_samples": {
                 "fracHost_3000": 0.2,
@@ -973,17 +999,29 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
     )
     figure = plt.gcf()
     overview_labels = figure.axes[0].get_legend_handles_labels()[1]
-    assert "observed spectrum (smoothed for display)" in overview_labels
-    assert "observed spectrum" not in overview_labels
+    assert (
+        "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
+        in overview_labels
+    )
+    assert "Input spectrum\nrest-frame $F_\\lambda$" not in overview_labels
     assert "host galaxy" in overview_labels
     assert "total model" in overview_labels
     assert "continuum model (extrapolated)" not in overview_labels
     for axis in figure.axes[2:]:
         zoom_labels = axis.get_legend_handles_labels()[1]
-        assert "observed spectrum" not in zoom_labels
+        assert "Input spectrum\nrest-frame $F_\\lambda$" not in zoom_labels
         assert "host galaxy" not in zoom_labels
     assert result.metadata["qa_host_context_overview_requested"] is True
     assert result.metadata["qa_host_context_overview_used"] is True
+    assert result.metadata["qa_overview_annotation"]["zoom_spectrum"] == (
+        "host-subtracted"
+    )
+    assert any(
+        "Zoom panels: host-subtracted spectrum" in text.get_text()
+        for text in figure.axes[0].texts
+    )
+    assert "RA = 151.12346" in figure.axes[0].get_title()
+    assert "Dec = -2.34568" in figure.axes[0].get_title()
     assert result.metadata["qa_original_spectrum_smoothed_for_display"] is True
     assert result.metadata["qa_original_spectrum_smoothed_used"] is True
     assert result.metadata["qa_smoothing_suppressed_short_spectrum"] is False
@@ -991,7 +1029,10 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
     assert figure.axes[0].title.get_fontfamily() == ["serif"]
     assert list(matplotlib.rcParams["font.family"]) == original_font_family
     original_line = next(
-        line for line in figure.axes[0].lines if line.get_label() == "observed spectrum (smoothed for display)"
+        line
+        for line in figure.axes[0].lines
+        if line.get_label()
+        == "Input spectrum\nrest-frame $F_\\lambda$\nsmoothed for display"
     )
     expected_smoothed = _masked_running_median(
         result.total_spectrum.flux,

@@ -80,7 +80,12 @@ def test_units_are_required_and_strictly_validated():
 def test_relative_units_fit_but_do_not_report_cgs_flux():
     wave, flux, err = _arrays()
     spec = qsospec.Spectrum.from_arrays(
-        wave, flux, err=err, z=0.0, flux_unit="relative"
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
     )
     result = qsospec.fit_line_complex(spec, _config())
     row = result.to_table().iloc[0]
@@ -94,7 +99,12 @@ def test_relative_units_fit_but_do_not_report_cgs_flux():
 def test_cgs_line_flux_is_scaled_when_known():
     wave, flux, err = _arrays()
     spec = qsospec.Spectrum.from_arrays(
-        wave, flux, err=err, z=0.0, survey="sdss"
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        survey="sdss",
     )
     result = qsospec.fit_line_complex(spec, _config())
     row = result.to_table().iloc[0]
@@ -104,9 +114,58 @@ def test_cgs_line_flux_is_scaled_when_known():
     assert np.isclose(row["line_flux_cgs"], expected_input * 1e-17)
 
 
+def test_rest_frame_preparation_moves_redshift_factor_into_input_flux():
+    wave, flux, err = _arrays()
+    baseline = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        survey="sdss",
+    )
+    observed = qsospec.Spectrum.from_arrays(
+        wave * 1.5,
+        flux,
+        err=err,
+        z=0.5,
+        galactic_extinction_corrected=True,
+        survey="sdss",
+    )
+    prepared = qsospec.prepare_spectrum(observed)
+
+    baseline_row = qsospec.fit_line_complex(
+        baseline, _config()
+    ).to_table().iloc[0]
+    prepared_row = qsospec.fit_line_complex(
+        prepared, _config()
+    ).to_table().iloc[0]
+
+    assert prepared_row["line_flux_input"] == pytest.approx(
+        1.5 * baseline_row["line_flux_input"]
+    )
+    assert prepared_row["line_flux_cgs"] == pytest.approx(
+        prepared_row["line_flux_input"] * 1e-17
+    )
+
+
 def test_unknown_survey_raises_clear_error():
     wave, flux, err = _arrays()
     with pytest.raises(ValueError, match="Unknown qsospec survey preset"):
         qsospec.Spectrum.from_arrays(
             wave, flux, err=err, z=0.0, survey="mystery"
         )
+
+
+def test_low_level_fitter_rejects_observed_frame_flux():
+    wave, flux, err = _arrays()
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.2,
+        flux_unit="relative",
+    )
+
+    with pytest.raises(ValueError, match="prepare_spectrum"):
+        qsospec.fit_line_complex(spectrum, _config())

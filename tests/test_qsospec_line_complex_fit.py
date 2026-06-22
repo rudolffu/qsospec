@@ -13,7 +13,17 @@ def _synthetic_spectrum(local_continuum="linear", z=0.12):
     line = 8.0 * np.exp(-0.5 * ((wave_rest - 4862.2) / 24.0) ** 2)
     err = np.full_like(wave_rest, 0.08)
     flux = continuum + line + rng.normal(0.0, err)
-    return qsospec.Spectrum.from_arrays(wave_rest * (1.0 + z), flux, err=err, z=z, flux_unit="relative"), wave_rest
+    return (
+        qsospec.Spectrum.from_arrays(
+            wave_rest,
+            flux,
+            err=err,
+            z=z,
+            wave_frame="rest",
+            flux_unit="relative",
+        ),
+        wave_rest,
+    )
 
 
 def _config(local_continuum="linear", jacobian="analytic_dense"):
@@ -80,7 +90,13 @@ def test_invalid_pixels_are_ignored():
     mask = np.ones_like(flux, dtype=bool)
     mask[30] = False
     spec = qsospec.Spectrum.from_arrays(
-        wave_rest * (1.0 + spec.z), flux, err=err, z=spec.z, mask=mask, flux_unit="relative"
+        wave_rest,
+        flux,
+        err=err,
+        z=spec.z,
+        mask=mask,
+        wave_frame="rest",
+        flux_unit="relative",
     )
 
     result = qsospec.fit_line_complex(spec, _config(local_continuum="linear"))

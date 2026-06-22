@@ -7,8 +7,9 @@ residual masks that show which pixels constrained the fit.
 Overview semantics
 ------------------
 
-- Thin grey: observed spectrum.
-- Darker grey: observed spectrum smoothed for display when the input has more
+- Thin grey: input spectrum, with Milky Way extinction correction identified
+  in the legend when applied.
+- Darker grey: input spectrum smoothed for display when the input has more
   than 4,000 wavelength pixels.
 - Solid near-black: total model across all valid displayed pixels.
 - Grey shading: pixels masked during the earlier pPXF host fit.
@@ -37,6 +38,13 @@ Physical spectra are displayed in
 plot-only transformation; fitted values, measurements, and archived arrays
 retain their native input scaling. Relative spectra retain relative
 :math:`F_\lambda` units.
+
+The horizontal axis is transformed to rest wavelength,
+:math:`\lambda_{\rm rest}=\lambda_{\rm obs}/(1+z)`. The plotted input flux
+density and uncertainty use the prepared rest-frame normalization,
+:math:`F_{\lambda,\rm rest}=(1+z)F_{\lambda,\rm obs}`. Galactic dereddening is
+evaluated first at observed wavelengths. The display-only cgs scaling above
+does not alter these fitted arrays.
 
 When Lyα is covered but not fitted, the overview upper limit uses the 99.8th
 percentile of the unsmoothed displayed data rather than an incomplete model.

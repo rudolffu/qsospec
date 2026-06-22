@@ -273,6 +273,58 @@ def test_hbeta_wing_selection_accepts_strong_broad_wing():
     assert result.success
     assert result.selected_model == "wing"
     assert result.metadata["wing_candidate"]["accepted"]
+    assert result.metadata["wing_candidate"]["criteria"] == {
+        "fit_success": True,
+        "bic": True,
+        "snr": True,
+        "fwhm_ratio": True,
+        "velocity_separation": True,
+    }
+
+
+def test_hbeta_wing_selection_rejects_modest_width_contrast():
+    wave = np.linspace(4600.0, 5120.0, 1800)
+    continuum = np.full_like(wave, 1.5)
+    line = _gaussian_area_profile(wave, 100.0, 4862.68, 2500.0)
+    line += _gaussian_area_profile(wave, 35.0, 5008.24, 900.0)
+    line += _gaussian_area_profile(wave, 35.0 / 2.98, 4960.30, 900.0)
+    wing_velocity = -350.0
+    line += _gaussian_area_profile(
+        wave,
+        30.0,
+        5008.24 * np.exp(wing_velocity / C_KMS),
+        1450.0,
+    )
+    line += _gaussian_area_profile(
+        wave,
+        30.0 / 2.98,
+        4960.30 * np.exp(wing_velocity / C_KMS),
+        1450.0,
+    )
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        continuum + line,
+        err=np.full_like(wave, 0.02),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+
+    result = qsospec.fit_hbeta_complex(
+        spectrum,
+        _continuum_result(spectrum, continuum),
+    )
+
+    candidate = result.metadata["wing_candidate"]
+    assert result.success
+    assert result.selected_model == "core"
+    assert not candidate["accepted"]
+    assert candidate["bic_improvement"] > candidate["thresholds"][
+        "bic_improvement"
+    ]
+    assert candidate["wing_snr"] > candidate["thresholds"]["snr"]
+    assert candidate["fwhm_ratio"] < candidate["thresholds"]["fwhm_ratio"]
+    assert candidate["rejection_reasons"] == ["fwhm_ratio"]
+    assert "oiii_wing_rejected" in result.warning_codes()
 
 
 def test_hbeta_wing_selection_rejects_absent_wing_and_can_fit_heii():

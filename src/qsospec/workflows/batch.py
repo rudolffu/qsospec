@@ -589,6 +589,10 @@ def fit_object_to_store(
                 "input_file": descriptor.source,
                 "flux_unit": prepared_spectrum.flux_unit,
                 "flux_scale": prepared_spectrum.flux_scale,
+                "flux_frame": prepared_spectrum.flux_frame,
+                "rest_frame_conversion": dict(
+                    prepared_spectrum.metadata.rest_frame_conversion
+                ),
                 "spectrum_metadata": (
                     prepared_spectrum.metadata.to_dict()
                 ),

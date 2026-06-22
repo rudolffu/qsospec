@@ -12,7 +12,7 @@ from .. import lines
 from ..complex_recipes import ComponentRecipe, ComplexRecipe
 from ..config import LyaNVComplexConfig
 from ..global_result import EmissionComplexResult, GlobalContinuumResult
-from ..spectrum import Spectrum
+from ..spectrum import Spectrum, require_rest_frame_flux
 from ..warnings import FitWarning
 
 C_KMS = 299792.458
@@ -670,6 +670,7 @@ def fit_generic_complex(
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
+    require_rest_frame_flux(spectrum)
     from .global_fit import (
         _active_bound_warnings,
         _covariance_from_jacobian,
@@ -966,7 +967,6 @@ def fit_generic_complex(
             values[f"{prefix}_flux_input"] = integrated_flux
             values[f"{prefix}_flux_cgs"] = (
                 integrated_flux
-                * (1.0 + spectrum.z)
                 * spectrum.flux_density_scale_to_cgs
                 if spectrum.flux_density_scale_to_cgs is not None else np.nan
             )
@@ -1053,6 +1053,7 @@ def fit_lya_nv_complex(
 ) -> EmissionComplexResult:
     """Fit Lyα/N V with coverage classification and one absorption refit."""
 
+    require_rest_frame_flux(spectrum)
     cfg = config or LyaNVComplexConfig()
     coverage = classify_lya_coverage(spectrum, cfg)
     if not coverage.fit_allowed:

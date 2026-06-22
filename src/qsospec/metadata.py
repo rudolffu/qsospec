@@ -26,6 +26,8 @@ class SpectrumMetadata:
     wave_unit: str = "Angstrom"
     flux_unit: str = "relative"
     flux_scale: Optional[float] = None
+    flux_frame: str = "observed"
+    rest_frame_conversion: Dict[str, Any] = field(default_factory=dict)
     survey: Optional[str] = None
     source: Optional[str] = None
     ra: Optional[float] = None
@@ -41,6 +43,8 @@ class SpectrumMetadata:
             "wave_unit": self.wave_unit,
             "flux_unit": self.flux_unit,
             "flux_scale": self.flux_scale,
+            "flux_frame": self.flux_frame,
+            "rest_frame_conversion": dict(self.rest_frame_conversion),
             "survey": self.survey,
             "source": self.source,
             "ra": self.ra,
@@ -62,18 +66,6 @@ def _normalize_survey(survey: Optional[str]) -> Optional[str]:
     return _SURVEY_ALIASES[key]
 
 
-def _legacy_flux_fields(metadata: Mapping[str, Any]) -> tuple[str, Optional[float]]:
-    """Translate schema-v1--v3 flux metadata."""
-
-    scale = metadata.get("flux_density_scale_to_cgs")
-    label = str(metadata.get("flux_density_unit", "input")).lower()
-    if scale is not None:
-        return "cgs", float(scale)
-    if "erg" in label and "cm" in label:
-        return "cgs", 1.0
-    return "relative", None
-
-
 def _metadata_from_base(metadata: Optional[Any]) -> SpectrumMetadata:
     if metadata is None:
         return SpectrumMetadata()
@@ -82,6 +74,8 @@ def _metadata_from_base(metadata: Optional[Any]) -> SpectrumMetadata:
             wave_unit=metadata.wave_unit,
             flux_unit=metadata.flux_unit,
             flux_scale=metadata.flux_scale,
+            flux_frame=metadata.flux_frame,
+            rest_frame_conversion=dict(metadata.rest_frame_conversion),
             survey=metadata.survey,
             source=metadata.source,
             ra=metadata.ra,
@@ -93,14 +87,16 @@ def _metadata_from_base(metadata: Optional[Any]) -> SpectrumMetadata:
             notes=list(metadata.notes),
         )
     if isinstance(metadata, Mapping):
-        flux_unit = metadata.get("flux_unit")
+        flux_unit = metadata.get("flux_unit", "relative")
         flux_scale = metadata.get("flux_scale")
-        if flux_unit is None:
-            flux_unit, flux_scale = _legacy_flux_fields(metadata)
         return SpectrumMetadata(
             wave_unit=str(metadata.get("wave_unit", "Angstrom")),
             flux_unit=str(flux_unit),
             flux_scale=flux_scale,
+            flux_frame=str(metadata.get("flux_frame", "observed")),
+            rest_frame_conversion=dict(
+                metadata.get("rest_frame_conversion", {})
+            ),
             survey=metadata.get("survey"),
             source=metadata.get("source"),
             ra=metadata.get("ra"),
@@ -122,6 +118,7 @@ def resolve_spectrum_metadata(
     wave_unit: Optional[str] = None,
     flux_unit: Optional[str] = None,
     flux_scale: Optional[float] = None,
+    flux_frame: Optional[str] = None,
     source: Optional[str] = None,
     ra: Optional[float] = None,
     dec: Optional[float] = None,
@@ -160,6 +157,13 @@ def resolve_spectrum_metadata(
 
     if wave_unit is not None:
         resolved.wave_unit = str(wave_unit)
+    if flux_frame is not None:
+        normalized_flux_frame = str(flux_frame).strip().lower()
+        if normalized_flux_frame not in ("observed", "rest"):
+            raise ValueError("flux_frame must be 'observed' or 'rest'.")
+        resolved.flux_frame = normalized_flux_frame
+    elif resolved.flux_frame not in ("observed", "rest"):
+        raise ValueError("Spectrum metadata flux_frame must be 'observed' or 'rest'.")
     if resolved.flux_scale is not None and (
         not np.isfinite(resolved.flux_scale) or resolved.flux_scale <= 0
     ):

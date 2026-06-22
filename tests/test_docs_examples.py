@@ -25,7 +25,7 @@ def _spectrum():
         flux,
         err=np.full_like(wave, 0.05),
         z=0.0,
-        wave_frame="observed",
+        wave_frame="rest",
         flux_unit="relative",
     )
 
@@ -48,6 +48,7 @@ def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path):
         base.flux,
         err=base.err,
         z=base.z,
+        wave_frame="rest",
         galactic_extinction_corrected=True,
         flux_unit="relative",
     )

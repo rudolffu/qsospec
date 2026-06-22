@@ -31,7 +31,7 @@ from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -220,7 +220,7 @@ SCHEMAS = {
             pa.field("object_key", pa.string()),
             pa.field("object_id", pa.string()),
             pa.field("redshift", pa.float64()),
-            pa.field("wave_obs", pa.list_(pa.float64())),
+            pa.field("wave_rest", pa.list_(pa.float64())),
             pa.field("flux", pa.list_(pa.float64())),
             pa.field("error", pa.list_(pa.float64())),
             pa.field("input_mask", pa.list_(pa.bool_())),
@@ -462,7 +462,8 @@ def _model_row(
                 "fit_mask": np.asarray(fit.fit_mask, dtype=bool).tolist(),
                 "excluded_mask": (
                     np.asarray(fit.excluded_mask, dtype=bool).tolist()
-                    if fit.excluded_mask is not None else None
+                    if fit.excluded_mask is not None
+                    else np.zeros_like(result.spectrum.valid_mask).tolist()
                 ),
                 "metadata": _key_values(fit.metadata),
             }
@@ -472,7 +473,9 @@ def _model_row(
         "object_key": object_key,
         "object_id": object_id,
         "redshift": float(result.spectrum.z),
-        "wave_obs": np.asarray(result.spectrum.wave_obs, dtype=float).tolist(),
+        "wave_rest": np.asarray(
+            result.spectrum.wave_rest, dtype=float
+        ).tolist(),
         "flux": np.asarray(result.spectrum.flux, dtype=float).tolist(),
         "error": np.asarray(result.spectrum.err, dtype=float).tolist(),
         "input_mask": (
@@ -606,6 +609,7 @@ class RunStore:
         config_hash = configuration_hash(configuration)
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            cls._require_current_schema(manifest)
             if manifest.get("configuration_hash") != config_hash:
                 raise ValueError(
                     "Run configuration does not match the immutable manifest. "
@@ -634,7 +638,9 @@ class RunStore:
             "units": {
                 "wavelength": "vacuum Angstrom",
                 "velocity": "km/s",
-                "model_arrays": "input flux-density units",
+                "model_arrays": (
+                    "rest-frame F_lambda in input flux-density scaling"
+                ),
             },
             "created_at": _now(),
             "updated_at": _now(),
@@ -654,25 +660,28 @@ class RunStore:
     def open(cls, path: str) -> "RunStore":
         root = Path(path).expanduser()
         manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        cls._require_current_schema(manifest)
         return cls(root, manifest)
+
+    @staticmethod
+    def _require_current_schema(manifest: Mapping[str, Any]) -> None:
+        found = str(manifest.get("schema_version", "missing"))
+        if found != SCHEMA_VERSION:
+            raise ValueError(
+                "Unsupported qsospec run schema "
+                f"{found!r}; this version requires schema {SCHEMA_VERSION}. "
+                "Recreate the run with the current package."
+            )
 
     def _ensure_directories(self) -> None:
         (self.path / "qa").mkdir(exist_ok=True)
         self._staging_path().mkdir(exist_ok=True)
 
     def _table_path(self, name: str) -> Path:
-        modern = self.path / "data" / name
-        legacy = self.path / name
-        if str(self.manifest.get("schema_version", "1")) >= "4":
-            return modern
-        if modern.exists() and not legacy.exists():
-            return modern
-        return legacy
+        return self.path / "data" / name
 
     def _staging_path(self) -> Path:
-        if str(self.manifest.get("schema_version", "1")) >= "4":
-            return self.path / ".staging"
-        return self.path / "staging"
+        return self.path / ".staging"
 
     def _write_manifest(self) -> None:
         with self._manifest_lock():
@@ -885,13 +894,10 @@ def _measurement_maps(
 
 
 def _archived_host_masks(
-    store: RunStore,
     row: Mapping[str, Any],
     wave_rest: np.ndarray,
-    *,
-    host_enabled: bool,
 ) -> tuple[Optional[np.ndarray], Optional[np.ndarray], str]:
-    """Return exact or reproducibly inferred pPXF masks for one object."""
+    """Return exact schema-v5 pPXF masks for one object."""
 
     fit_values = row.get("host_fit_mask")
     emission_values = row.get("host_emission_mask")
@@ -900,36 +906,7 @@ def _archived_host_masks(
         emission_mask = np.asarray(emission_values, dtype=bool)
         if fit_mask.shape == wave_rest.shape and emission_mask.shape == wave_rest.shape:
             return fit_mask, emission_mask, "exact"
-    if not host_enabled:
-        return None, None, "unavailable"
-    configuration = store.manifest.get("configuration", {})
-    fit_range = configuration.get("host_fit_range", (3600.0, 7000.0))
-    if not isinstance(fit_range, (list, tuple)) or len(fit_range) != 2:
-        return None, None, "unavailable"
-    try:
-        from ..workflows.host.config import default_config
-        from ..workflows.host.ppxf_host import make_emission_line_mask
-
-        host_config = configuration.get("host_config") or {}
-        defaults = default_config()
-        line_widths = host_config.get(
-            "line_mask_widths", defaults.line_mask_widths
-        )
-        broad_widths = host_config.get(
-            "broad_line_mask_widths", defaults.broad_line_mask_widths
-        )
-        fit_mask = (
-            (wave_rest >= float(fit_range[0]))
-            & (wave_rest <= float(fit_range[1]))
-        )
-        emission_mask = make_emission_line_mask(
-            wave_rest,
-            line_mask_widths=line_widths,
-            broad_line_mask_widths=broad_widths,
-        )
-    except (ImportError, TypeError, ValueError):
-        return None, None, "unavailable"
-    return fit_mask, emission_mask, "inferred"
+    return None, None, "unavailable"
 
 
 def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
@@ -961,10 +938,11 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         metadata=spectrum_metadata_values
     )
     spectrum = Spectrum.from_arrays(
-        np.asarray(row["wave_obs"], dtype=float),
+        np.asarray(row["wave_rest"], dtype=float),
         np.asarray(row["flux"], dtype=float),
         err=np.asarray(row["error"], dtype=float),
         z=float(row["redshift"]),
+        wave_frame="rest",
         mask=(
             np.asarray(row["input_mask"], dtype=bool)
             if row["input_mask"] is not None else None
@@ -974,10 +952,11 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     total_spectrum = None
     if row["total_flux"] is not None:
         total_spectrum = Spectrum.from_arrays(
-            np.asarray(row["wave_obs"], dtype=float),
+            np.asarray(row["wave_rest"], dtype=float),
             np.asarray(row["total_flux"], dtype=float),
             err=np.asarray(row["error"], dtype=float),
             z=float(row["redshift"]),
+            wave_frame="rest",
             mask=(
                 np.asarray(row["input_mask"], dtype=bool)
                 if row["input_mask"] is not None else None
@@ -1017,12 +996,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
 
     host_enabled = bool(object_row["host_decomp_enabled"])
     host_fit_mask, host_emission_mask, host_mask_provenance = (
-        _archived_host_masks(
-            store,
-            row,
-            spectrum.wave_rest,
-            host_enabled=host_enabled,
-        )
+        _archived_host_masks(row, spectrum.wave_rest)
     )
     workflow_metadata["host_mask_provenance"] = host_mask_provenance
     continuum = GlobalContinuumResult(
@@ -1036,11 +1010,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         dof=0,
         reduced_chi2=float(object_row["continuum_reduced_chi2"]),
         wave_rest=spectrum.wave_rest.copy(),
-        model=(
-            np.asarray(row["continuum_model"], dtype=float)
-            if row.get("continuum_model") is not None
-            else continuum_model
-        ),
+        model=continuum_model,
         component_models=continuum_components,
         fit_mask=np.asarray(row["continuum_fit_mask"], dtype=bool),
         clip_mask=np.asarray(row["continuum_clip_mask"], dtype=bool),
@@ -1062,7 +1032,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         metrics, metric_errors = _measurement_maps(
             store, row["object_key"], "complex_metric", recipe_id
         )
-        complex_metadata = _from_key_values(item.get("metadata"))
+        complex_metadata = _from_key_values(item["metadata"])
         component_models = complex_components.get(recipe_id, {})
         complex_model = sum(
             component_models.values(),
@@ -1083,19 +1053,9 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
             reduced_chi2=float(item["reduced_chi2"]),
             bic=float(item["bic"]),
             wave_rest=spectrum.wave_rest.copy(),
-            flux_continuum_subtracted=(
-                np.asarray(
-                    item["flux_continuum_subtracted"], dtype=float
-                )
-                if item.get("flux_continuum_subtracted") is not None
-                else spectrum.flux - continuum_model
-            ),
+            flux_continuum_subtracted=spectrum.flux - continuum_model,
             err=spectrum.err.copy(),
-            model=(
-                np.asarray(item["model"], dtype=float)
-                if item.get("model") is not None
-                else complex_model
-            ),
+            model=complex_model,
             component_models=component_models,
             fit_mask=np.asarray(item["fit_mask"], dtype=bool),
             warnings=archived_warnings("complex", recipe_id),
@@ -1103,11 +1063,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
                 "recipe_id": recipe_id,
                 **complex_metadata,
             },
-            excluded_mask=(
-                np.asarray(item.get("excluded_mask"), dtype=bool)
-                if item.get("excluded_mask") is not None
-                else np.zeros_like(spectrum.valid_mask)
-            ),
+            excluded_mask=np.asarray(item["excluded_mask"], dtype=bool),
         )
     warnings = archived_warnings("workflow")
     host_warnings = [

@@ -301,7 +301,7 @@ _SPECIES_COLORS = {
     "NII": _TCC_COLORS["narrow"],
     "SII": _TCC_COLORS["host"],
 }
-_IRON_STYLE = (_TCC_COLORS["feii"], ":")
+_IRON_STYLE = (_TCC_COLORS["feii"], "-")
 _BALMER_STYLE = (_TCC_COLORS["balmer_cont"], "-.")
 _CONTINUUM_STYLES = {
     "power_law": (_TCC_COLORS["powerlaw"], "--"),
@@ -509,7 +509,60 @@ def _qa_overview_title(
     redshift = result.metadata.get("redshift")
     if redshift is not None and np.isfinite(redshift):
         parts.append(f"z = {float(redshift):.4f}")
-    return "   ".join(parts)
+    title = "   ".join(parts)
+    if config.show_coordinates:
+        coordinates = []
+        ra = result.metadata.get("ra")
+        dec = result.metadata.get("dec")
+        if ra is not None and np.isfinite(ra):
+            coordinates.append(f"RA = {float(ra):.5f}")
+        if dec is not None and np.isfinite(dec):
+            coordinates.append(f"Dec = {float(dec):+.5f}")
+        extinction = result.metadata.get("galactic_extinction", {})
+        ebv = (
+            extinction.get("applied_ebv")
+            if isinstance(extinction, Mapping)
+            else None
+        )
+        if ebv is not None and np.isfinite(ebv):
+            coordinates.append(
+                rf"$E(B-V) = {float(ebv):.4f}$"
+            )
+        if coordinates:
+            title = (
+                title + "\n" if title else ""
+            ) + "   ".join(coordinates)
+    return title
+
+
+def _input_spectrum_label(
+    result: WorkflowResult,
+    *,
+    smoothed: bool = False,
+) -> str:
+    extinction = result.metadata.get(
+        "galactic_extinction",
+        result.spectrum.metadata.galactic_extinction,
+    )
+    status = (
+        extinction.get("status")
+        if isinstance(extinction, Mapping)
+        else None
+    )
+    corrected = bool(
+        result.spectrum.metadata.galactic_extinction_corrected
+        or status in (
+            "applied",
+            "declared_corrected",
+            "caller_preprocessed",
+        )
+    )
+    parts = ["Input spectrum"]
+    if corrected:
+        parts.append("MW extinction corrected")
+    if smoothed:
+        parts.append("smoothed for display")
+    return "\n".join(parts)
 
 
 def _configure_qa_axis(axis) -> None:
@@ -788,10 +841,9 @@ def _plot_host_context(
     host_display = display_scale * host
     fit_flux_display = display_scale * spectrum.flux
     agn_model_display = display_scale * agn_model
-    original_label = (
-        "original spectrum\nsmoothed for display"
-        if smoothing_effective
-        else "original spectrum"
+    original_label = _input_spectrum_label(
+        result,
+        smoothed=smoothing_effective,
     )
     valid_wave = wave[valid_total | valid_fit]
 
@@ -1123,6 +1175,11 @@ def _plot_qa(
     result.metadata["qa_flux_display_unit"] = (
         "1e-17 cgs" if spectrum.flux_unit == "cgs" else "relative"
     )
+    result.metadata["qa_wavelength_frame"] = "rest"
+    result.metadata["qa_flux_density_frame"] = "rest"
+    result.metadata["qa_input_spectrum_label"] = _input_spectrum_label(
+        result
+    )
 
     def plot_observed(
         ax,
@@ -1140,7 +1197,10 @@ def _plot_qa(
                 lw=0.8,
                 alpha=0.8,
                 zorder=1,
-                label="observed spectrum" if labels else "_nolegend_",
+                label=(
+                    _input_spectrum_label(result)
+                    if labels else "_nolegend_"
+                ),
             )
         if smoothed_values is not None and (
             show_smoothed_trace or replace_original_with_smoothed
@@ -1153,7 +1213,7 @@ def _plot_qa(
                 alpha=0.9,
                 zorder=2,
                 label=(
-                    "observed spectrum (smoothed for display)"
+                    _input_spectrum_label(result, smoothed=True)
                     if labels else "_nolegend_"
                 ),
             )
@@ -1363,6 +1423,10 @@ def _plot_qa(
         f"{_format_reduced_chi2(result.continuum.reduced_chi2)}$",
         f"Host: {host_state}",
     ]
+    if host_overview:
+        overview_annotation_lines.append(
+            "Zoom panels: host-subtracted spectrum"
+        )
     lya_status = result.metadata.get("lya_coverage_status")
     if lya_status in ("red_side_only", "edge_truncated"):
         overview_annotation_lines.append(
@@ -1373,16 +1437,6 @@ def _plot_qa(
                 else "edge-truncated; not fitted"
             )
         )
-    if config.show_coordinates:
-        ra = result.metadata.get("ra")
-        dec = result.metadata.get("dec")
-        if ra is not None and np.isfinite(ra):
-            overview_annotation_lines.insert(0, f"RA = {float(ra):.5f}")
-        if dec is not None and np.isfinite(dec):
-            insertion = 1 if overview_annotation_lines[0].startswith("RA") else 0
-            overview_annotation_lines.insert(
-                insertion, f"Dec = {float(dec):+.5f}"
-            )
     host_fraction_annotation = _host_fraction_annotation(result)
     if host_fraction_annotation:
         overview_annotation_lines.extend(host_fraction_annotation.splitlines())
@@ -1405,6 +1459,9 @@ def _plot_qa(
     result.metadata["qa_overview_annotation"] = {
         "continuum_reduced_chi2": float(result.continuum.reduced_chi2),
         "host_state": host_state,
+        "zoom_spectrum": (
+            "host-subtracted" if host_overview else "input"
+        ),
         "host_fractions": host_fraction_annotation,
         "ra": result.metadata.get("ra") if config.show_coordinates else None,
         "dec": result.metadata.get("dec") if config.show_coordinates else None,

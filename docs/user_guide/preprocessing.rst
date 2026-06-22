@@ -5,12 +5,15 @@ File and batch workflows process each object in this order:
 
 1. Read and normalize the input arrays and metadata.
 2. Query E(B-V) and apply observed-frame Galactic dereddening.
-3. Apply the object-level host-decomposition gate.
-4. Optionally fit and subtract the pPXF stellar host.
-5. Fit the global continuum.
-6. Select and fit emission complexes from rest-frame coverage.
-7. Estimate covariance and optional Monte Carlo uncertainty.
-8. Archive models, masks, metadata, warnings, and QA inputs.
+3. Convert wavelength and flux density to the rest frame:
+   :math:`\lambda_{\rm rest}=\lambda_{\rm obs}/(1+z)` and
+   :math:`F_{\lambda,\rm rest}=(1+z)F_{\lambda,\rm obs}`.
+4. Apply the object-level host-decomposition gate.
+5. Optionally fit and subtract the pPXF stellar host.
+6. Fit the global continuum.
+7. Select and fit emission complexes from rest-frame coverage.
+8. Estimate covariance and optional Monte Carlo uncertainty.
+9. Archive models, masks, metadata, warnings, and QA inputs.
 
 Galactic extinction
 -------------------
@@ -23,6 +26,11 @@ coordinates, and data path are stored in result metadata.
 Correction is applied exactly once. Reapplying a different correction to
 already-corrected ``SpectrumData`` is rejected because the raw arrays are no
 longer available.
+
+The subsequent rest-frame conversion multiplies flux and one-sigma
+uncertainty by :math:`1+z` and divides inverse variance by
+:math:`(1+z)^2`. It is also idempotent and still occurs when Galactic
+correction is disabled or the input was declared already corrected.
 
 For arrays, :meth:`qsospec.Spectrum.from_arrays` defaults to
 ``galactic_extinction_corrected=False``. Supply RA/Dec and call
@@ -47,7 +55,8 @@ Array APIs
 ----------
 
 ``fit_local``, ``fit_global_continuum``, and ``fit_global_lines`` do not query
-external maps. Prepare ordinary arrays first with
-:func:`qsospec.prepare_spectrum`; already-corrected arrays may be passed
-directly. :func:`qsospec.correct_spectrum` remains available as a compatibility
-helper.
+external maps and require rest-frame-normalized :math:`F_\lambda`. Prepare
+ordinary observed-frame arrays first with :func:`qsospec.prepare_spectrum`.
+Rest-frame composite or model arrays may instead be constructed with
+``wave_frame="rest"``. :func:`qsospec.correct_spectrum` remains available as
+a compatibility helper.

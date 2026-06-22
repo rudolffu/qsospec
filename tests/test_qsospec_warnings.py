@@ -9,7 +9,14 @@ def test_line_center_near_edge_warning():
     wave = np.linspace(4800.0, 4920.0, 80)
     flux = np.ones_like(wave)
     err = np.ones_like(wave) * 0.1
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, flux_unit="relative")
+    spec = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
+    )
     config = qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()], edge_buffer=80.0)
 
     result = qsospec.fit_local(spec, config)
@@ -21,7 +28,14 @@ def test_all_pixels_invalid_warning():
     wave = np.linspace(4800.0, 4920.0, 80)
     flux = np.ones_like(wave)
     err = np.ones_like(wave) * -1.0
-    spec = qsospec.Spectrum.from_arrays(wave, flux, err=err, z=0.0, flux_unit="relative")
+    spec = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=err,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
+    )
     config = qsospec.LocalFitConfig(windows=[qsospec.recipes.local_hbeta()])
 
     result = qsospec.fit_local(spec, config)

@@ -131,15 +131,15 @@ calibrations without refitting spectra.
 Batch fitting does not create QA figures by default. ``render_qa(...)`` can
 select object IDs, warning codes, failures, deterministic random samples, or a
 query against the object table. Main QA figures distinguish final fitted
-pixels, pPXF emission masks, and configured not-modelled windows. Run bundles
-written with schema version 2 or later preserve the pPXF masks exactly;
-schema-version-1 bundles infer them from their archived host configuration
-when possible. Schema version 3 preserves per-complex metadata and
-excluded-pixel masks. Schema version 4 uses the streamlined layout and
-reconstructs redundant model totals from archived component arrays.
+pixels, pPXF emission masks, and configured not-modelled windows. Schema
+version 5 stores exact pPXF masks, per-complex excluded-pixel masks and
+metadata, rest wavelength, and the rest-frame-normalized arrays used by the
+fit. Older development schemas are rejected and their runs should be
+recreated.
 
-Model rows store the corrected arrays actually fitted plus Galactic-extinction
-provenance. Raw uncorrected flux arrays are not duplicated.
+Model rows store the corrected, rest-frame-normalized arrays actually fitted
+plus Galactic-extinction and frame-conversion provenance. Raw uncorrected
+flux arrays are not duplicated.
 
 Notebook display
 ----------------
