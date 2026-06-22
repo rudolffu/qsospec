@@ -178,6 +178,9 @@ def _host_subtracted_spectrum(
         fit_range=fit_range,
         line_mask_widths=cfg.line_mask_widths,
         broad_line_mask_widths=cfg.broad_line_mask_widths,
+        observed_artifact_windows=cfg.observed_artifact_windows,
+        max_native_gap_pixels=cfg.max_native_gap_pixels,
+        systematic_error_floor_fraction=cfg.systematic_error_floor_fraction,
     )
     host_fit = run_ppxf_host_fit(
         prep,
@@ -185,6 +188,16 @@ def _host_subtracted_spectrum(
         agn_powerlaw_slopes=cfg.agn_powerlaw_slopes,
         polynomial_degree=cfg.polynomial_degree,
         multiplicative_polynomial_degree=cfg.multiplicative_polynomial_degree,
+        adaptive_broad_line_max_velocity=cfg.adaptive_broad_line_max_velocity,
+        adaptive_line_residual_sigma=cfg.adaptive_line_residual_sigma,
+        residual_clip_sigma=cfg.residual_clip_sigma,
+        residual_clip_iterations=cfg.residual_clip_iterations,
+        residual_clip_dilation_pixels=cfg.residual_clip_dilation_pixels,
+        max_noise_rescale=cfg.max_noise_rescale,
+        minimum_clean_fraction=cfg.minimum_clean_fraction,
+        minimum_clean_pixels=cfg.minimum_clean_pixels,
+        minimum_continuum_snr=cfg.minimum_continuum_snr,
+        maximum_clipped_fraction=cfg.maximum_clipped_fraction,
     )
     host_sed = predict_host_sed(host_fit)
     host_on_grid, grid_warnings = predict_host_sed_on_grid(host_sed, prep.wave_rest)
@@ -537,6 +550,38 @@ def fit_global_lines_workflow(
             "host_ppxf_reduced_chi2": (
                 float(host_fit.reduced_chi2)
                 if host_fit is not None else None
+            ),
+            "host_fit_reliable": (
+                bool(host_fit.host_fit_reliable)
+                if host_fit is not None else None
+            ),
+            "host_fit_reliability_reasons": (
+                list(host_fit.host_fit_reliability_reasons)
+                if host_fit is not None else []
+            ),
+            "host_fit_quality": (
+                dict(host_fit.quality_metrics)
+                if host_fit is not None else {}
+            ),
+            "host_noise_rescale_factors": (
+                dict(host_fit.noise_rescale_factors)
+                if host_fit is not None else {}
+            ),
+            "host_mask_components_log": (
+                {
+                    key: np.asarray(value, dtype=bool).tolist()
+                    for key, value in host_fit.preprocessed.mask_provenance.items()
+                    if str(key).endswith("_log")
+                    or str(key) == "log_grid_valid"
+                }
+                if host_fit is not None else {}
+            ),
+            "host_mask_component_counts": (
+                {
+                    key: int(np.count_nonzero(value))
+                    for key, value in host_fit.preprocessed.mask_provenance.items()
+                }
+                if host_fit is not None else {}
             ),
             "host_template_file": (
                 host_fit.templates.source_path

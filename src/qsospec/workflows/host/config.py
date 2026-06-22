@@ -44,6 +44,15 @@ DEFAULT_BROAD_LINE_MASK_WIDTHS = {
     "Halpha": 4500.0,
 }
 
+DEFAULT_OBSERVED_ARTIFACT_WINDOWS = (
+    (5570.0, 5585.0),
+    (5885.0, 5900.0),
+    (6290.0, 6310.0),
+    (6355.0, 6372.0),
+    (6860.0, 6930.0),
+    (7580.0, 7700.0),
+)
+
 
 @dataclass
 class HostDecompConfig:
@@ -55,6 +64,21 @@ class HostDecompConfig:
     fit_range: Tuple[float, float] = (3600.0, 7000.0)
     line_mask_widths: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_LINE_MASK_WIDTHS))
     broad_line_mask_widths: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_BROAD_LINE_MASK_WIDTHS))
+    observed_artifact_windows: List[Tuple[float, float]] = field(
+        default_factory=lambda: list(DEFAULT_OBSERVED_ARTIFACT_WINDOWS)
+    )
+    max_native_gap_pixels: float = 3.0
+    systematic_error_floor_fraction: float = 0.02
+    adaptive_broad_line_max_velocity: float = 10000.0
+    adaptive_line_residual_sigma: float = 3.0
+    residual_clip_sigma: float = 4.5
+    residual_clip_iterations: int = 2
+    residual_clip_dilation_pixels: int = 2
+    max_noise_rescale: float = 5.0
+    minimum_clean_fraction: float = 0.35
+    minimum_clean_pixels: int = 200
+    minimum_continuum_snr: float = 2.0
+    maximum_clipped_fraction: float = 0.25
     polynomial_degree: int = 4
     multiplicative_polynomial_degree: int = 0
     use_regularization: bool = False

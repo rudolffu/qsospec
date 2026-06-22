@@ -11,8 +11,9 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from scipy.ndimage import binary_dilation, binary_propagation, gaussian_filter1d
 
-from .config import DEFAULT_LINE_CENTERS
+from .config import DEFAULT_LINE_CENTERS, DEFAULT_OBSERVED_ARTIFACT_WINDOWS
 from .io import SpectrumData
 from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
 
@@ -36,10 +37,13 @@ class PreprocessedSpectrum:
     flux_log: np.ndarray
     noise_log: np.ndarray
     emission_mask_log: np.ndarray
+    validity_mask_log: np.ndarray
+    artifact_mask_log: np.ndarray
     normalization: float
     redshift: float
     velscale: float
     metadata: Dict[str, Any] = field(default_factory=dict)
+    mask_provenance: Dict[str, np.ndarray] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -66,6 +70,14 @@ class PPXFHostFitResult:
     chi2: float
     reduced_chi2: float
     status: str
+    initial_emission_mask_log: Optional[np.ndarray] = None
+    expanded_emission_mask_log: Optional[np.ndarray] = None
+    residual_clip_mask_log: Optional[np.ndarray] = None
+    final_goodpixels_mask_log: Optional[np.ndarray] = None
+    noise_rescale_factors: Dict[str, float] = field(default_factory=dict)
+    quality_metrics: Dict[str, Any] = field(default_factory=dict)
+    host_fit_reliable: bool = True
+    host_fit_reliability_reasons: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     ppxf_result: Any = None
 
@@ -130,7 +142,22 @@ def make_emission_line_mask(
     return mask
 
 
-def _log_resample(wave: np.ndarray, flux: np.ndarray, noise: np.ndarray, emission_mask: np.ndarray):
+def _window_mask(wave: np.ndarray, windows: Sequence[Tuple[float, float]]) -> np.ndarray:
+    mask = np.zeros_like(np.asarray(wave, dtype=float), dtype=bool)
+    for lower, upper in windows:
+        mask |= (wave >= float(lower)) & (wave <= float(upper))
+    return mask
+
+
+def _log_resample(
+    wave: np.ndarray,
+    flux: np.ndarray,
+    noise: np.ndarray,
+    emission_mask: np.ndarray,
+    source_indices: np.ndarray,
+    native_spacing: float,
+    max_native_gap_pixels: float,
+):
     wave = np.asarray(wave, dtype=float)
     log_wave = np.linspace(np.log(wave[0]), np.log(wave[-1]), len(wave))
     wave_log = np.exp(log_wave)
@@ -138,8 +165,26 @@ def _log_resample(wave: np.ndarray, flux: np.ndarray, noise: np.ndarray, emissio
     noise_log = np.interp(wave_log, wave, noise)
     mask_float = np.interp(wave_log, wave, emission_mask.astype(float))
     emission_mask_log = mask_float > 0.1
+    validity_mask_log = np.zeros_like(wave_log, dtype=bool)
+    index_break = np.diff(source_indices) > 1
+    wavelength_break = np.diff(wave) > float(max_native_gap_pixels) * native_spacing
+    boundaries = np.flatnonzero(index_break | wavelength_break) + 1
+    for segment in np.split(np.arange(len(wave)), boundaries):
+        if segment.size < 2:
+            continue
+        validity_mask_log |= (
+            (wave_log >= wave[segment[0]]) & (wave_log <= wave[segment[-1]])
+        )
     velscale = float(np.diff(log_wave).mean() * _C_KMS)
-    return wave_log, log_wave, flux_log, noise_log, emission_mask_log, velscale
+    return (
+        wave_log,
+        log_wave,
+        flux_log,
+        noise_log,
+        emission_mask_log,
+        validity_mask_log,
+        velscale,
+    )
 
 
 def prepare_desi_for_host_decomp(
@@ -149,6 +194,11 @@ def prepare_desi_for_host_decomp(
     line_mask_widths: Optional[Dict[str, float]] = None,
     broad_line_mask_widths: Optional[Dict[str, float]] = None,
     use_broad_line_masks: bool = True,
+    observed_artifact_windows: Sequence[Tuple[float, float]] = (
+        DEFAULT_OBSERVED_ARTIFACT_WINDOWS
+    ),
+    max_native_gap_pixels: float = 3.0,
+    systematic_error_floor_fraction: float = 0.02,
 ) -> PreprocessedSpectrum:
     """Clean, rest-frame, mask, normalize, and log-resample a DESI spectrum."""
 
@@ -160,15 +210,31 @@ def prepare_desi_for_host_decomp(
     wave_obs = np.asarray(spectrum.wave_obs, dtype=float)
     flux = np.asarray(spectrum.flux, dtype=float)
     err = np.asarray(spectrum.uncertainty(), dtype=float)
-    valid = np.isfinite(wave_obs) & np.isfinite(flux) & np.isfinite(err) & (wave_obs > 0) & (err > 0)
+    finite_valid = (
+        np.isfinite(wave_obs)
+        & np.isfinite(flux)
+        & np.isfinite(err)
+        & (wave_obs > 0)
+        & (err > 0)
+    )
+    valid = finite_valid.copy()
     if spectrum.ivar is not None:
         ivar = np.asarray(spectrum.ivar, dtype=float)
         valid &= np.isfinite(ivar) & (ivar > 0)
     else:
         ivar = None
+    input_mask_rejected = np.zeros_like(valid)
     if spectrum.mask is not None:
         mask = np.asarray(spectrum.mask)
-        valid &= mask == 0
+        input_mask_rejected = mask != 0
+        valid &= ~input_mask_rejected
+    artifact_rejected = _window_mask(wave_obs, observed_artifact_windows)
+    valid &= ~artifact_rejected
+    source_indices = np.flatnonzero(valid)
+    native_differences = np.diff(wave_obs[np.isfinite(wave_obs)])
+    native_spacing = float(np.nanmedian(native_differences[native_differences > 0]))
+    if not np.isfinite(native_spacing) or native_spacing <= 0:
+        native_spacing = 1.0
 
     warnings_out: List[str] = []
     if np.sum(valid) < 20:
@@ -184,6 +250,7 @@ def prepare_desi_for_host_decomp(
     err = err[order]
     if ivar_clean is not None:
         ivar_clean = ivar_clean[order]
+    source_indices = source_indices[order]
 
     wave_rest = wave_obs / (1.0 + z)
     fit_mask = (wave_rest >= fit_range[0]) & (wave_rest <= fit_range[1])
@@ -207,11 +274,31 @@ def prepare_desi_for_host_decomp(
     if not np.isfinite(normalization) or normalization <= 0:
         normalization = 1.0
         warnings_out.append("normalization_fallback_to_one")
+    systematic_floor = (
+        float(systematic_error_floor_fraction)
+        * float(np.nanmedian(np.abs(fit_flux[np.isfinite(fit_flux)])))
+    )
+    fit_err = np.sqrt(fit_err**2 + systematic_floor**2)
+    err[fit_mask] = fit_err
     fit_flux_norm = fit_flux / normalization
     fit_err_norm = np.clip(fit_err / normalization, 1e-12, np.inf)
 
-    wave_log, log_wave, flux_log, noise_log, emission_mask_log, velscale = _log_resample(
-        fit_wave, fit_flux_norm, fit_err_norm, fit_emission_mask
+    (
+        wave_log,
+        log_wave,
+        flux_log,
+        noise_log,
+        emission_mask_log,
+        validity_mask_log,
+        velscale,
+    ) = _log_resample(
+        fit_wave,
+        fit_flux_norm,
+        fit_err_norm,
+        fit_emission_mask,
+        source_indices[fit_mask],
+        native_spacing,
+        max_native_gap_pixels,
     )
 
     return PreprocessedSpectrum(
@@ -227,10 +314,37 @@ def prepare_desi_for_host_decomp(
         flux_log=flux_log,
         noise_log=noise_log,
         emission_mask_log=emission_mask_log,
+        validity_mask_log=validity_mask_log,
+        artifact_mask_log=_window_mask(
+            wave_log * (1.0 + z),
+            observed_artifact_windows,
+        ),
         normalization=normalization,
         redshift=z,
         velscale=velscale,
-        metadata=dict(spectrum.metadata),
+        metadata={
+            **dict(spectrum.metadata),
+            "observed_artifact_windows": [
+                [float(lower), float(upper)]
+                for lower, upper in observed_artifact_windows
+            ],
+            "systematic_error_floor_fraction": float(
+                systematic_error_floor_fraction
+            ),
+            "systematic_error_floor": float(systematic_floor),
+            "max_native_gap_pixels": float(max_native_gap_pixels),
+        },
+        mask_provenance={
+            "original_desi_mask_rejected": input_mask_rejected,
+            "invalid_or_nonpositive_error_rejected": ~finite_valid,
+            "observed_artifact_rejected": artifact_rejected,
+            "native_valid": valid,
+            "log_grid_valid": validity_mask_log,
+            "artifact_mask_log": _window_mask(
+                wave_log * (1.0 + z),
+                observed_artifact_windows,
+            ),
+        },
         warnings=warnings_out,
     )
 
@@ -264,9 +378,19 @@ def run_ppxf_host_fit(
     agn_powerlaw_slopes: Sequence[float] = (-2.0, -1.5, -1.0, -0.5, 0.0),
     polynomial_degree: int = 4,
     multiplicative_polynomial_degree: int = 0,
+    adaptive_broad_line_max_velocity: float = 10000.0,
+    adaptive_line_residual_sigma: float = 3.0,
+    residual_clip_sigma: float = 4.5,
+    residual_clip_iterations: int = 2,
+    residual_clip_dilation_pixels: int = 2,
+    max_noise_rescale: float = 5.0,
+    minimum_clean_fraction: float = 0.35,
+    minimum_clean_pixels: int = 200,
+    minimum_continuum_snr: float = 2.0,
+    maximum_clipped_fraction: float = 0.25,
     quiet: bool = True,
 ) -> PPXFHostFitResult:
-    """Run the first pPXF stellar-host fit with masked emission regions."""
+    """Run a staged, robust pPXF stellar-host fit."""
 
     ppxf = _require_ppxf()
     warnings_out = list(preprocessed.warnings) + list(templates.warnings)
@@ -274,28 +398,192 @@ def run_ppxf_host_fit(
     agn_matrix = _build_agn_basis(preprocessed.wave_log, agn_powerlaw_slopes)
     fit_templates = np.column_stack([stellar_matrix, agn_matrix])
 
-    good = (
+    base_good = (
         np.isfinite(preprocessed.flux_log)
         & np.isfinite(preprocessed.noise_log)
         & (preprocessed.noise_log > 0)
-        & (~preprocessed.emission_mask_log)
+        & preprocessed.validity_mask_log
         & in_template_range
     )
-    goodpixels = np.flatnonzero(good)
-    if goodpixels.size < max(20, fit_templates.shape[1] // 2):
-        raise ValueError(f"Too few pPXF good pixels after masking: {goodpixels.size}")
+    initial_emission = np.asarray(
+        preprocessed.emission_mask_log, dtype=bool
+    ).copy()
 
-    result = ppxf(
-        fit_templates,
-        preprocessed.flux_log,
-        preprocessed.noise_log,
-        preprocessed.velscale,
-        start=[0.0, 150.0],
-        goodpixels=goodpixels,
-        degree=int(polynomial_degree),
-        mdegree=int(multiplicative_polynomial_degree),
-        quiet=quiet,
+    def fit_once(
+        emission_mask: np.ndarray,
+        clip_mask: np.ndarray,
+        noise: np.ndarray,
+    ):
+        good = base_good & (~emission_mask) & (~clip_mask)
+        goodpixels = np.flatnonzero(good)
+        if goodpixels.size < max(20, fit_templates.shape[1] // 2):
+            raise ValueError(
+                f"Too few pPXF good pixels after masking: {goodpixels.size}"
+            )
+        fitted = ppxf(
+            fit_templates,
+            preprocessed.flux_log,
+            noise,
+            preprocessed.velscale,
+            start=[0.0, 150.0],
+            goodpixels=goodpixels,
+            degree=int(polynomial_degree),
+            mdegree=int(multiplicative_polynomial_degree),
+            quiet=quiet,
+        )
+        return fitted, good
+
+    empty_clip = np.zeros_like(base_good)
+    noise_work = np.asarray(preprocessed.noise_log, dtype=float).copy()
+    result, _ = fit_once(initial_emission, empty_clip, noise_work)
+
+    standardized = (
+        preprocessed.flux_log
+        - np.asarray(result.bestfit, dtype=float)
+    ) / noise_work
+    smooth_positive = gaussian_filter1d(
+        np.where(np.isfinite(standardized), standardized, 0.0),
+        sigma=2.0,
+        mode="nearest",
     )
+    significant = smooth_positive > float(adaptive_line_residual_sigma)
+    expanded_emission = initial_emission.copy()
+    for name in ("MgII", "Hdelta", "Hgamma", "Hbeta", "Halpha"):
+        center = float(DEFAULT_LINE_CENTERS[name])
+        delta = (
+            center * float(adaptive_broad_line_max_velocity) / _C_KMS
+        )
+        cap = (
+            (preprocessed.wave_log >= center - delta)
+            & (preprocessed.wave_log <= center + delta)
+        )
+        seed = initial_emission & cap
+        if not np.any(seed):
+            continue
+        connected_domain = (
+            binary_dilation(significant, iterations=2) | seed
+        ) & cap
+        expanded_emission |= binary_propagation(
+            seed,
+            mask=connected_domain,
+        )
+
+    result, preclip_good = fit_once(
+        expanded_emission, empty_clip, noise_work
+    )
+
+    residual = (
+        preprocessed.flux_log
+        - np.asarray(result.bestfit, dtype=float)
+    )
+    noise_rescale_factors: Dict[str, float] = {}
+    observed_wave_log = preprocessed.wave_log * (1.0 + preprocessed.redshift)
+    arm_ranges = {
+        "b": (3600.0, 5800.0),
+        "r": (5760.0, 7620.0),
+        "z": (7520.0, 9824.0),
+    }
+    for arm, (lower, upper) in arm_ranges.items():
+        selected = (
+            preclip_good
+            & (observed_wave_log >= lower)
+            & (observed_wave_log <= upper)
+        )
+        if np.count_nonzero(selected) < 20:
+            noise_rescale_factors[arm] = 1.0
+            continue
+        normalized = residual[selected] / noise_work[selected]
+        center = float(np.nanmedian(normalized))
+        scatter = 1.4826 * float(
+            np.nanmedian(np.abs(normalized - center))
+        )
+        factor = float(
+            np.clip(scatter if np.isfinite(scatter) else 1.0, 1.0, max_noise_rescale)
+        )
+        noise_rescale_factors[arm] = factor
+        noise_work[selected] *= factor
+
+    result, _ = fit_once(expanded_emission, empty_clip, noise_work)
+    residual_clip = np.zeros_like(base_good)
+    for _ in range(int(residual_clip_iterations)):
+        current_residual = (
+            preprocessed.flux_log
+            - np.asarray(result.bestfit, dtype=float)
+        ) / noise_work
+        candidate = (
+            base_good
+            & (~expanded_emission)
+            & np.isfinite(current_residual)
+            & (np.abs(current_residual) > float(residual_clip_sigma))
+        )
+        if int(residual_clip_dilation_pixels) > 0:
+            candidate = binary_dilation(
+                candidate,
+                iterations=int(residual_clip_dilation_pixels),
+            )
+        updated = residual_clip | (
+            candidate & base_good & (~expanded_emission)
+        )
+        if np.array_equal(updated, residual_clip):
+            break
+        residual_clip = updated
+        result, _ = fit_once(
+            expanded_emission, residual_clip, noise_work
+        )
+
+    result, final_good = fit_once(
+        expanded_emission, residual_clip, noise_work
+    )
+    preprocessed.noise_log = noise_work
+    preprocessed.mask_provenance.update(
+        {
+            "initial_emission_mask_log": initial_emission,
+            "expanded_emission_mask_log": expanded_emission,
+            "residual_clip_mask_log": residual_clip,
+            "final_goodpixels_mask_log": final_good,
+        }
+    )
+
+    available_count = int(np.count_nonzero(base_good))
+    clean_count = int(np.count_nonzero(final_good))
+    clean_fraction = (
+        float(clean_count / available_count) if available_count else 0.0
+    )
+    preclip_count = int(np.count_nonzero(preclip_good))
+    clipped_count = int(np.count_nonzero(residual_clip & preclip_good))
+    clipped_fraction = (
+        float(clipped_count / preclip_count) if preclip_count else 1.0
+    )
+    continuum_snr = float(
+        np.nanmedian(
+            np.abs(preprocessed.flux_log[final_good])
+            / noise_work[final_good]
+        )
+    ) if clean_count else 0.0
+    reliability_reasons: List[str] = []
+    if clean_fraction < float(minimum_clean_fraction):
+        reliability_reasons.append("clean_fraction_below_threshold")
+    if clean_count < int(minimum_clean_pixels):
+        reliability_reasons.append("too_few_clean_pixels")
+    if continuum_snr < float(minimum_continuum_snr):
+        reliability_reasons.append("continuum_snr_below_threshold")
+    if clipped_fraction > float(maximum_clipped_fraction):
+        reliability_reasons.append("clipped_fraction_above_threshold")
+    quality_metrics: Dict[str, Any] = {
+        "available_pixel_count": available_count,
+        "clean_pixel_count": clean_count,
+        "clean_fraction": clean_fraction,
+        "median_continuum_snr": continuum_snr,
+        "clipped_pixel_count": clipped_count,
+        "clipped_fraction": clipped_fraction,
+        "initial_emission_mask_count": int(
+            np.count_nonzero(initial_emission)
+        ),
+        "expanded_emission_mask_count": int(
+            np.count_nonzero(expanded_emission)
+        ),
+        "final_goodpixel_count": clean_count,
+    }
 
     weights = np.asarray(getattr(result, "weights", np.zeros(fit_templates.shape[1])), dtype=float)
     n_stellar = stellar_matrix.shape[1]
@@ -336,6 +624,14 @@ def run_ppxf_host_fit(
         chi2=float(getattr(result, "chi2", np.nan)),
         reduced_chi2=float(getattr(result, "chi2", np.nan)),
         status="success",
+        initial_emission_mask_log=initial_emission,
+        expanded_emission_mask_log=expanded_emission,
+        residual_clip_mask_log=residual_clip,
+        final_goodpixels_mask_log=final_good,
+        noise_rescale_factors=noise_rescale_factors,
+        quality_metrics=quality_metrics,
+        host_fit_reliable=not reliability_reasons,
+        host_fit_reliability_reasons=reliability_reasons,
         warnings=warnings_out,
         ppxf_result=result,
     )
@@ -457,6 +753,20 @@ def _summary_dict(
         "stellar_velocity": fit.stellar_velocity,
         "stellar_velocity_dispersion": fit.stellar_sigma,
         "ppxf_reduced_chi2": fit.reduced_chi2,
+        "host_fit_reliable": fit.host_fit_reliable,
+        "host_fit_reliability_reasons": list(
+            fit.host_fit_reliability_reasons
+        ),
+        "host_fit_quality": dict(fit.quality_metrics),
+        "host_noise_rescale_factors": dict(
+            fit.noise_rescale_factors
+        ),
+        "host_mask_component_counts": {
+            key: int(np.count_nonzero(value))
+            for key, value in getattr(
+                fit.preprocessed, "mask_provenance", {}
+            ).items()
+        },
         "qsospec_reduced_chi2": np.nan,
         "fAGN_5100": _interp_no_extrapolate(5100.0, fit.preprocessed.wave_rest, fit.agn_model),
         "broad_Halpha_detected": False,
@@ -520,6 +830,11 @@ def write_host_decomp_outputs(
         host_sed_flux=sed.host_flux,
         stellar_weights=fit.stellar_weights,
         agn_weights=fit.agn_weights,
+        host_log_wavelength_rest=fit.preprocessed.wave_log,
+        host_initial_emission_mask_log=fit.initial_emission_mask_log,
+        host_expanded_emission_mask_log=fit.expanded_emission_mask_log,
+        host_residual_clip_mask_log=fit.residual_clip_mask_log,
+        host_final_goodpixels_mask_log=fit.final_goodpixels_mask_log,
     )
     files["host_decomp_result"] = str(npz_path)
     summary = _summary_dict(

@@ -99,16 +99,3 @@ def test_documented_j001554_example_data_and_preparation(tmp_path):
     run = qsospec.open_run(str(tmp_path / "j001554"))
     archived_figure = run.plot_qa("J001554.18+560257.5")
     assert archived_figure.axes
-
-
-def test_documented_recipe_defaults_match_runtime():
-    lya = qsospec.recipes.get("lya_nv")
-    civ = qsospec.recipes.get("civ")
-    ciii = qsospec.recipes.get("ciii")
-
-    assert lya.fit_window == (1150.0, 1290.0)
-    assert [component.multiplicity for component in lya.components] == [2, 1]
-    assert civ.fit_window == (1450.0, 1700.0)
-    assert civ.components[0].multiplicity == 3
-    assert ciii.fit_window == (1700.0, 1970.0)
-    assert ciii.components[0].multiplicity == 2

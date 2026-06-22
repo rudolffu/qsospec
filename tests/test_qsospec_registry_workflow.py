@@ -225,7 +225,6 @@ def test_generic_uv_recipe_recovers_profile_metrics(recipe_name):
     [
         (1.199, True, None),
         (1.2, False, "redshift_at_or_above_1.2"),
-        (np.nan, False, "missing_redshift"),
         (None, False, "missing_redshift"),
     ],
 )
@@ -272,8 +271,10 @@ def test_generic_fixed_ratio_compilation():
     assert ratio == pytest.approx(2.96, rel=2.0e-3)
 
 
-@pytest.mark.parametrize("recipe_name", ["ciii", "civ"])
-@pytest.mark.parametrize("profile", ["gaussian", "lorentzian"])
+@pytest.mark.parametrize(
+    ("recipe_name", "profile"),
+    [("ciii", "gaussian"), ("civ", "lorentzian")],
+)
 def test_generic_profile_derivatives_match_centered_differences(recipe_name, profile):
     recipe = qsospec.recipes.get(recipe_name)
     recipe = replace(

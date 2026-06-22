@@ -14,10 +14,10 @@ from qsospec.workflows.host.plots import _finite_percentile_limits, _host_sed_pr
 from qsospec.workflows.host.ppxf_host import (
     HostSED,
     PPXFHostFitResult,
-    make_emission_line_mask,
     prepare_desi_for_host_decomp,
     predict_host_sed,
     predict_host_sed_on_grid,
+    run_ppxf_host_fit,
     write_host_decomp_outputs,
     _require_ppxf,
 )
@@ -49,20 +49,46 @@ def test_sparcli_parquet_vector_row_selection(tmp_path):
     assert report["n_valid_pixels"] == 2
 
 
-def test_line_mask_and_preprocessing_rest_frame():
-    wave = np.linspace(3500.0, 9000.0, 500)
-    flux = np.ones_like(wave) * 2.0
-    ivar = np.ones_like(wave) * 4.0
-    spec = SpectrumData(wave_obs=wave, flux=flux, ivar=ivar, redshift=0.25, object_id="obj")
+def test_preprocessing_preserves_native_mask_gaps_and_observed_artifacts():
+    wave = np.arange(3500.0, 9001.0, 1.0)
+    flux = np.ones_like(wave)
+    ivar = np.ones_like(wave) * 100.0
+    mask = np.zeros_like(wave, dtype=int)
+    mask[(wave >= 5200.0) & (wave <= 5210.0)] = 1
+    spec = SpectrumData(
+        wave_obs=wave,
+        flux=flux,
+        ivar=ivar,
+        mask=mask,
+        redshift=0.0,
+        object_id="masked",
+    )
 
-    mask = make_emission_line_mask(wave / 1.25, use_broad_masks=True)
-    prep = prepare_desi_for_host_decomp(spec, fit_range=(3600.0, 7000.0))
+    prep = prepare_desi_for_host_decomp(
+        spec,
+        fit_range=(3600.0, 7000.0),
+    )
 
-    assert mask.shape == wave.shape
-    assert prep.redshift == 0.25
-    assert prep.wave_rest.min() > 0
-    assert prep.flux_log.size == prep.noise_log.size
-    assert prep.velscale > 0
+    native = prep.mask_provenance
+    assert np.all(
+        native["original_desi_mask_rejected"][
+            (wave >= 5200.0) & (wave <= 5210.0)
+        ]
+    )
+    assert np.all(
+        native["observed_artifact_rejected"][
+            (wave >= 5570.0) & (wave <= 5585.0)
+        ]
+    )
+    assert not prep.validity_mask_log[
+        np.argmin(np.abs(prep.wave_log - 5205.0))
+    ]
+    assert not prep.validity_mask_log[
+        np.argmin(np.abs(prep.wave_log - 5577.0))
+    ]
+    assert prep.validity_mask_log[
+        np.argmin(np.abs(prep.wave_log - 5400.0))
+    ]
 
 
 def _fake_template_library():
@@ -76,6 +102,70 @@ def _fake_template_library():
         source_path="fake.npz",
         wavelength_coverage=(float(wave.min()), float(wave.max())),
     )
+
+
+def test_staged_ppxf_expands_broad_masks_clips_spikes_and_keeps_absorption(
+    monkeypatch,
+):
+    wave = np.linspace(3600.0, 7000.0, 1701)
+    flux = np.ones_like(wave)
+    flux += 0.35 * np.exp(-0.5 * ((wave - 4861.0) / 55.0) ** 2)
+    flux[np.argmin(np.abs(wave - 6100.0))] += 2.0
+    flux[np.argmin(np.abs(wave - 5175.0))] -= 0.05
+    spec = SpectrumData(
+        wave_obs=wave,
+        flux=flux,
+        ivar=np.full_like(wave, 2500.0),
+        mask=np.zeros_like(wave, dtype=int),
+        redshift=0.0,
+        object_id="robust",
+    )
+    prep = prepare_desi_for_host_decomp(spec, fit_range=(3600.0, 7000.0))
+    template_wave = np.linspace(3500.0, 7100.0, 1801)
+    templates = PPXFTemplateLibrary(
+        flux=np.ones((template_wave.size, 1)),
+        wave=template_wave,
+        log_wave=np.log(template_wave),
+        family="test",
+        source_path="fake.npz",
+        wavelength_coverage=(3500.0, 7100.0),
+    )
+
+    class FakeResult:
+        def __init__(self, galaxy, templates_matrix):
+            self.bestfit = np.ones_like(galaxy)
+            self.weights = np.r_[1.0, np.zeros(templates_matrix.shape[1] - 1)]
+            self.sol = np.array([0.0, 150.0])
+            self.chi2 = 1.0
+
+    def fake_ppxf(templates_matrix, galaxy, noise, velscale, **kwargs):
+        return FakeResult(galaxy, templates_matrix)
+
+    monkeypatch.setattr(
+        "qsospec.workflows.host.ppxf_host._require_ppxf",
+        lambda: fake_ppxf,
+    )
+    fit = run_ppxf_host_fit(
+        prep,
+        templates,
+        agn_powerlaw_slopes=(),
+        adaptive_line_residual_sigma=2.5,
+    )
+
+    broad_wing = (
+        (prep.wave_log > 4910.0)
+        & (prep.wave_log < 4930.0)
+    )
+    assert np.any(
+        fit.expanded_emission_mask_log[broad_wing]
+        & ~fit.initial_emission_mask_log[broad_wing]
+    )
+    spike = np.argmin(np.abs(prep.wave_log - 6100.0))
+    assert fit.residual_clip_mask_log[spike]
+    absorption = np.argmin(np.abs(prep.wave_log - 5175.0))
+    assert fit.final_goodpixels_mask_log[absorption]
+    assert set(fit.noise_rescale_factors) == {"b", "r", "z"}
+    assert fit.quality_metrics["clean_pixel_count"] > 0
 
 
 def test_host_sed_sampling_does_not_extrapolate():

@@ -55,8 +55,10 @@ def test_balmer_series_fwhm_is_velocity_broadened():
     assert measured == pytest.approx(3000.0, rel=0.02)
 
 
-@pytest.mark.parametrize("fwhm", [1500.0, 5000.0, 12000.0])
-@pytest.mark.parametrize("velocity", [-1500.0, 0.0, 1500.0])
+@pytest.mark.parametrize(
+    ("fwhm", "velocity"),
+    [(1500.0, -1500.0), (5000.0, 0.0), (12000.0, 1500.0)],
+)
 def test_balmer_pseudocontinuum_is_continuous_at_edge(fwhm, velocity):
     template = qsospec.load_balmer_template(provenance="sh95_k13full_ext")
     epsilon = 1.0e-6

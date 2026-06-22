@@ -221,6 +221,38 @@ def _fit_spectrum_data(
                 float(host_fit.reduced_chi2)
                 if host_fit is not None else None
             ),
+            "host_fit_reliable": (
+                bool(host_fit.host_fit_reliable)
+                if host_fit is not None else None
+            ),
+            "host_fit_reliability_reasons": (
+                list(host_fit.host_fit_reliability_reasons)
+                if host_fit is not None else []
+            ),
+            "host_fit_quality": (
+                dict(host_fit.quality_metrics)
+                if host_fit is not None else {}
+            ),
+            "host_noise_rescale_factors": (
+                dict(host_fit.noise_rescale_factors)
+                if host_fit is not None else {}
+            ),
+            "host_mask_components_log": (
+                {
+                    key: np.asarray(value, dtype=bool).tolist()
+                    for key, value in host_fit.preprocessed.mask_provenance.items()
+                    if str(key).endswith("_log")
+                    or str(key) == "log_grid_valid"
+                }
+                if host_fit is not None else {}
+            ),
+            "host_mask_component_counts": (
+                {
+                    key: int(np.count_nonzero(value))
+                    for key, value in host_fit.preprocessed.mask_provenance.items()
+                }
+                if host_fit is not None else {}
+            ),
             "host_template_file": (
                 host_fit.templates.source_path
                 if host_fit is not None else None

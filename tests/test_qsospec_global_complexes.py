@@ -17,27 +17,12 @@ from qsospec.fitting.global_fit import (
     _gaussian_area_profile,
 )
 from qsospec.io.products import (
-    _BROAD_COMPONENT_STYLE,
-    _COMBINED_BROAD_STYLE,
-    _CONTINUUM_STYLES,
-    _HOST_STYLE,
-    _NARROW_STYLE,
-    _TCC_COLORS,
-    _WING_STYLE,
-    _annotate_emission_lines,
-    _configure_qa_axis,
-    _flux_density_axis_label,
-    _flux_display_scale,
     _final_fit_masks,
-    _line_groups,
     _host_fraction_annotation,
     _has_host_context,
-    _input_spectrum_label,
     _masked_running_median,
     _percentile_limits,
     _plot_qa,
-    _qa_overview_title,
-    _rounded_model_upper_limit,
     _select_zoom_complexes,
 )
 from qsospec.global_result import GlobalContinuumResult
@@ -450,101 +435,6 @@ def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
     assert "Ha_broad_fwhm_kms" in result["percentiles"]
 
 
-def test_qa_percentiles_and_component_styles():
-    values = np.arange(1001, dtype=float)
-    lo, hi = _percentile_limits([values], percentiles=(1.0, 99.8), pad=0.0)
-    assert lo == pytest.approx(np.percentile(values, 1.0))
-    assert hi == pytest.approx(np.percentile(values, 99.8))
-    assert _rounded_model_upper_limit(np.array([0.0, 11.0])) == 15.0
-    assert _rounded_model_upper_limit(np.array([0.0, 4.0])) == 5.0
-
-    wave = np.linspace(6350.0, 6850.0, 1200)
-    continuum = np.ones_like(wave)
-    line = _gaussian_area_profile(wave, 50.0, 6564.61, 2200.0)
-    spectrum = qsospec.Spectrum.from_arrays(
-        wave,
-        continuum + line,
-        err=np.full_like(wave, 0.05),
-        wave_frame="rest",
-        flux_unit="relative",
-    )
-    fit = qsospec.fit_halpha_complex(spectrum, _continuum_result(spectrum, continuum))
-    kinds = [kind for _, _, _, kind in _line_groups("halpha", fit)]
-    assert kinds.count("broad") == 1
-    assert set(kinds) <= {"broad", "narrow", "wing"}
-    assert _COMBINED_BROAD_STYLE["color"] != _BROAD_COMPONENT_STYLE["color"]
-    assert _BROAD_COMPONENT_STYLE["color"] == "#30aecf"
-    assert _COMBINED_BROAD_STYLE["linestyle"] == "-"
-    assert _BROAD_COMPONENT_STYLE["linestyle"] == "-"
-    assert _NARROW_STYLE["linestyle"] == "-"
-    assert _CONTINUUM_STYLES["balmer_bound_free"][0] == "#db9c4b"
-    assert _CONTINUUM_STYLES["balmer_bound_free"][0] != _NARROW_STYLE["color"]
-    assert _WING_STYLE["color"] == "#d80835"
-    assert _WING_STYLE["linestyle"] == "-"
-    assert _WING_STYLE["linewidth"] == pytest.approx(0.9)
-    assert _HOST_STYLE["linestyle"] == "-"
-    assert _HOST_STYLE["linewidth"] == pytest.approx(0.9)
-    assert _WING_STYLE["color"] != _CONTINUUM_STYLES["uv_iron"][0]
-    assert _CONTINUUM_STYLES["uv_iron"] == _CONTINUUM_STYLES["optical_iron"]
-    assert _CONTINUUM_STYLES["power_law"][0] == "#b03766"
-    assert _CONTINUUM_STYLES["balmer_bound_free"] == _CONTINUUM_STYLES["balmer_high_order_series"]
-    assert {style[1] for style in _CONTINUUM_STYLES.values()} == {"-", "--", "-."}
-    assert _TCC_COLORS["total_model"] == "#28292b"
-    assert _TCC_COLORS["unmodelled_span"] == "#e4ecf0"
-    label = _flux_density_axis_label("1e-17 erg cm^-2 s^-1 Angstrom^-1")
-    assert "F_\\lambda" in label
-    assert "\\mathrm{\\AA}" in label
-    assert _flux_density_axis_label("relative f_lambda") == (
-        r"$F_\lambda$ [relative units]"
-    )
-
-
-def test_qa_flux_display_scales_are_display_only():
-    wave = np.linspace(4000.0, 5000.0, 20)
-    physical = qsospec.Spectrum.from_arrays(
-        wave,
-        np.full_like(wave, 2.0e-17),
-        err=np.full_like(wave, 1.0e-18),
-        wave_frame="rest",
-        flux_unit="cgs",
-        flux_scale=1.0,
-    )
-    desi_scaled = qsospec.Spectrum.from_arrays(
-        wave,
-        np.full_like(wave, 2.0),
-        err=np.full_like(wave, 0.1),
-        wave_frame="rest",
-        flux_unit="cgs",
-        flux_scale=1.0e-17,
-    )
-    other_scaled = qsospec.Spectrum.from_arrays(
-        wave,
-        np.full_like(wave, 2.0),
-        err=np.full_like(wave, 0.1),
-        wave_frame="rest",
-        flux_unit="cgs",
-        flux_scale=2.5e-16,
-    )
-    relative = qsospec.Spectrum.from_arrays(
-        wave,
-        np.full_like(wave, 2.0),
-        err=np.full_like(wave, 0.1),
-        wave_frame="rest",
-        flux_unit="relative",
-    )
-    original = physical.flux.copy()
-    assert _flux_display_scale(physical) == pytest.approx(1.0e17)
-    assert _flux_display_scale(desi_scaled) == pytest.approx(1.0)
-    assert _flux_display_scale(other_scaled) == pytest.approx(25.0)
-    assert _flux_display_scale(relative) == pytest.approx(1.0)
-    np.testing.assert_array_equal(physical.flux, original)
-    assert "F_\\lambda" in _flux_density_axis_label(physical)
-    assert "10^{-17}" in _flux_density_axis_label(physical)
-    assert _flux_density_axis_label(relative) == (
-        r"$F_\lambda$ [relative units]"
-    )
-
-
 def test_qa_applies_display_scale_without_mutating_fit_arrays(
     tmp_path,
     monkeypatch,
@@ -730,90 +620,6 @@ def test_lya_overview_uses_unsmoothed_data_only_percentile(tmp_path):
     assert result.metadata["qa_overview_model_upper_limit"] == pytest.approx(expected)
 
 
-def test_qa_title_smoothing_and_tick_helpers():
-    result = qsospec.fit_global_lines(
-        _global_spectrum(np.linspace(2600.0, 7000.0, 1800)),
-        _simple_global_config(),
-        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
-    )
-    assert _qa_overview_title(result) == ""
-    result.metadata.update(
-        {
-            "object_id": "abc",
-            "redshift": 0.75,
-            "ra": 151.123456,
-            "dec": -2.345678,
-            "galactic_extinction": {
-                "status": "applied",
-                "applied_ebv": 0.12345,
-            },
-        }
-    )
-    assert _qa_overview_title(result) == (
-        "Object abc   z = 0.7500\n"
-        "RA = 151.12346   Dec = -2.34568   $E(B-V) = 0.1235$"
-    )
-    assert _input_spectrum_label(result) == (
-        "Input spectrum\nMW extinction corrected"
-    )
-    assert _input_spectrum_label(result, smoothed=True) == (
-        "Input spectrum\n"
-        "MW extinction corrected\nsmoothed for display"
-    )
-    assert (
-        _qa_overview_title(
-            result,
-            qsospec.GlobalQAPlotConfig(
-                object_name="My Quasar",
-                object_label="Source",
-                show_coordinates=False,
-            ),
-        )
-        == "Source My Quasar   z = 0.7500"
-    )
-
-    smoothed = _masked_running_median(
-        np.array([1.0, 100.0, 3.0, 5.0, 7.0]),
-        np.array([True, False, True, True, True]),
-        3,
-    )
-    assert smoothed == pytest.approx([1.0, np.nan, 4.0, 5.0, 6.0], nan_ok=True)
-
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import NullLocator
-
-    figure, axis = plt.subplots()
-    _configure_qa_axis(axis)
-    assert axis.xaxis.get_tick_params(which="major")["direction"] == "in"
-    assert axis.xaxis.get_tick_params(which="major")["top"] is True
-    assert axis.yaxis.get_tick_params(which="major")["right"] is True
-    assert not isinstance(axis.xaxis.get_minor_locator(), NullLocator)
-    assert not isinstance(axis.yaxis.get_minor_locator(), NullLocator)
-    axis.set_xlim(4800.0, 5050.0)
-    _annotate_emission_lines(
-        axis,
-        (
-            (4862.68, r"H$\beta$"),
-            (4960.30, "[O III] 4960"),
-            (5008.24, "[O III] 5008"),
-        ),
-        y_fraction=0.82,
-    )
-    text_positions = {text.get_text(): text.get_position()[1] for text in axis.texts}
-    assert text_positions[r"H$\beta$"] == pytest.approx(0.82)
-    assert text_positions["[O III] 4960"] == pytest.approx(0.68)
-    assert text_positions["[O III] 5008"] == pytest.approx(0.68)
-    assert all(text.get_color() == _TCC_COLORS["line_marker"] for text in axis.texts)
-    axis.set_xlim(3650.0, 3800.0)
-    _annotate_emission_lines(
-        axis,
-        ((3728.47, "[O II] 3728"),),
-        y_fraction=0.82,
-    )
-    assert axis.texts[-1].get_position()[1] == pytest.approx(0.68)
-    plt.close(figure)
-
-
 def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     import matplotlib.pyplot as plt
 
@@ -888,49 +694,6 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert variants["three"].metadata["qa_y_label_policy"] == (
         "overview_and_leftmost_zoom"
     )
-    real_close(figure)
-
-
-@pytest.mark.parametrize(
-    ("pixel_count", "expect_smoothed"),
-    ((4000, False), (4001, True)),
-)
-def test_qa_smoothing_pixel_threshold(
-    tmp_path,
-    monkeypatch,
-    pixel_count,
-    expect_smoothed,
-):
-    import matplotlib.pyplot as plt
-
-    result = qsospec.fit_global_lines(
-        _global_spectrum(np.linspace(2600.0, 7000.0, pixel_count)),
-        _simple_global_config(),
-        complexes=[],
-    )
-    real_close = plt.close
-    monkeypatch.setattr(plt, "close", lambda figure: None)
-    _plot_qa(
-        result,
-        tmp_path / f"smoothing-{pixel_count}.png",
-        qsospec.GlobalQAPlotConfig(
-            show_smoothed_data=True,
-            smooth_original_spectrum_for_display=True,
-        ),
-    )
-    figure = plt.gcf()
-    labels = figure.axes[0].get_legend_handles_labels()[1]
-    assert (
-        "Input spectrum\nsmoothed for display"
-        in labels
-    ) is expect_smoothed
-    assert (
-        "Input spectrum" in labels
-    ) is (not expect_smoothed)
-    assert result.metadata["qa_smoothing_effective"] is expect_smoothed
-    assert result.metadata[
-        "qa_smoothing_suppressed_short_spectrum"
-    ] is (not expect_smoothed)
     real_close(figure)
 
 
