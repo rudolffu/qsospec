@@ -61,6 +61,12 @@ from .workflows.host_workflow import (
     fit_global_lines_workflow,
     fit_with_optional_host_decomp,
 )
+from .workflows.host import (
+    EuclidHostScaleConfig,
+    EuclidHostScaleFit,
+    euclid_nir_line_mask,
+    fit_euclid_host_aperture_scale,
+)
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
 from .io.qa import render_qa
 from .io.readers import (
@@ -103,6 +109,8 @@ __all__ = [
     "ComplexRecipe",
     "FitResult",
     "EmissionComplexResult",
+    "EuclidHostScaleConfig",
+    "EuclidHostScaleFit",
     "GaussianComponent",
     "GalacticExtinctionConfig",
     "GlobalContinuumConfig",
@@ -138,6 +146,7 @@ __all__ = [
     "discover_fits_inputs",
     "finalize_run",
     "fit_batch",
+    "fit_euclid_host_aperture_scale",
     "f99_dereddening_factor",
     "fit_global_continuum",
     "fit_global_hbeta",
@@ -153,6 +162,7 @@ __all__ = [
     "fit_with_optional_host_decomp",
     "evaluate_balmer_pseudocontinuum",
     "evaluate_balmer_pseudocontinuum_with_derivatives",
+    "euclid_nir_line_mask",
     "list_balmer_templates",
     "list_iron_templates",
     "lines",

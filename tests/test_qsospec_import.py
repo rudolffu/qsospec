@@ -9,6 +9,9 @@ def test_qsospec_public_imports_work():
     assert fit_line_complex is qsospec.fit_line_complex
     assert qsospec.__version__ == "0.1.1"
     assert hasattr(qsospec, "BalmerPseudoContinuumConfig")
+    assert hasattr(qsospec, "EuclidHostScaleConfig")
+    assert hasattr(qsospec, "EuclidHostScaleFit")
+    assert callable(qsospec.fit_euclid_host_aperture_scale)
     assert not hasattr(qsospec, "BalmerContinuumConfig")
     assert not hasattr(qsospec, "BalmerSeriesConfig")
 

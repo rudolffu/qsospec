@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qsospec.workflows.host.euclid import predict_host_for_euclid_spectrum
+from qsospec.workflows.host.euclid import (
+    euclid_nir_line_mask,
+    fit_euclid_host_aperture_scale,
+    predict_host_for_euclid_spectrum,
+)
 from qsospec.workflows.host.io import SpectrumData, inspect_spectrum, read_sparcli_spectrum
 from qsospec.workflows.host.plots import _finite_percentile_limits, _host_sed_prediction_on_desi_grid
 from qsospec.workflows.host.ppxf_host import (
@@ -254,6 +258,123 @@ def test_euclid_free_scale_is_nonnegative():
 
     assert pred.scale_factor >= 0
     np.testing.assert_allclose(pred.predicted_host_flux[np.isfinite(pred.predicted_host_flux)], 3.0)
+
+
+def _euclid_scale_synthetic(
+    wave,
+    *,
+    host_scale=0.65,
+    amplitude=1.4,
+    alpha1=-1.2,
+    alpha2=-0.5,
+    error=0.03,
+):
+    wave = np.asarray(wave, dtype=float)
+    host = (
+        0.8
+        + 0.35 * np.exp(-0.5 * ((wave - 10800.0) / 850.0) ** 2)
+        + 0.08 * (wave - 10000.0) / 3000.0
+    )
+    x = wave / 9800.0
+    agn = amplitude * np.where(wave < 9800.0, x**alpha1, x**alpha2)
+    flux = host_scale * host + agn
+    return flux, np.full_like(wave, error), host
+
+
+def test_euclid_nir_mask_combines_velocity_and_safe_intervals():
+    wave = np.linspace(8000.0, 13500.0, 5501)
+    mask = euclid_nir_line_mask(wave)
+
+    assert mask[np.argmin(np.abs(wave - 8447.0))]
+    assert mask[np.argmin(np.abs(wave - 9069.0))]
+    assert mask[np.argmin(np.abs(wave - 10900.0))]
+    assert mask[np.argmin(np.abs(wave - 12820.0))]
+    assert not mask[np.argmin(np.abs(wave - 8800.0))]
+    assert not mask[np.argmin(np.abs(wave - 12000.0))]
+
+
+def test_euclid_host_scale_recovers_broken_power_law():
+    wave = np.linspace(7500.0, 13500.0, 900)
+    flux, error, host = _euclid_scale_synthetic(wave)
+
+    fit = fit_euclid_host_aperture_scale(wave, flux, error, host)
+
+    assert fit.success
+    assert fit.model_type == "broken_power_law"
+    assert fit.host_scale == pytest.approx(0.65, abs=0.06)
+    assert fit.alpha1 == pytest.approx(-1.2, abs=0.15)
+    assert fit.alpha2 == pytest.approx(-0.5, abs=0.15)
+    assert not np.any(fit.clean_mask & fit.line_mask)
+    np.testing.assert_allclose(
+        fit.host_subtracted_flux,
+        flux - fit.scaled_host_flux,
+    )
+
+
+def test_euclid_host_scale_single_power_law_fallback():
+    wave = np.linspace(10200.0, 13500.0, 600)
+    flux, error, host = _euclid_scale_synthetic(
+        wave,
+        alpha1=-0.7,
+        alpha2=-0.7,
+    )
+
+    fit = fit_euclid_host_aperture_scale(wave, flux, error, host)
+
+    assert fit.success
+    assert fit.model_type == "single_power_law"
+    assert fit.alpha1 == pytest.approx(-0.7, abs=0.2)
+    assert np.isnan(fit.alpha2)
+
+
+def test_euclid_host_scale_robust_to_continuum_outlier():
+    wave = np.linspace(7500.0, 13500.0, 900)
+    flux, error, host = _euclid_scale_synthetic(wave)
+    clean_fit = fit_euclid_host_aperture_scale(wave, flux, error, host)
+    contaminated = flux.copy()
+    contaminated[np.argmin(np.abs(wave - 8800.0))] += 20.0
+
+    robust_fit = fit_euclid_host_aperture_scale(
+        wave, contaminated, error, host
+    )
+
+    assert robust_fit.success
+    assert robust_fit.host_scale == pytest.approx(
+        clean_fit.host_scale, abs=0.05
+    )
+
+
+def test_euclid_host_scale_bound_hit_is_flagged():
+    wave = np.linspace(7500.0, 13500.0, 900)
+    _, error, host = _euclid_scale_synthetic(wave)
+    flux = host.copy()
+
+    fit = fit_euclid_host_aperture_scale(wave, flux, error, host)
+
+    assert fit.success
+    assert 0 <= fit.host_scale <= fit.host_scale_max
+    assert fit.host_scale_upper_bound_hit
+    assert not fit.reliable
+    assert "host_scale_upper_bound_hit" in fit.reliability_reasons
+
+
+def test_euclid_host_scale_reliability_includes_desi_and_snr():
+    wave = np.linspace(7500.0, 13500.0, 900)
+    flux, _, host = _euclid_scale_synthetic(wave)
+    error = np.full_like(wave, 10.0)
+
+    fit = fit_euclid_host_aperture_scale(
+        wave,
+        flux,
+        error,
+        host,
+        desi_host_fit_reliable=False,
+    )
+
+    assert fit.success
+    assert not fit.reliable
+    assert "desi_host_fit_unreliable" in fit.reliability_reasons
+    assert "continuum_snr_below_threshold" in fit.reliability_reasons
 
 
 def test_output_schema_writes_summary_files(tmp_path):
