@@ -557,6 +557,8 @@ def _input_spectrum_label(
             "caller_preprocessed",
         )
     )
+    if corrected and smoothed:
+        return "Input spectrum\nMW ext. corrected and smoothed"
     parts = ["Input spectrum"]
     if corrected:
         parts.append("MW extinction corrected")
@@ -1495,7 +1497,7 @@ def _plot_qa(
         )
         layout_engine = fig.get_layout_engine()
         if layout_engine is not None:
-            layout_engine.set(rect=(0.0, 0.0, 1.0, 0.91))
+            layout_engine.set(rect=(0.0, 0.0, 1.0, 0.855))
 
     if residual_axis is not None:
         residual_mask = (

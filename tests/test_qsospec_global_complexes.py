@@ -20,6 +20,7 @@ from qsospec.io.products import (
     _final_fit_masks,
     _host_fraction_annotation,
     _has_host_context,
+    _input_spectrum_label,
     _masked_running_median,
     _percentile_limits,
     _plot_qa,
@@ -224,6 +225,28 @@ def _simple_global_config():
         optical_iron=None,
         balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
         clip_passes=0,
+    )
+
+
+def test_input_spectrum_label_abbreviates_corrected_smoothed_display():
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(4000.0, 5000.0, 20),
+        np.ones(20),
+        err=np.full(20, 0.1),
+        wave_frame="rest",
+        flux_unit="relative",
+        galactic_extinction_corrected=True,
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        _simple_global_config(),
+        complexes=[],
+        uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
+    )
+
+    assert (
+        _input_spectrum_label(result, smoothed=True)
+        == "Input spectrum\nMW ext. corrected and smoothed"
     )
 
 
