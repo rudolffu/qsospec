@@ -143,6 +143,8 @@ def _fit_spectrum_data(
             host_sed,
             host_on_grid,
             _,
+            host_fit_mask,
+            host_emission_mask,
             host_warnings,
         ) = _host_subtracted_spectrum(
             spectrum_data,
@@ -179,11 +181,11 @@ def _fit_spectrum_data(
     result.host_sed = host_sed
     result.host_model_on_quasar_grid = host_on_grid
     result.host_fit_mask = (
-        np.asarray(host_fit.preprocessed.fit_mask, dtype=bool).copy()
+        np.asarray(host_fit_mask, dtype=bool).copy()
         if host_fit is not None else None
     )
     result.host_emission_mask = (
-        np.asarray(host_fit.preprocessed.emission_mask, dtype=bool).copy()
+        np.asarray(host_emission_mask, dtype=bool).copy()
         if host_fit is not None else None
     )
     result.host_warnings = [str(item) for item in host_warnings]

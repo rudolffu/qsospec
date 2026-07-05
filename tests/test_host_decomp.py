@@ -14,11 +14,18 @@ from qsospec.workflows.host.euclid import (
     predict_host_for_euclid_spectrum,
 )
 from qsospec.workflows.host.io import SpectrumData, inspect_spectrum, read_sparcli_spectrum
-from qsospec.workflows.host.plots import _finite_percentile_limits, _host_sed_prediction_on_desi_grid
+from qsospec.workflows.host.plots import (
+    _finite_percentile_limits,
+    _host_sed_prediction_on_desi_grid,
+    _host_sed_prediction_on_input_grid,
+    plot_desi_ppxf_fit,
+    plot_ppxf_host_fit,
+)
 from qsospec.workflows.host.ppxf_host import (
     HostSED,
     PPXFHostFitResult,
     prepare_desi_for_host_decomp,
+    prepare_spectrum_for_host_decomp,
     predict_host_sed,
     predict_host_sed_on_grid,
     run_ppxf_host_fit,
@@ -68,14 +75,14 @@ def test_preprocessing_preserves_native_mask_gaps_and_observed_artifacts():
         object_id="masked",
     )
 
-    prep = prepare_desi_for_host_decomp(
+    prep = prepare_spectrum_for_host_decomp(
         spec,
         fit_range=(3600.0, 7000.0),
     )
 
     native = prep.mask_provenance
     assert np.all(
-        native["original_desi_mask_rejected"][
+        native["input_mask_rejected"][
             (wave >= 5200.0) & (wave <= 5210.0)
         ]
     )
@@ -124,7 +131,7 @@ def test_staged_ppxf_expands_broad_masks_clips_spikes_and_keeps_absorption(
         redshift=0.0,
         object_id="robust",
     )
-    prep = prepare_desi_for_host_decomp(spec, fit_range=(3600.0, 7000.0))
+    prep = prepare_spectrum_for_host_decomp(spec, fit_range=(3600.0, 7000.0))
     template_wave = np.linspace(3500.0, 7100.0, 1801)
     templates = PPXFTemplateLibrary(
         flux=np.ones((template_wave.size, 1)),
@@ -209,7 +216,7 @@ def test_host_sed_prediction_on_quasar_grid_no_extrapolation():
     assert "host_sed_grid_outside_template_coverage" in warnings
 
 
-def test_desi_diagnostic_host_sed_prediction_is_outside_ppxf_fit():
+def test_host_diagnostic_host_sed_prediction_is_outside_ppxf_fit():
     wave = np.linspace(3000.0, 8000.0, 51)
     host_model = np.full_like(wave, np.nan)
     fit_region = (wave >= 3600.0) & (wave <= 7000.0)
@@ -226,11 +233,38 @@ def test_desi_diagnostic_host_sed_prediction_is_outside_ppxf_fit():
         warnings=[],
     )
 
-    predicted = _host_sed_prediction_on_desi_grid(fit, sed)
+    predicted = _host_sed_prediction_on_input_grid(fit, sed)
 
     assert np.all(np.isfinite(predicted[wave < 3600.0]))
     assert np.all(np.isfinite(predicted[wave > 7000.0]))
     assert np.all(np.isnan(predicted[fit_region]))
+
+
+def test_deprecated_host_preparation_and_plot_aliases_emit_warnings(tmp_path):
+    wave = np.linspace(3600.0, 7000.0, 40)
+    spec = SpectrumData(
+        wave_obs=wave,
+        flux=np.ones_like(wave),
+        ivar=np.ones_like(wave),
+        redshift=0.0,
+        object_id="deprecated",
+    )
+    with pytest.warns(DeprecationWarning, match="prepare_desi_for_host_decomp"):
+        prepare_desi_for_host_decomp(spec, fit_range=(3600.0, 7000.0))
+
+    fit = SimpleNamespace(
+        preprocessed=SimpleNamespace(wave_rest=wave),
+        host_model=np.full_like(wave, np.nan),
+    )
+    sed = HostSED(
+        wave_rest=np.linspace(3500.0, 7100.0, 30),
+        host_flux=np.ones(30),
+        samples={},
+        flags={},
+        warnings=[],
+    )
+    with pytest.warns(DeprecationWarning, match="_host_sed_prediction_on_desi_grid"):
+        _host_sed_prediction_on_desi_grid(fit, sed)
 
 
 def test_plot_percentile_limits_ignore_extreme_spikes():
@@ -358,7 +392,7 @@ def test_euclid_host_scale_bound_hit_is_flagged():
     assert "host_scale_upper_bound_hit" in fit.reliability_reasons
 
 
-def test_euclid_host_scale_reliability_includes_desi_and_snr():
+def test_euclid_host_scale_reliability_includes_reference_host_and_snr():
     wave = np.linspace(7500.0, 13500.0, 900)
     flux, _, host = _euclid_scale_synthetic(wave)
     error = np.full_like(wave, 10.0)
@@ -368,13 +402,44 @@ def test_euclid_host_scale_reliability_includes_desi_and_snr():
         flux,
         error,
         host,
-        desi_host_fit_reliable=False,
+        reference_host_fit_reliable=False,
     )
 
     assert fit.success
     assert not fit.reliable
-    assert "desi_host_fit_unreliable" in fit.reliability_reasons
+    assert "reference_host_fit_unreliable" in fit.reliability_reasons
     assert "continuum_snr_below_threshold" in fit.reliability_reasons
+
+
+def test_deprecated_euclid_reference_host_keywords_warn():
+    wave = np.linspace(7500.0, 13500.0, 900)
+    flux, _, host = _euclid_scale_synthetic(wave)
+    error = np.full_like(wave, 10.0)
+
+    with pytest.warns(DeprecationWarning, match="desi_host_fit_reliable"):
+        fit = fit_euclid_host_aperture_scale(
+            wave,
+            flux,
+            error,
+            host,
+            desi_host_fit_reliable=False,
+        )
+    assert "reference_host_fit_unreliable" in fit.reliability_reasons
+
+    sed = HostSED(
+        wave_rest=np.linspace(3000.0, 12000.0, 50),
+        host_flux=np.ones(50),
+        samples={},
+        flags={},
+        warnings=[],
+    )
+    with pytest.warns(DeprecationWarning, match="desi_host_sed"):
+        prediction = predict_host_for_euclid_spectrum(
+            euclid_wave_obs=wave,
+            z=0.1,
+            desi_host_sed=sed,
+        )
+    assert prediction.predicted_host_flux.shape == wave.shape
 
 
 def test_output_schema_writes_summary_files(tmp_path):
@@ -385,6 +450,7 @@ def test_output_schema_writes_summary_files(tmp_path):
         wave_rest=wave,
         flux=np.ones_like(wave),
         error=np.ones_like(wave) * 0.1,
+        emission_mask=np.zeros_like(wave, dtype=bool),
         wave_log=wave,
         redshift=0.0,
     )
@@ -440,10 +506,31 @@ def test_output_schema_writes_summary_files(tmp_path):
     assert "fHost_5100" in summary
     assert summary["flux_unit"] == "cgs"
     assert summary["flux_scale"] == pytest.approx(1e-17)
+    assert "host_fit_range_min" in summary
+    assert "desi_fit_range_min" not in summary
     assert np.isfinite(summary["fracHost_4000"])
     assert np.isnan(summary["fracHost_5100"])
     assert np.isnan(summary["fAGN_5100"])
-    assert (tmp_path / "desi_host_subtracted.csv").exists()
+    assert "host_subtracted_spectrum" in files
+    assert (tmp_path / "host_subtracted_spectrum.csv").exists()
+    assert not (tmp_path / "desi_host_subtracted.csv").exists()
+
+    plot_ppxf_host_fit(fit, str(tmp_path / "generic_ppxf.png"), sed)
+    assert (tmp_path / "generic_ppxf.png").exists()
+    with pytest.warns(DeprecationWarning, match="plot_desi_ppxf_fit"):
+        plot_desi_ppxf_fit(fit, str(tmp_path / "legacy_ppxf.png"), sed)
+    assert (tmp_path / "legacy_ppxf.png").exists()
+
+    files, _ = write_host_decomp_outputs(
+        tmp_path / "legacy",
+        spec,
+        fit,
+        sed,
+        np.zeros_like(wave),
+        write_legacy_products=True,
+    )
+    assert "desi_host_subtracted" in files
+    assert (tmp_path / "legacy" / "desi_host_subtracted.csv").exists()
 
 
 def test_missing_template_file_error(tmp_path):

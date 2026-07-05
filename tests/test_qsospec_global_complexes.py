@@ -411,7 +411,18 @@ def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
             survey="desi",
         )
         host = np.zeros_like(data.flux)
-        return fit_spectrum, fit_spectrum, None, None, host, data.flux.copy(), []
+        mask = np.ones_like(data.flux, dtype=bool)
+        return (
+            fit_spectrum,
+            fit_spectrum,
+            None,
+            None,
+            host,
+            data.flux.copy(),
+            mask,
+            mask,
+            [],
+        )
 
     monkeypatch.setattr(host_workflow, "_host_subtracted_spectrum", fake_host_subtraction)
     result = host_workflow._run_host_refit_mc(
@@ -553,6 +564,17 @@ def test_qa_fit_masks_residuals_and_region_precedence(tmp_path, monkeypatch):
     figure = plt.gcf()
     overview = figure.axes[0]
     residual = figure.axes[1]
+    input_line = next(
+        line for line in overview.lines if line.get_label() == "Input spectrum"
+    )
+    np.testing.assert_allclose(
+        input_line.get_xdata(),
+        result.spectrum.wave_rest[result.spectrum.valid_mask],
+    )
+    np.testing.assert_allclose(
+        input_line.get_ydata(),
+        result.spectrum.flux[result.spectrum.valid_mask],
+    )
     total_model_line = next(line for line in overview.lines if line.get_label() == "total model")
     assert np.all(
         np.isfinite(
@@ -707,11 +729,13 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
         qsospec.HbetaComplexConfig(fit_oiii_wings=False),
     )
     host = 0.45 * (result.spectrum.wave_rest / 5100.0) ** -0.4
+    total_flux = result.spectrum.flux + host
+    host[120:145] = np.nan
     result.host_decomp_enabled = True
     result.host_model_on_quasar_grid = host
     result.total_spectrum = qsospec.Spectrum.from_arrays(
         result.spectrum.wave_rest,
-        result.spectrum.flux + host,
+        total_flux,
         err=result.spectrum.err,
         wave_frame="rest",
         flux_unit="relative",
@@ -801,6 +825,10 @@ def test_host_context_companion_plot(tmp_path, monkeypatch):
         result.total_spectrum.flux,
         result.total_spectrum.valid_mask,
         7,
+    )
+    np.testing.assert_allclose(
+        original_line.get_xdata(),
+        result.total_spectrum.wave_rest[result.total_spectrum.valid_mask],
     )
     np.testing.assert_allclose(
         original_line.get_ydata(),

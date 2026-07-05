@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import warnings
 
 import numpy as np
 
@@ -35,7 +36,10 @@ def _finite_percentile_limits(values, percentiles=(1.0, 99.0), pad_fraction=0.08
     return lo - pad, hi + pad
 
 
-def _host_sed_prediction_on_desi_grid(fit: PPXFHostFitResult, host_sed: Optional[HostSED]) -> Optional[np.ndarray]:
+def _host_sed_prediction_on_input_grid(
+    fit: PPXFHostFitResult,
+    host_sed: Optional[HostSED],
+) -> Optional[np.ndarray]:
     if host_sed is None:
         return None
     wave = fit.preprocessed.wave_rest
@@ -49,15 +53,32 @@ def _host_sed_prediction_on_desi_grid(fit: PPXFHostFitResult, host_sed: Optional
     return np.where(outside_fit & np.isfinite(predicted), predicted, np.nan)
 
 
-def plot_desi_ppxf_fit(fit: PPXFHostFitResult, output_path: str, host_sed: Optional[HostSED] = None) -> str:
+def _host_sed_prediction_on_desi_grid(
+    fit: PPXFHostFitResult,
+    host_sed: Optional[HostSED],
+) -> Optional[np.ndarray]:
+    warnings.warn(
+        "_host_sed_prediction_on_desi_grid is deprecated; use "
+        "_host_sed_prediction_on_input_grid instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _host_sed_prediction_on_input_grid(fit, host_sed)
+
+
+def plot_ppxf_host_fit(
+    fit: PPXFHostFitResult,
+    output_path: str,
+    host_sed: Optional[HostSED] = None,
+) -> str:
     plt = _setup_matplotlib()
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True, constrained_layout=True)
     wave = fit.preprocessed.wave_rest
-    axes[0].plot(wave, fit.preprocessed.flux, color="0.2", lw=0.8, label="DESI spectrum")
+    axes[0].plot(wave, fit.preprocessed.flux, color="0.2", lw=0.8, label="input spectrum")
     axes[0].plot(wave, fit.host_model, color="tab:green", lw=1.0, label="pPXF host")
-    predicted_host = _host_sed_prediction_on_desi_grid(fit, host_sed)
+    predicted_host = _host_sed_prediction_on_input_grid(fit, host_sed)
     if predicted_host is not None and np.any(np.isfinite(predicted_host)):
         axes[0].plot(wave, predicted_host, color="tab:green", lw=1.0, ls="--", label="host SED prediction")
     axes[0].plot(wave, fit.agn_model, color="tab:orange", lw=1.0, label="AGN continuum")
@@ -84,6 +105,19 @@ def plot_desi_ppxf_fit(fit: PPXFHostFitResult, output_path: str, host_sed: Optio
     fig.savefig(path, dpi=160)
     plt.close(fig)
     return str(path)
+
+
+def plot_desi_ppxf_fit(
+    fit: PPXFHostFitResult,
+    output_path: str,
+    host_sed: Optional[HostSED] = None,
+) -> str:
+    warnings.warn(
+        "plot_desi_ppxf_fit is deprecated; use plot_ppxf_host_fit instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return plot_ppxf_host_fit(fit, output_path, host_sed)
 
 
 def plot_host_sed_prediction(sed: HostSED, output_path: str) -> str:

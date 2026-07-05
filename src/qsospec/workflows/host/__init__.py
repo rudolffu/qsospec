@@ -12,6 +12,7 @@ from .ppxf_host import (
     HostSED,
     PPXFHostFitResult,
     prepare_desi_for_host_decomp,
+    prepare_spectrum_for_host_decomp,
     predict_host_sed,
     predict_host_sed_on_grid,
     run_ppxf_host_fit,
@@ -34,6 +35,7 @@ __all__ = [
     "predict_host_sed",
     "predict_host_sed_on_grid",
     "prepare_desi_for_host_decomp",
+    "prepare_spectrum_for_host_decomp",
     "read_sparcli_spectrum",
     "run_ppxf_host_fit",
 ]

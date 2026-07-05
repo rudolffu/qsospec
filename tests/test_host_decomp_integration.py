@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from qsospec.workflows.host.io import SpectrumData
-from qsospec.workflows.host.ppxf_host import prepare_desi_for_host_decomp, predict_host_sed, run_ppxf_host_fit
+from qsospec.workflows.host.ppxf_host import (
+    prepare_spectrum_for_host_decomp,
+    predict_host_sed,
+    run_ppxf_host_fit,
+)
 from qsospec.workflows.host.templates import load_ppxf_npz_templates
 
 
@@ -24,7 +28,7 @@ def test_local_ppxf_template_fit_smoke():
     ivar = np.full_like(wave, 100.0)
     spec = SpectrumData(wave_obs=wave, flux=flux, ivar=ivar, redshift=0.0, object_id="synthetic")
     templates = load_ppxf_npz_templates(write_report=False)
-    prep = prepare_desi_for_host_decomp(spec, fit_range=(3700.0, 6800.0))
+    prep = prepare_spectrum_for_host_decomp(spec, fit_range=(3700.0, 6800.0))
     fit = run_ppxf_host_fit(prep, templates, quiet=True)
     sed = predict_host_sed(fit)
 

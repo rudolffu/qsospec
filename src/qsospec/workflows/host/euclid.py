@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -274,10 +275,23 @@ def fit_euclid_host_aperture_scale(
     host_flux_r400: np.ndarray,
     valid_mask: Optional[np.ndarray] = None,
     *,
-    desi_host_fit_reliable: bool = True,
+    reference_host_fit_reliable: Optional[bool] = None,
+    desi_host_fit_reliable: Optional[bool] = None,
     config: Optional[EuclidHostScaleConfig] = None,
 ) -> EuclidHostScaleFit:
-    """Fit a Euclid aperture scale for a fixed DESI-derived host shape."""
+    """Fit a Euclid aperture scale for a fixed reference host shape."""
+
+    if desi_host_fit_reliable is not None:
+        warnings.warn(
+            "desi_host_fit_reliable is deprecated; use "
+            "reference_host_fit_reliable instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if reference_host_fit_reliable is None:
+            reference_host_fit_reliable = bool(desi_host_fit_reliable)
+    if reference_host_fit_reliable is None:
+        reference_host_fit_reliable = True
 
     cfg = config or EuclidHostScaleConfig()
     wave = np.asarray(wave_rest, dtype=float)
@@ -562,8 +576,8 @@ def fit_euclid_host_aperture_scale(
         and host_fraction < cfg.negligible_host_fraction
     )
     reasons = []
-    if not desi_host_fit_reliable:
-        reasons.append("desi_host_fit_unreliable")
+    if not reference_host_fit_reliable:
+        reasons.append("reference_host_fit_unreliable")
     if np.count_nonzero(clean) < cfg.minimum_clean_pixels:
         reasons.append("too_few_clean_pixels")
     if clean_coverage < cfg.minimum_clean_coverage:
@@ -645,22 +659,44 @@ def fit_euclid_host_aperture_scale(
 
 
 def predict_host_for_euclid_spectrum(
-    desi_host_sed: HostSED,
-    euclid_wave_obs: np.ndarray,
-    z: float,
+    reference_host_sed: Optional[HostSED] = None,
+    euclid_wave_obs: Optional[np.ndarray] = None,
+    z: Optional[float] = None,
     euclid_flux: Optional[np.ndarray] = None,
     scale_mode: str = "free_scale",
     aperture_scale: Optional[float] = None,
     continuum_windows: Sequence[Tuple[float, float]] = ((10000.0, 12000.0), (14500.0, 17000.0)),
+    *,
+    desi_host_sed: Optional[HostSED] = None,
 ) -> EuclidHostPrediction:
-    """Interpolate a DESI-derived host SED onto a Euclid observed grid."""
+    """Interpolate a reference host SED onto a Euclid observed grid."""
 
+    if desi_host_sed is not None:
+        warnings.warn(
+            "desi_host_sed is deprecated; use reference_host_sed instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if reference_host_sed is None:
+            reference_host_sed = desi_host_sed
+    if reference_host_sed is None:
+        raise ValueError("A reference_host_sed is required.")
+    if euclid_wave_obs is None:
+        raise ValueError("euclid_wave_obs is required.")
+    if z is None:
+        raise ValueError("z is required.")
     wave_obs = np.asarray(euclid_wave_obs, dtype=float)
     wave_rest = wave_obs / (1.0 + float(z))
-    warnings = []
-    host = np.interp(wave_rest, desi_host_sed.wave_rest, desi_host_sed.host_flux, left=np.nan, right=np.nan)
+    warning_messages = []
+    host = np.interp(
+        wave_rest,
+        reference_host_sed.wave_rest,
+        reference_host_sed.host_flux,
+        left=np.nan,
+        right=np.nan,
+    )
     if np.any(~np.isfinite(host)):
-        warnings.append("euclid_grid_extends_beyond_host_sed_coverage")
+        warning_messages.append("euclid_grid_extends_beyond_host_sed_coverage")
 
     mode = scale_mode.lower()
     if mode == "desi_fiber_scaled":
@@ -671,7 +707,7 @@ def predict_host_for_euclid_spectrum(
         scale = float(aperture_scale)
     elif mode == "free_scale":
         if euclid_flux is None:
-            warnings.append("free_scale_without_euclid_flux_uses_unity")
+            warning_messages.append("free_scale_without_euclid_flux_uses_unity")
             scale = 1.0 if aperture_scale is None else float(aperture_scale)
         else:
             mask = _continuum_mask(wave_rest, continuum_windows)
@@ -690,7 +726,7 @@ def predict_host_for_euclid_spectrum(
         host_subtracted_flux=subtracted,
         scale_factor=scale,
         scale_mode=mode,
-        warnings=warnings,
+        warnings=warning_messages,
     )
 
 

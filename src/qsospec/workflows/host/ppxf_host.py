@@ -1,4 +1,4 @@
-"""Optional DESI pPXF host fitting plus qsospec handoff."""
+"""Optional pPXF host fitting plus qsospec handoff."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _C_KMS = 299792.458
 
 @dataclass
 class PreprocessedSpectrum:
-    """DESI spectrum prepared for pPXF host fitting."""
+    """Spectrum prepared for pPXF host fitting."""
 
     wave_obs: np.ndarray
     wave_rest: np.ndarray
@@ -187,7 +187,7 @@ def _log_resample(
     )
 
 
-def prepare_desi_for_host_decomp(
+def prepare_spectrum_for_host_decomp(
     spectrum: SpectrumData,
     redshift: Optional[float] = None,
     fit_range: Tuple[float, float] = (3600.0, 7000.0),
@@ -200,11 +200,11 @@ def prepare_desi_for_host_decomp(
     max_native_gap_pixels: float = 3.0,
     systematic_error_floor_fraction: float = 0.02,
 ) -> PreprocessedSpectrum:
-    """Clean, rest-frame, mask, normalize, and log-resample a DESI spectrum."""
+    """Clean, rest-frame, mask, normalize, and log-resample a spectrum."""
 
     z = spectrum.redshift if redshift is None else redshift
     if z is None:
-        raise ValueError("A redshift is required for DESI host decomposition.")
+        raise ValueError("A redshift is required for host decomposition.")
     z = float(z)
 
     wave_obs = np.asarray(spectrum.wave_obs, dtype=float)
@@ -335,7 +335,7 @@ def prepare_desi_for_host_decomp(
             "max_native_gap_pixels": float(max_native_gap_pixels),
         },
         mask_provenance={
-            "original_desi_mask_rejected": input_mask_rejected,
+            "input_mask_rejected": input_mask_rejected,
             "invalid_or_nonpositive_error_rejected": ~finite_valid,
             "observed_artifact_rejected": artifact_rejected,
             "native_valid": valid,
@@ -347,6 +347,18 @@ def prepare_desi_for_host_decomp(
         },
         warnings=warnings_out,
     )
+
+
+def prepare_desi_for_host_decomp(*args, **kwargs) -> PreprocessedSpectrum:
+    """Deprecated alias for :func:`prepare_spectrum_for_host_decomp`."""
+
+    warnings.warn(
+        "prepare_desi_for_host_decomp is deprecated; use "
+        "prepare_spectrum_for_host_decomp instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return prepare_spectrum_for_host_decomp(*args, **kwargs)
 
 
 def _build_agn_basis(wave: np.ndarray, slopes: Sequence[float]) -> np.ndarray:
@@ -745,8 +757,8 @@ def _summary_dict(
         "template_file_used": fit.templates.source_path,
         "template_wavelength_min": fit.templates.wavelength_coverage[0],
         "template_wavelength_max": fit.templates.wavelength_coverage[1],
-        "desi_fit_range_min": float(np.nanmin(fit.preprocessed.wave_log)),
-        "desi_fit_range_max": float(np.nanmax(fit.preprocessed.wave_log)),
+        "host_fit_range_min": float(np.nanmin(fit.preprocessed.wave_log)),
+        "host_fit_range_max": float(np.nanmax(fit.preprocessed.wave_log)),
         "ppxf_status": fit.status,
         "qsospec_status": qsospec_status,
         "qsospec_result_path": qsospec_result_path,
@@ -790,28 +802,47 @@ def write_host_decomp_outputs(
     host_subtracted_flux: np.ndarray,
     qsospec_status: str = "not_run",
     qsospec_result_path: Optional[str] = None,
+    *,
+    write_legacy_products: bool = False,
 ) -> Tuple[Dict[str, str], Dict[str, Any]]:
     """Write standard host-decomposition products."""
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     files: Dict[str, str] = {}
-    files["desi_total_spectrum"] = _write_csv(
-        out / "desi_total_spectrum.csv",
+    files["input_total_spectrum"] = _write_csv(
+        out / "input_total_spectrum.csv",
         {"wave_obs": fit.preprocessed.wave_obs, "wave_rest": fit.preprocessed.wave_rest, "flux": fit.preprocessed.flux, "error": fit.preprocessed.error},
     )
-    files["desi_ppxf_host_model"] = _write_csv(
-        out / "desi_ppxf_host_model.csv",
+    files["ppxf_host_model"] = _write_csv(
+        out / "ppxf_host_model.csv",
         {"wave_rest": fit.preprocessed.wave_rest, "host_flux": fit.host_model},
     )
-    files["desi_ppxf_agn_continuum_model"] = _write_csv(
-        out / "desi_ppxf_agn_continuum_model.csv",
+    files["ppxf_agn_continuum_model"] = _write_csv(
+        out / "ppxf_agn_continuum_model.csv",
         {"wave_rest": fit.preprocessed.wave_rest, "agn_flux": fit.agn_model},
     )
-    files["desi_host_subtracted"] = _write_csv(
-        out / "desi_host_subtracted.csv",
+    files["host_subtracted_spectrum"] = _write_csv(
+        out / "host_subtracted_spectrum.csv",
         {"wave_obs": fit.preprocessed.wave_obs, "wave_rest": fit.preprocessed.wave_rest, "flux": host_subtracted_flux, "error": fit.preprocessed.error},
     )
+    if write_legacy_products:
+        files["desi_total_spectrum"] = _write_csv(
+            out / "desi_total_spectrum.csv",
+            {"wave_obs": fit.preprocessed.wave_obs, "wave_rest": fit.preprocessed.wave_rest, "flux": fit.preprocessed.flux, "error": fit.preprocessed.error},
+        )
+        files["desi_ppxf_host_model"] = _write_csv(
+            out / "desi_ppxf_host_model.csv",
+            {"wave_rest": fit.preprocessed.wave_rest, "host_flux": fit.host_model},
+        )
+        files["desi_ppxf_agn_continuum_model"] = _write_csv(
+            out / "desi_ppxf_agn_continuum_model.csv",
+            {"wave_rest": fit.preprocessed.wave_rest, "agn_flux": fit.agn_model},
+        )
+        files["desi_host_subtracted"] = _write_csv(
+            out / "desi_host_subtracted.csv",
+            {"wave_obs": fit.preprocessed.wave_obs, "wave_rest": fit.preprocessed.wave_rest, "flux": host_subtracted_flux, "error": fit.preprocessed.error},
+        )
     files["host_sed_prediction"] = _write_csv(
         out / "host_sed_prediction.csv",
         {"wave_rest": sed.wave_rest, "host_flux": sed.host_flux},

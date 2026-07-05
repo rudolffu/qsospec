@@ -151,6 +151,37 @@ def _spectrum_from_spectrum_data(spectrum_data: Any, source: str) -> Spectrum:
     )
 
 
+def _full_host_grid_masks(
+    spectrum_data: Any,
+    *,
+    redshift: float,
+    fit_range: Tuple[float, float],
+    host_config: Any,
+    finite_host: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return pPXF host-fit and emission masks aligned to the full input grid."""
+
+    from .host.ppxf_host import make_emission_line_mask
+
+    wave_obs = np.asarray(spectrum_data.wave_obs, dtype=float)
+    wave_rest = wave_obs / (1.0 + float(redshift))
+    good = _good_mask_from_spectrum_data(spectrum_data)
+    fit_mask = (
+        good
+        & np.asarray(finite_host, dtype=bool)
+        & (wave_rest >= float(fit_range[0]))
+        & (wave_rest <= float(fit_range[1]))
+    )
+    emission_mask = make_emission_line_mask(
+        wave_rest,
+        line_mask_widths=host_config.line_mask_widths,
+        broad_line_mask_widths=host_config.broad_line_mask_widths,
+        use_broad_masks=True,
+    )
+    emission_mask &= good
+    return fit_mask, emission_mask
+
+
 def _host_subtracted_spectrum(
     spectrum_data: Any,
     *,
@@ -160,10 +191,20 @@ def _host_subtracted_spectrum(
     fit_range: Tuple[float, float],
     host_config: Optional[Any],
     source: str,
-) -> Tuple[Spectrum, Spectrum, Any, Any, np.ndarray, np.ndarray, list]:
+) -> Tuple[
+    Spectrum,
+    Spectrum,
+    Any,
+    Any,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list,
+]:
     from .host.config import default_config
     from .host.ppxf_host import (
-        prepare_desi_for_host_decomp,
+        prepare_spectrum_for_host_decomp,
         predict_host_sed,
         predict_host_sed_on_grid,
         run_ppxf_host_fit,
@@ -172,7 +213,7 @@ def _host_subtracted_spectrum(
 
     cfg = host_config or default_config()
     templates = load_ppxf_npz_templates(template_root=template_root, template_file=template_file)
-    prep = prepare_desi_for_host_decomp(
+    prep = prepare_spectrum_for_host_decomp(
         spectrum_data,
         redshift=redshift,
         fit_range=fit_range,
@@ -200,34 +241,54 @@ def _host_subtracted_spectrum(
         maximum_clipped_fraction=cfg.maximum_clipped_fraction,
     )
     host_sed = predict_host_sed(host_fit)
-    host_on_grid, grid_warnings = predict_host_sed_on_grid(host_sed, prep.wave_rest)
+    full_wave_obs = np.asarray(spectrum_data.wave_obs, dtype=float)
+    full_wave_rest = full_wave_obs / (1.0 + float(redshift))
+    full_flux = np.asarray(spectrum_data.flux, dtype=float)
+    full_error = np.asarray(spectrum_data.uncertainty(), dtype=float)
+    full_good = _good_mask_from_spectrum_data(spectrum_data)
+    host_on_grid, grid_warnings = predict_host_sed_on_grid(
+        host_sed, full_wave_rest
+    )
     host_warnings = list(host_fit.warnings) + list(host_sed.warnings) + list(grid_warnings)
     finite_host = np.isfinite(host_on_grid)
-    host_subtracted_flux = np.asarray(prep.flux, dtype=float) - np.where(finite_host, host_on_grid, 0.0)
+    host_subtracted_flux = full_flux - np.where(finite_host, host_on_grid, 0.0)
+    host_fit_mask, host_emission_mask = _full_host_grid_masks(
+        spectrum_data,
+        redshift=float(redshift),
+        fit_range=fit_range,
+        host_config=cfg,
+        finite_host=finite_host,
+    )
 
     total_spectrum = _spectrum_from_arrays(
-        prep.wave_obs,
-        prep.flux,
-        prep.error,
+        full_wave_obs,
+        full_flux,
+        full_error,
         prep.redshift,
-        np.isfinite(prep.wave_obs) & np.isfinite(prep.flux) & np.isfinite(prep.error) & (prep.error > 0),
+        full_good,
         source=source,
         spectrum_data=spectrum_data,
     )
     fit_spectrum = _spectrum_from_arrays(
-        prep.wave_obs,
+        full_wave_obs,
         host_subtracted_flux,
-        prep.error,
+        full_error,
         prep.redshift,
-        np.isfinite(prep.wave_obs)
-        & np.isfinite(host_subtracted_flux)
-        & np.isfinite(prep.error)
-        & (prep.error > 0)
-        & finite_host,
+        full_good & np.isfinite(host_subtracted_flux) & finite_host,
         source=f"{source}; host_subtracted=ppxf_sed_grid",
         spectrum_data=spectrum_data,
     )
-    return total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, host_subtracted_flux, host_warnings
+    return (
+        total_spectrum,
+        fit_spectrum,
+        host_fit,
+        host_sed,
+        host_on_grid,
+        host_subtracted_flux,
+        host_fit_mask,
+        host_emission_mask,
+        host_warnings,
+    )
 
 
 def fit_with_optional_host_decomp(
@@ -400,7 +461,7 @@ def _run_host_refit_mc(
             flux=np.asarray(spectrum_data.flux, dtype=float) + rng.normal(0.0, error),
         )
         try:
-            _, fit_spectrum, _, _, host_on_grid, _, _ = _host_subtracted_spectrum(
+            _, fit_spectrum, _, _, host_on_grid, _, _, _, _ = _host_subtracted_spectrum(
                 noisy_data,
                 redshift=redshift,
                 template_root=template_root,
@@ -474,7 +535,17 @@ def fit_global_lines_workflow(
         run_host_decomp, spectrum_data.redshift
     )
     if host_decomp_enabled:
-        total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, _, host_warnings = (
+        (
+            total_spectrum,
+            fit_spectrum,
+            host_fit,
+            host_sed,
+            host_on_grid,
+            _,
+            host_fit_mask,
+            host_emission_mask,
+            host_warnings,
+        ) = (
             _host_subtracted_spectrum(
                 spectrum_data,
                 redshift=float(spectrum_data.redshift),
@@ -516,11 +587,11 @@ def fit_global_lines_workflow(
     workflow.host_sed = host_sed
     workflow.host_model_on_quasar_grid = host_on_grid
     workflow.host_fit_mask = (
-        np.asarray(host_fit.preprocessed.fit_mask, dtype=bool).copy()
+        np.asarray(host_fit_mask, dtype=bool).copy()
         if host_fit is not None else None
     )
     workflow.host_emission_mask = (
-        np.asarray(host_fit.preprocessed.emission_mask, dtype=bool).copy()
+        np.asarray(host_emission_mask, dtype=bool).copy()
         if host_fit is not None else None
     )
     workflow.host_warnings = [str(item) for item in host_warnings]

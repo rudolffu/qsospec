@@ -818,7 +818,11 @@ def _plot_host_context(
     agn_model = result.continuum.model + line_model
     reconstructed_total = host + agn_model
     valid_fit = spectrum.valid_mask & np.isfinite(host)
-    valid_total = (
+    valid_total_data = (
+        total_spectrum.valid_mask
+        & np.isfinite(total_spectrum.flux)
+    )
+    valid_total_model = (
         total_spectrum.valid_mask
         & np.isfinite(host)
         & np.isfinite(reconstructed_total)
@@ -830,7 +834,7 @@ def _plot_host_context(
     displayed_total_flux_native = (
         _masked_running_median(
             total_spectrum.flux,
-            valid_total,
+            valid_total_data,
             config.smoothing_window_pixels,
         )
         if smoothing_effective
@@ -845,7 +849,7 @@ def _plot_host_context(
         result,
         smoothed=smoothing_effective,
     )
-    valid_wave = wave[valid_total | valid_fit]
+    valid_wave = wave[valid_total_data | valid_total_model | valid_fit]
 
     fig, axes = plt.subplots(
         2,
@@ -858,27 +862,27 @@ def _plot_host_context(
     top_axis, bottom_axis = axes
 
     top_axis.plot(
-        wave[valid_total],
-        displayed_total_flux[valid_total],
+        wave[valid_total_data],
+        displayed_total_flux[valid_total_data],
         color="0.48",
         lw=0.65,
         label=original_label,
     )
     top_axis.plot(
-        wave[valid_total],
-        reconstructed_total_display[valid_total],
+        wave[valid_total_model],
+        reconstructed_total_display[valid_total_model],
         color="black",
         lw=1.7,
         label="host + final AGN model",
     )
     top_axis.plot(
-        wave[valid_total],
-        host_display[valid_total],
+        wave[valid_total_model],
+        host_display[valid_total_model],
         **_HOST_STYLE,
         label="host galaxy",
     )
     top_upper = _rounded_model_upper_limit(
-        reconstructed_total_display[valid_total]
+        reconstructed_total_display[valid_total_model]
     )
     if top_upper is not None:
         top_axis.set_ylim(0.0, top_upper)
@@ -1115,9 +1119,14 @@ def _plot_qa(
     fit_data_display = display_scale * spectrum.flux
     fit_error_display = display_scale * spectrum.err
     host_model_display = display_scale * host_model
-    overview_valid = valid.copy()
+    overview_model_valid = valid.copy()
+    overview_data_valid = valid & np.isfinite(overview_data_native)
     if host_overview:
-        overview_valid &= (
+        overview_data_valid = (
+            result.total_spectrum.valid_mask
+            & np.isfinite(overview_data_native)
+        )
+        overview_model_valid &= (
             result.total_spectrum.valid_mask
             & np.isfinite(host_model)
             & np.isfinite(overview_data_native)
@@ -1139,7 +1148,7 @@ def _plot_qa(
     smoothed_overview_data_native = (
         _masked_running_median(
             overview_data_native,
-            overview_valid,
+            overview_data_valid,
             config.smoothing_window_pixels,
         )
         if smoothing_effective
@@ -1189,10 +1198,11 @@ def _plot_qa(
         smoothed_values,
         labels,
     ):
+        data_mask = np.asarray(panel_mask, dtype=bool) & np.isfinite(data_values)
         if not replace_original_with_smoothed:
             ax.plot(
-                wave[panel_mask],
-                data_values[panel_mask],
+                wave[data_mask],
+                data_values[data_mask],
                 color=_TCC_COLORS["data"],
                 lw=0.8,
                 alpha=0.8,
@@ -1205,9 +1215,13 @@ def _plot_qa(
         if smoothed_values is not None and (
             show_smoothed_trace or replace_original_with_smoothed
         ):
+            smoothed_mask = (
+                np.asarray(panel_mask, dtype=bool)
+                & np.isfinite(smoothed_values)
+            )
             ax.plot(
-                wave[panel_mask],
-                smoothed_values[panel_mask],
+                wave[smoothed_mask],
+                smoothed_values[smoothed_mask],
                 color=_TCC_COLORS["data_smooth"],
                 lw=0.9,
                 alpha=0.9,
@@ -1262,13 +1276,13 @@ def _plot_qa(
 
     plot_observed(
         overview_axis,
-        overview_valid,
+        overview_data_valid,
         data_values=overview_data,
         smoothed_values=smoothed_overview_data,
         labels=True,
     )
     overview_model_plot = np.where(
-        overview_valid,
+        overview_model_valid,
         overview_full_model,
         np.nan,
     )
@@ -1282,15 +1296,15 @@ def _plot_qa(
     )
     if host_overview:
         overview_axis.plot(
-            wave[overview_valid],
-            host_model_display[overview_valid],
+            wave[overview_model_valid],
+            host_model_display[overview_model_valid],
             label="host galaxy",
             zorder=3,
             **_HOST_STYLE,
         )
     plot_continuum_components(
         overview_axis,
-        overview_valid,
+        overview_model_valid,
         labels=True,
     )
 
@@ -1344,7 +1358,7 @@ def _plot_qa(
             ppxf_masked,
             labels=True,
         )
-    valid_wave = wave[overview_valid]
+    valid_wave = wave[overview_data_valid | overview_model_valid]
     if valid_wave.size:
         overview_axis.set_xlim(float(valid_wave.min()), float(valid_wave.max()))
         result.metadata["qa_overview_xlim"] = [
@@ -1358,7 +1372,7 @@ def _plot_qa(
                 y_fraction=0.82,
             )
         )
-    valid_overview_wave = wave[overview_valid]
+    valid_overview_wave = wave[overview_data_valid]
     lya_in_coverage = bool(
         valid_overview_wave.size
         and float(np.min(valid_overview_wave)) <= 1215.67
@@ -1374,7 +1388,7 @@ def _plot_qa(
     )
     if lya_in_coverage and not lya_model_fitted:
         data_limits = _percentile_limits(
-            [overview_data[overview_valid]],
+            [overview_data[overview_data_valid]],
             percentiles=(1.0, 99.8),
         )
         overview_upper = data_limits[1] if data_limits is not None else None
@@ -1382,7 +1396,7 @@ def _plot_qa(
         result.metadata["qa_overview_upper_percentile"] = 99.8
     else:
         overview_upper = _rounded_model_upper_limit(
-            overview_full_model[overview_valid]
+            overview_full_model[overview_model_valid]
         )
         result.metadata["qa_overview_upper_policy"] = "rounded_model"
         result.metadata["qa_overview_upper_percentile"] = None
@@ -1395,7 +1409,7 @@ def _plot_qa(
         )
         result.metadata["qa_overview_ymin"] = 0.0
         result.metadata["qa_overview_model_upper_limit"] = overview_upper
-        clipped = overview_valid & np.isfinite(overview_data) & (
+        clipped = overview_data_valid & np.isfinite(overview_data) & (
             overview_data > overview_upper
         )
         if np.any(clipped):
@@ -1486,7 +1500,7 @@ def _plot_qa(
     if residual_axis is not None:
         residual_mask = (
             fitted_mask
-            & overview_valid
+            & overview_model_valid
             & np.isfinite(overview_data)
             & np.isfinite(overview_full_model)
             & np.isfinite(spectrum.err)

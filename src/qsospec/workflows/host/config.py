@@ -1,4 +1,4 @@
-"""Configuration defaults for optional DESI pPXF host decomposition."""
+"""Configuration defaults for optional pPXF host decomposition."""
 
 from __future__ import annotations
 

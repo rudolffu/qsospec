@@ -1,4 +1,4 @@
-"""Input and output helpers for SPARCL/DESI-like host-decomposition data."""
+"""Input and output helpers for host-decomposition spectra."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ DEFAULT_FLUX_SCALE = 1e-17
 
 @dataclass
 class SpectrumData:
-    """Standardized local DESI/SPARCL-like spectrum."""
+    """Standardized spectrum container."""
 
     wave_obs: np.ndarray
     flux: np.ndarray
