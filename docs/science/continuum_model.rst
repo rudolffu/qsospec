@@ -52,6 +52,16 @@ The default series uses :math:`n=6`–400, fixed
 amplitude, FWHM, and velocity. Diagnostic outputs retain separate
 ``balmer_bound_free`` and ``balmer_high_order_series`` arrays.
 
+The Hγ line is fitted as part of the optical-blue emission-line complex,
+while Hδ and higher Balmer orders are included in the pseudo-continuum
+template. When broad Hγ is covered and reliably measured, qsospec uses the
+Storey & Hummer Case-B ratios bundled with the template to set the
+pseudo-continuum amplitude from Hγ. This fixes the integrated Hγ/Hδ relation
+instead of letting the fitted Hγ complex and the Hδ+high-order template drift
+independently. If Hγ is unavailable or unreliable, the pseudo-continuum falls
+back to the usual free amplitude and records the skip reason in the result
+metadata.
+
 Continuum masks
 ---------------
 

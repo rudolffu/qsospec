@@ -9,7 +9,11 @@ from qsospec.fitting.global_fit import (
     _gaussian_area_profile,
 )
 from qsospec.global_result import GlobalContinuumResult
-from qsospec.templates import load_balmer_template, load_iron_template
+from qsospec.templates import (
+    load_balmer_anchor_ratios,
+    load_balmer_template,
+    load_iron_template,
+)
 from qsospec.templates.iron import evaluate_iron_basis
 
 
@@ -224,6 +228,123 @@ def test_balmer_pseudocontinuum_requires_red_edge_pixels():
     assert "balmer_bound_free" not in result.component_models
     assert "balmer_high_order_series" not in result.component_models
     assert "global_component_disabled_no_coverage" in result.warning_codes()
+
+
+def test_balmer_anchor_ratios_match_storey_hummer_case_b_values():
+    logne9 = load_balmer_anchor_ratios(log10_ne=9)
+    logne10 = load_balmer_anchor_ratios(log10_ne=10)
+
+    assert logne9.hgamma_rel_hbeta == pytest.approx(0.490072588)
+    assert logne9.hdelta_rel_hbeta == pytest.approx(0.284265585)
+    assert logne9.hgamma_to_hdelta == pytest.approx(1.72399549)
+    assert logne10.hgamma_rel_hbeta == pytest.approx(0.504152568)
+    assert logne10.hdelta_rel_hbeta == pytest.approx(0.305136881)
+    assert logne10.hgamma_to_hdelta == pytest.approx(1.65221774)
+
+
+def test_balmer_pseudocontinuum_flux_syncs_to_fitted_hgamma():
+    wave = np.linspace(3300.0, 4425.0, 2600)
+    ratios = load_balmer_anchor_ratios(log10_ne=9)
+    implied_hbeta = 18.0
+    hgamma_flux = implied_hbeta * ratios.hgamma_rel_hbeta
+    continuum = 1.8 * np.ones_like(wave)
+    balmer = implied_hbeta * qsospec.evaluate_balmer_pseudocontinuum(
+        load_balmer_template(provenance="sh95_k13full_ext"),
+        wave,
+        3600.0,
+        0.0,
+    )
+    hgamma = _gaussian_area_profile(wave, hgamma_flux, 4341.68, 3600.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        continuum + balmer + hgamma,
+        err=np.full_like(wave, 0.01),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        qsospec.GlobalContinuumConfig(
+            power_law=qsospec.PowerLawConfig(norm=1.8, slope=0.0),
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                amplitude=10.0,
+                fwhm_kms=3600.0,
+                velocity_kms=0.0,
+                sync_with_hbeta="never",
+            ),
+            continuum_windows=((3300.0, 4260.0),),
+            mask_windows=(),
+            clip_passes=0,
+            blue_absorption_clip_enabled=False,
+            balmer_flux_sync_tolerance_fraction=1.0e-8,
+            balmer_flux_sync_max_iterations=8,
+        ),
+        complexes=("oii_nev_neiii_hgamma",),
+    )
+
+    metadata = result.continuum.metadata
+    assert metadata["balmer_pseudocontinuum_hgamma_sync_status"].startswith(
+        "synced_to_hgamma"
+    )
+    assert metadata["balmer_pseudocontinuum_hgamma_rel_hbeta"] == pytest.approx(
+        ratios.hgamma_rel_hbeta
+    )
+    assert metadata["balmer_pseudocontinuum_hdelta_rel_hbeta"] == pytest.approx(
+        ratios.hdelta_rel_hbeta
+    )
+    assert metadata["balmer_pseudocontinuum_hgamma_to_hdelta_ratio"] == pytest.approx(
+        ratios.hgamma_to_hdelta
+    )
+    final_hgamma_flux = result.line_complexes[
+        "oii_nev_neiii_hgamma"
+    ].metrics["hgamma_broad_flux_input"]
+    assert metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"] == pytest.approx(
+        final_hgamma_flux / ratios.hgamma_rel_hbeta,
+        rel=0.08,
+    )
+    assert metadata["balmer_pseudocontinuum_implied_hdelta_flux_input"] == pytest.approx(
+        metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"]
+        * ratios.hdelta_rel_hbeta,
+        rel=1.0e-12,
+    )
+
+
+def test_balmer_hgamma_sync_skips_when_hdelta_is_not_in_template():
+    wave = np.linspace(3300.0, 4425.0, 1800)
+    flux = 1.5 + _gaussian_area_profile(wave, 8.0, 4341.68, 3200.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=np.full_like(wave, 0.02),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        qsospec.GlobalContinuumConfig(
+            power_law=qsospec.PowerLawConfig(norm=1.5, slope=0.0),
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                n_min=7,
+                sync_with_hbeta="never",
+            ),
+            continuum_windows=((3300.0, 4260.0),),
+            mask_windows=(),
+            clip_passes=0,
+            blue_absorption_clip_enabled=False,
+        ),
+        complexes=("oii_nev_neiii_hgamma",),
+        uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
+    )
+
+    assert (
+        result.metadata["balmer_pseudocontinuum_hgamma_sync_status"]
+        == "skipped_hdelta_not_in_template"
+    )
+    assert "hgamma_sync_skipped_hdelta_not_in_template" in result.warning_codes()
 
 
 def test_hbeta_core_ties_oiii_ratio_and_narrow_kinematics():

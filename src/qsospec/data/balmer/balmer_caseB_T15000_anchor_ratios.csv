@@ -1,0 +1,5 @@
+log10_ne,line_id,n_upper,n_lower,rel_flux_hbeta,source
+9,hgamma,5,2,4.90072588e-01,Storey & Hummer 1995 Case B r1b0150.d.gz
+9,hdelta,6,2,2.84265585e-01,Storey & Hummer 1995 Case B r1b0150.d.gz
+10,hgamma,5,2,5.04152568e-01,Storey & Hummer 1995 Case B r1b0150.d.gz
+10,hdelta,6,2,3.05136881e-01,Storey & Hummer 1995 Case B r1b0150.d.gz

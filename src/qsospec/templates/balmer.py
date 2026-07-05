@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
+from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -51,6 +52,22 @@ class BalmerSeriesTemplate:
     warnings: List[FitWarning] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class BalmerAnchorRatios:
+    """Case-B Balmer anchor ratios relative to Hβ."""
+
+    log10_ne: int
+    hgamma_rel_hbeta: float
+    hdelta_rel_hbeta: float
+    source: str
+
+    @property
+    def hgamma_to_hdelta(self) -> float:
+        """Return the Case-B Hγ/Hδ integrated-flux ratio."""
+
+        return float(self.hgamma_rel_hbeta / self.hdelta_rel_hbeta)
+
+
 def _data_dir():
     return files("qsospec").joinpath("data", "balmer")
 
@@ -90,6 +107,38 @@ def list_balmer_templates() -> Dict[str, str]:
                     else "systematics"
                 )
     return out
+
+
+@lru_cache(maxsize=None)
+def load_balmer_anchor_ratios(*, log10_ne: int = 9) -> BalmerAnchorRatios:
+    """Load bundled Case-B Hγ and Hδ ratios relative to Hβ."""
+
+    if int(log10_ne) not in (9, 10):
+        raise BalmerTemplateError("unknown_balmer_template", "log10_ne must be 9 or 10.")
+    path = _data_dir().joinpath("balmer_caseB_T15000_anchor_ratios.csv")
+    if not path.is_file():
+        raise BalmerTemplateError(
+            "missing_balmer_template",
+            f"Bundled Balmer anchor ratios are missing: {path}",
+        )
+    with path.open("r", encoding="utf-8") as handle:
+        rows = [
+            row for row in csv.DictReader(handle)
+            if int(row["log10_ne"]) == int(log10_ne)
+        ]
+    values = {row["line_id"]: float(row["rel_flux_hbeta"]) for row in rows}
+    sources = {row["source"] for row in rows}
+    if "hgamma" not in values or "hdelta" not in values:
+        raise BalmerTemplateError(
+            "unknown_balmer_template",
+            f"Missing Hγ/Hδ anchor ratios for log10_ne={log10_ne}.",
+        )
+    return BalmerAnchorRatios(
+        log10_ne=int(log10_ne),
+        hgamma_rel_hbeta=float(values["hgamma"]),
+        hdelta_rel_hbeta=float(values["hdelta"]),
+        source="; ".join(sorted(sources)),
+    )
 
 
 def load_balmer_template(

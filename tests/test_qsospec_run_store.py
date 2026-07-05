@@ -40,6 +40,13 @@ def _spectrum_data(object_id="object-1", scale=1.0):
     )
 
 
+def _gaussian_area_profile(wave, flux, center, fwhm_kms):
+    sigma = fwhm_kms * center / 299792.458 / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    return flux * np.exp(-0.5 * ((wave - center) / sigma) ** 2) / (
+        np.sqrt(2.0 * np.pi) * sigma
+    )
+
+
 def _parquet_input(path, count=2):
     rows = []
     for index in range(count):
@@ -167,6 +174,71 @@ def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):
     assert loaded.continuum.metadata["balmer_pseudocontinuum_template_provenance"] == "sh95_k13full_ext"
     measurements = qsospec.open_run(str(run)).read_table("measurements").to_pandas()
     assert "balmer_pseudocontinuum_velocity_kms" in set(measurements["quantity"])
+
+
+def test_balmer_hgamma_sync_metadata_archive_round_trip(tmp_path):
+    wave = np.linspace(3300.0, 4425.0, 1800)
+    ratios = qsospec.load_balmer_anchor_ratios(log10_ne=9)
+    implied_hbeta = 14.0
+    flux = 1.6 * np.ones_like(wave)
+    flux += implied_hbeta * qsospec.evaluate_balmer_pseudocontinuum(
+        qsospec.load_balmer_template(provenance="sh95_k13full_ext"),
+        wave,
+        3400.0,
+        0.0,
+    )
+    flux += _gaussian_area_profile(
+        wave,
+        implied_hbeta * ratios.hgamma_rel_hbeta,
+        4341.68,
+        3400.0,
+    )
+    data = SpectrumData(
+        wave_obs=wave,
+        flux=flux,
+        error=np.full_like(wave, 0.02),
+        redshift=0.0,
+        object_id="balmer-hgamma-object",
+        ra=12.3,
+        dec=4.5,
+        metadata={"input_file": "memory-balmer-hgamma-object"},
+    )
+    run = tmp_path / "balmer-hgamma-run"
+    result = qsospec.fit_object_to_store(
+        data,
+        str(run),
+        galactic_extinction_config=_extinction_config(),
+        global_config=qsospec.GlobalContinuumConfig(
+            power_law=qsospec.PowerLawConfig(norm=1.6, slope=0.0),
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+                amplitude=10.0,
+                fwhm_kms=3400.0,
+                sync_with_hbeta="never",
+            ),
+            continuum_windows=((3300.0, 4260.0),),
+            mask_windows=(),
+            clip_passes=0,
+            blue_absorption_clip_enabled=False,
+            balmer_flux_sync_max_iterations=5,
+        ),
+        complexes=("oii_nev_neiii_hgamma",),
+        write_qa=False,
+    )
+    loaded = qsospec.load_model(str(run), "balmer-hgamma-object")
+    measurements = qsospec.open_run(str(run)).read_table("measurements").to_pandas()
+
+    assert result.metadata["balmer_pseudocontinuum_hgamma_sync_status"].startswith(
+        "synced_to_hgamma"
+    )
+    assert loaded.metadata["balmer_pseudocontinuum_hgamma_to_hdelta_ratio"] == pytest.approx(
+        ratios.hgamma_to_hdelta
+    )
+    assert {
+        "balmer_pseudocontinuum_hgamma_to_hdelta_ratio",
+        "balmer_pseudocontinuum_implied_hdelta_flux_input",
+    }.issubset(set(measurements["quantity"]))
 
 
 def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):

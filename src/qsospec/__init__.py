@@ -89,6 +89,7 @@ from .io.run_store import (
 )
 from .spectrum import Spectrum
 from .templates import (
+    BalmerAnchorRatios,
     BalmerSeriesTemplate,
     IronTemplate,
     balmer_bound_free_shape,
@@ -96,6 +97,7 @@ from .templates import (
     evaluate_balmer_pseudocontinuum_with_derivatives,
     list_balmer_templates,
     list_iron_templates,
+    load_balmer_anchor_ratios,
     load_balmer_template,
     load_iron_template,
 )
@@ -103,6 +105,7 @@ from .warnings import FitWarning
 
 __all__ = [
     "BalmerPseudoContinuumConfig",
+    "BalmerAnchorRatios",
     "BalmerSeriesTemplate",
     "BatchResult",
     "ComponentRecipe",
@@ -165,6 +168,7 @@ __all__ = [
     "euclid_nir_line_mask",
     "list_balmer_templates",
     "list_iron_templates",
+    "load_balmer_anchor_ratios",
     "lines",
     "load_balmer_template",
     "load_iron_template",

@@ -1,6 +1,7 @@
 """Template loading and normalization helpers for qsospec."""
 
 from .balmer import (
+    BalmerAnchorRatios,
     BalmerSeriesTemplate,
     BalmerTemplateError,
     balmer_bound_free_shape,
@@ -10,6 +11,7 @@ from .balmer import (
     evaluate_balmer_series_with_derivative,
     evaluate_balmer_series_with_derivatives,
     list_balmer_templates,
+    load_balmer_anchor_ratios,
     load_balmer_template,
 )
 from .iron import (
@@ -24,6 +26,7 @@ from .registry import list_iron_templates, load_iron_template, resolve_iron_temp
 
 __all__ = [
     "BalmerSeriesTemplate",
+    "BalmerAnchorRatios",
     "BalmerTemplateError",
     "balmer_bound_free_shape",
     "evaluate_balmer_pseudocontinuum",
@@ -38,6 +41,7 @@ __all__ = [
     "evaluate_iron_basis_with_derivative",
     "list_balmer_templates",
     "list_iron_templates",
+    "load_balmer_anchor_ratios",
     "load_balmer_template",
     "load_iron_template",
     "prepare_iron_template",

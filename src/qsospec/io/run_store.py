@@ -338,6 +338,11 @@ def _measurement_rows(
         "balmer_pseudocontinuum_fwhm_kms",
         "balmer_pseudocontinuum_velocity_kms",
         "balmer_pseudocontinuum_edge_flux_density_input",
+        "balmer_pseudocontinuum_hgamma_flux_input",
+        "balmer_pseudocontinuum_hgamma_rel_hbeta",
+        "balmer_pseudocontinuum_hdelta_rel_hbeta",
+        "balmer_pseudocontinuum_hgamma_to_hdelta_ratio",
+        "balmer_pseudocontinuum_implied_hdelta_flux_input",
     ):
         if quantity in result.continuum.metadata:
             add(

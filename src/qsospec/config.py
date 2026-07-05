@@ -308,6 +308,8 @@ class BalmerPseudoContinuumConfig:
     velocity_bounds: Bounds = (-2000.0, 2000.0)
     sync_with_hbeta: str = "auto"
     sync_min_fwhm_snr: Optional[float] = 3.0
+    sync_with_hgamma: str = "auto"
+    sync_min_hgamma_flux_snr: Optional[float] = 3.0
 
     def __post_init__(self) -> None:
         if self.edge <= 0 or self.temperature_k <= 0 or self.tau_edge <= 0:
@@ -351,6 +353,19 @@ class BalmerPseudoContinuumConfig:
                 "BalmerPseudoContinuumConfig.sync_min_fwhm_snr must be "
                 "non-negative or None."
             )
+        if self.sync_with_hgamma not in ("auto", "never", "require"):
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.sync_with_hgamma must be "
+                "'auto', 'never', or 'require'."
+            )
+        if (
+            self.sync_min_hgamma_flux_snr is not None
+            and self.sync_min_hgamma_flux_snr < 0
+        ):
+            raise ValueError(
+                "BalmerPseudoContinuumConfig.sync_min_hgamma_flux_snr must be "
+                "non-negative or None."
+            )
 
 
 @dataclass(frozen=True)
@@ -378,6 +393,8 @@ class GlobalContinuumConfig:
     clip_high_sigma: float = 5.0
     balmer_width_sync_tolerance_kms: float = 5.0
     balmer_width_sync_max_iterations: int = 5
+    balmer_flux_sync_tolerance_fraction: float = 0.02
+    balmer_flux_sync_max_iterations: int = 3
     optimizer_method: str = "auto"
     jacobian_method: str = "semi_analytic"
     max_nfev: Optional[int] = 1000
@@ -399,6 +416,10 @@ class GlobalContinuumConfig:
             raise ValueError("balmer_width_sync_tolerance_kms must be positive.")
         if self.balmer_width_sync_max_iterations < 1:
             raise ValueError("balmer_width_sync_max_iterations must be at least one.")
+        if self.balmer_flux_sync_tolerance_fraction <= 0:
+            raise ValueError("balmer_flux_sync_tolerance_fraction must be positive.")
+        if self.balmer_flux_sync_max_iterations < 1:
+            raise ValueError("balmer_flux_sync_max_iterations must be at least one.")
         if self.blue_absorption_clip_max_wave <= 0:
             raise ValueError("blue_absorption_clip_max_wave must be positive.")
         if self.blue_absorption_clip_sigma <= 0:

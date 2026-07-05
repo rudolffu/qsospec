@@ -35,6 +35,7 @@ from ..spectrum import Spectrum, require_rest_frame_flux
 from ..templates import (
     evaluate_balmer_pseudocontinuum,
     evaluate_balmer_pseudocontinuum_with_derivatives,
+    load_balmer_anchor_ratios,
     load_balmer_template,
     load_iron_template,
 )
@@ -1000,6 +1001,130 @@ def _fit_global_continuum_fixed(
         metadata=metadata,
         optimizer_result=result,
     )
+
+
+def _balmer_pseudocontinuum_components(
+    spectrum: Spectrum,
+    config: GlobalContinuumConfig,
+    *,
+    amplitude: float,
+    fwhm_kms: float,
+    velocity_kms: float,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    balmer = config.balmer_pseudocontinuum
+    template = _cached_balmer_template(
+        balmer.log10_ne, balmer.n_min, balmer.provenance
+    )
+    _, bound_free, high_order, _, _ = (
+        evaluate_balmer_pseudocontinuum_with_derivatives(
+            template,
+            spectrum.wave_rest,
+            fwhm_kms,
+            velocity_kms,
+            temperature_k=balmer.temperature_k,
+            tau_edge=balmer.tau_edge,
+            edge=balmer.edge,
+        )
+    )
+    edge_basis, _, _, _, _ = evaluate_balmer_pseudocontinuum_with_derivatives(
+        template,
+        np.asarray([balmer.edge]),
+        fwhm_kms,
+        velocity_kms,
+        temperature_k=balmer.temperature_k,
+        tau_edge=balmer.tau_edge,
+        edge=balmer.edge,
+    )
+    scale = spectrum.flux_density_scale_to_cgs
+    metadata = {
+        "balmer_template": template.name,
+        "balmer_template_source": template.source_path,
+        "balmer_pseudocontinuum_implied_hbeta_flux_input": float(amplitude),
+        "balmer_pseudocontinuum_implied_hbeta_flux_cgs": (
+            float(amplitude) * float(scale) if scale is not None else np.nan
+        ),
+        "balmer_pseudocontinuum_fwhm_kms": float(fwhm_kms),
+        "balmer_pseudocontinuum_velocity_kms": float(velocity_kms),
+        "balmer_pseudocontinuum_edge_flux_density_input": (
+            float(amplitude) * float(edge_basis[0])
+        ),
+        "balmer_pseudocontinuum_template_provenance": template.provenance,
+        "balmer_pseudocontinuum_n_min": template.n_min,
+        "balmer_pseudocontinuum_n_max": template.n_max,
+        "balmer_pseudocontinuum_edge_angstrom": balmer.edge,
+        "balmer_pseudocontinuum_temperature_k": balmer.temperature_k,
+        "balmer_pseudocontinuum_tau_edge": balmer.tau_edge,
+        "balmer_pseudocontinuum_amplitude_definition": (
+            "Integrated Hbeta flux implied by the fitted Hgamma broad flux "
+            "and Case-B Hgamma/Hbeta ratio"
+        ),
+        "balmer_pseudocontinuum_fixed_amplitude": True,
+    }
+    components = {
+        "balmer_bound_free": float(amplitude) * bound_free,
+        "balmer_high_order_series": float(amplitude) * high_order,
+    }
+    return components, metadata
+
+
+def _fit_global_continuum_with_fixed_balmer_amplitude(
+    spectrum: Spectrum,
+    config: GlobalContinuumConfig,
+    *,
+    amplitude: float,
+    fwhm_kms: float,
+    velocity_kms: float,
+    compute_covariance: bool,
+) -> GlobalContinuumResult:
+    components, balmer_metadata = _balmer_pseudocontinuum_components(
+        spectrum,
+        config,
+        amplitude=amplitude,
+        fwhm_kms=fwhm_kms,
+        velocity_kms=velocity_kms,
+    )
+    fixed_total = sum(components.values(), np.zeros_like(spectrum.flux))
+    adjusted_spectrum = Spectrum(
+        wave_obs=spectrum.wave_obs.copy(),
+        flux=spectrum.flux - fixed_total,
+        err=spectrum.err.copy(),
+        z=spectrum.z,
+        metadata=replace(spectrum.metadata),
+        mask=None if spectrum.mask is None else spectrum.mask.copy(),
+    )
+    disabled_config = replace(
+        config,
+        balmer_pseudocontinuum=replace(
+            config.balmer_pseudocontinuum,
+            enabled=False,
+        ),
+    )
+    result = fit_global_continuum(
+        adjusted_spectrum,
+        disabled_config,
+        compute_covariance=compute_covariance,
+    )
+    result.model = result.model + fixed_total
+    result.component_models = dict(result.component_models)
+    result.component_models.update(components)
+    result.param_values = dict(result.param_values)
+    result.param_values.update(
+        {
+            "balmer_pseudocontinuum.amp": float(amplitude),
+            "balmer_pseudocontinuum.fwhm_kms": float(fwhm_kms),
+            "balmer_pseudocontinuum.velocity_kms": float(velocity_kms),
+        }
+    )
+    result.param_errors = dict(result.param_errors)
+    result.param_errors.update(
+        {
+            "balmer_pseudocontinuum.amp": np.nan,
+            "balmer_pseudocontinuum.fwhm_kms": np.nan,
+            "balmer_pseudocontinuum.velocity_kms": np.nan,
+        }
+    )
+    result.metadata.update(balmer_metadata)
+    return result
 
 
 def _continuum_bic(result: GlobalContinuumResult) -> float:
@@ -2572,6 +2697,17 @@ def fit_global_lines(
     hbeta_was_requested = any(
         recipe.id == "hbeta_oiii" for recipe in requested_recipes
     )
+    hgamma_recipe = next(
+        (
+            recipe
+            for recipe in selected_recipes
+            if recipe.id == "oii_nev_neiii_hgamma"
+        ),
+        None,
+    )
+    hgamma_was_requested = any(
+        recipe.id == "oii_nev_neiii_hgamma" for recipe in requested_recipes
+    )
     hbeta_initial = None
     if hbeta_recipe is not None:
         try:
@@ -2812,6 +2948,260 @@ def fit_global_lines(
                 "Required Hβ synchronization was unavailable; continuing with the free width.",
             )
 
+    hgamma = None
+    hgamma_sync_policy = balmer_config.sync_with_hgamma
+    hgamma_sync_requested = (
+        hgamma_sync_policy in ("auto", "require")
+        and balmer_available
+        and balmer_config.enabled
+        and hgamma_was_requested
+    )
+    hgamma_sync_attempted = False
+    hgamma_sync_converged = False
+    hgamma_sync_iterations = 0
+    hgamma_sync_status = (
+        "not_requested" if hgamma_sync_policy == "never" else "not_attempted"
+    )
+    hgamma_snr = np.nan
+    hgamma_reliability_reason = "not_attempted"
+    hgamma_sync_ratio_metadata: Dict[str, float] = {}
+    hgamma_amplitude_difference = np.nan
+    if hgamma_recipe is not None:
+        hgamma = _fit_selected_recipe(
+            hgamma_recipe,
+            spectrum,
+            continuum,
+            uncertainty_cfg,
+            mgii_cfg,
+            halpha_cfg,
+            lya_cfg,
+        )
+        if hgamma is not None:
+            hgamma.metadata.update(
+                {
+                    "recipe_id": hgamma_recipe.id,
+                    "recipe_label": hgamma_recipe.label,
+                    "recipe_backend": hgamma_recipe.backend,
+                    "coverage_status": coverage_by_recipe[hgamma_recipe.id].status,
+                }
+            )
+            complex_statuses[hgamma_recipe.id] = (
+                "fit" if hgamma.success else "failed"
+            )
+    if hgamma_sync_requested:
+        if balmer_config.n_min != 6:
+            hgamma_sync_status = "skipped_hdelta_not_in_template"
+            _append_workflow_warning(
+                warnings,
+                warning_codes,
+                "hgamma_sync_skipped_hdelta_not_in_template",
+                (
+                    "Hγ-to-Hδ Balmer flux synchronization was skipped because "
+                    "the active Balmer template starts above Hδ."
+                ),
+                severity="info",
+            )
+        elif hgamma is None:
+            hgamma_sync_status = "skipped_not_covered"
+            _append_workflow_warning(
+                warnings,
+                warning_codes,
+                "hgamma_sync_skipped_not_covered",
+                "Hγ-to-Hδ Balmer flux synchronization was skipped because Hγ is not covered.",
+                severity="info",
+            )
+        else:
+            reliable, hgamma_snr, hgamma_reliability_reason = (
+                _hgamma_sync_reliability(
+                    hgamma,
+                    uncertainty_cfg,
+                    balmer_config.sync_min_hgamma_flux_snr,
+                )
+            )
+            if not reliable:
+                hgamma_sync_status = f"skipped_{hgamma_reliability_reason}"
+                _append_workflow_warning(
+                    warnings,
+                    warning_codes,
+                    "hgamma_sync_skipped_unreliable",
+                    (
+                        "Hγ-to-Hδ Balmer flux synchronization was skipped "
+                        "because broad Hγ is unreliable."
+                    ),
+                    {"reason": hgamma_reliability_reason, "flux_snr": hgamma_snr},
+                )
+            else:
+                hgamma_sync_attempted = True
+                hgamma_sync_status = "attempted"
+                current_continuum = continuum
+                current_hgamma = hgamma
+                previous_amplitude = float(
+                    continuum.metadata.get(
+                        "balmer_pseudocontinuum_implied_hbeta_flux_input",
+                        continuum.param_values.get(
+                            "balmer_pseudocontinuum.amp", np.nan
+                        ),
+                    )
+                )
+                for iteration in range(
+                    max(int(resolved_global_cfg.balmer_flux_sync_max_iterations), 1)
+                ):
+                    implied_hbeta, ratio_metadata = (
+                        _hgamma_implied_balmer_amplitude(
+                            current_hgamma,
+                            balmer_config.log10_ne,
+                        )
+                    )
+                    balmer_fwhm = float(
+                        current_continuum.metadata.get(
+                            "balmer_pseudocontinuum_fwhm_kms", np.nan
+                        )
+                    )
+                    balmer_velocity = float(
+                        current_continuum.metadata.get(
+                            "balmer_pseudocontinuum_velocity_kms", np.nan
+                        )
+                    )
+                    if (
+                        not np.isfinite(implied_hbeta)
+                        or implied_hbeta <= 0
+                        or not np.isfinite(balmer_fwhm)
+                        or balmer_fwhm <= 0
+                        or not np.isfinite(balmer_velocity)
+                    ):
+                        hgamma_sync_status = "failed_nonfinite_anchor"
+                        _append_workflow_warning(
+                            warnings,
+                            warning_codes,
+                            "hgamma_sync_failed",
+                            "Hγ-to-Hδ Balmer flux synchronization failed because the anchor values were non-finite.",
+                        )
+                        break
+                    candidate_continuum = (
+                        _fit_global_continuum_with_fixed_balmer_amplitude(
+                            spectrum,
+                            resolved_global_cfg,
+                            amplitude=implied_hbeta,
+                            fwhm_kms=balmer_fwhm,
+                            velocity_kms=balmer_velocity,
+                            compute_covariance=uncertainty_cfg.covariance,
+                        )
+                    )
+                    candidate_hgamma = _fit_selected_recipe(
+                        hgamma_recipe,
+                        spectrum,
+                        candidate_continuum,
+                        uncertainty_cfg,
+                        mgii_cfg,
+                        halpha_cfg,
+                        lya_cfg,
+                    )
+                    hgamma_sync_iterations = iteration + 1
+                    if (
+                        candidate_hgamma is None
+                        or not candidate_continuum.success
+                        or not candidate_hgamma.success
+                    ):
+                        hgamma_sync_status = "failed_refit"
+                        _append_workflow_warning(
+                            warnings,
+                            warning_codes,
+                            "hgamma_sync_failed",
+                            "Hγ-to-Hδ Balmer flux synchronization failed during refitting.",
+                        )
+                        break
+                    candidate_hgamma.metadata.update(
+                        {
+                            "recipe_id": hgamma_recipe.id,
+                            "recipe_label": hgamma_recipe.label,
+                            "recipe_backend": hgamma_recipe.backend,
+                            "coverage_status": coverage_by_recipe[hgamma_recipe.id].status,
+                        }
+                    )
+                    hgamma_amplitude_difference = float(
+                        implied_hbeta - previous_amplitude
+                    )
+                    current_continuum = candidate_continuum
+                    current_hgamma = candidate_hgamma
+                    hgamma_sync_ratio_metadata = ratio_metadata
+                    previous_amplitude = implied_hbeta
+                    next_implied, next_ratio_metadata = (
+                        _hgamma_implied_balmer_amplitude(
+                            candidate_hgamma,
+                            balmer_config.log10_ne,
+                        )
+                    )
+                    denominator = max(abs(implied_hbeta), 1.0e-30)
+                    fractional_change = abs(next_implied - implied_hbeta) / denominator
+                    if fractional_change <= float(
+                        resolved_global_cfg.balmer_flux_sync_tolerance_fraction
+                    ):
+                        final_continuum = (
+                            _fit_global_continuum_with_fixed_balmer_amplitude(
+                                spectrum,
+                                resolved_global_cfg,
+                                amplitude=next_implied,
+                                fwhm_kms=balmer_fwhm,
+                                velocity_kms=balmer_velocity,
+                                compute_covariance=uncertainty_cfg.covariance,
+                            )
+                        )
+                        final_hgamma = _fit_selected_recipe(
+                            hgamma_recipe,
+                            spectrum,
+                            final_continuum,
+                            uncertainty_cfg,
+                            mgii_cfg,
+                            halpha_cfg,
+                            lya_cfg,
+                        )
+                        if final_hgamma is not None and final_hgamma.success:
+                            final_hgamma.metadata.update(
+                                {
+                                    "recipe_id": hgamma_recipe.id,
+                                    "recipe_label": hgamma_recipe.label,
+                                    "recipe_backend": hgamma_recipe.backend,
+                                    "coverage_status": coverage_by_recipe[hgamma_recipe.id].status,
+                                }
+                            )
+                            continuum = final_continuum
+                            hgamma = final_hgamma
+                            _, hgamma_sync_ratio_metadata = (
+                                _hgamma_implied_balmer_amplitude(
+                                    final_hgamma,
+                                    balmer_config.log10_ne,
+                                )
+                            )
+                            hgamma_sync_converged = True
+                            hgamma_sync_status = "synced_to_hgamma"
+                        break
+                if not hgamma_sync_converged and hgamma_sync_status == "attempted":
+                    continuum = current_continuum
+                    hgamma = current_hgamma
+                    hgamma_sync_status = "synced_to_hgamma_limited"
+                    _append_workflow_warning(
+                        warnings,
+                        warning_codes,
+                        "hgamma_sync_not_converged",
+                        (
+                            "Hγ-to-Hδ Balmer flux synchronization reached the "
+                            "iteration limit; the last synchronized solution was retained."
+                        ),
+                        {
+                            "iterations": hgamma_sync_iterations,
+                            "tolerance_fraction": resolved_global_cfg.balmer_flux_sync_tolerance_fraction,
+                        },
+                        severity="info",
+                    )
+    elif hgamma_sync_policy == "require":
+        hgamma_sync_status = "required_unavailable"
+        _append_workflow_warning(
+            warnings,
+            warning_codes,
+            "hgamma_sync_required_unmet",
+            "Required Hγ-to-Hδ Balmer flux synchronization was unavailable.",
+        )
+
     line_complexes: Dict[str, EmissionComplexResult] = {}
     if hbeta is not None:
         hbeta.metadata.update(
@@ -2823,8 +3213,13 @@ def fit_global_lines(
         )
         line_complexes["hbeta_oiii"] = hbeta
         complex_statuses["hbeta_oiii"] = "fit" if hbeta.success else "failed"
+    if hgamma is not None:
+        line_complexes["oii_nev_neiii_hgamma"] = hgamma
+        complex_statuses["oii_nev_neiii_hgamma"] = (
+            "fit" if hgamma.success else "failed"
+        )
     for recipe in selected_recipes:
-        if recipe.id == "hbeta_oiii":
+        if recipe.id in ("hbeta_oiii", "oii_nev_neiii_hgamma"):
             continue
         fit = _fit_selected_recipe(
             recipe,
@@ -2897,6 +3292,33 @@ def fit_global_lines(
         "balmer_pseudocontinuum_edge_angstrom": continuum.metadata.get(
             "balmer_pseudocontinuum_edge_angstrom"
         ),
+        "balmer_pseudocontinuum_flux_source": (
+            hgamma_sync_status
+            if hgamma_sync_status.startswith("synced_to_hgamma")
+            else "free_global_fit"
+            if balmer_available
+            else width_source
+        ),
+        "balmer_pseudocontinuum_hgamma_sync_status": hgamma_sync_status,
+        "balmer_pseudocontinuum_hgamma_sync_requested": bool(
+            hgamma_sync_requested
+        ),
+        "balmer_pseudocontinuum_hgamma_sync_attempted": bool(
+            hgamma_sync_attempted
+        ),
+        "balmer_pseudocontinuum_hgamma_sync_converged": bool(
+            hgamma_sync_converged
+        ),
+        "balmer_pseudocontinuum_hgamma_sync_iterations": int(
+            hgamma_sync_iterations
+        ),
+        "balmer_pseudocontinuum_hgamma_flux_snr": float(hgamma_snr),
+        "balmer_pseudocontinuum_hgamma_reliability_reason": (
+            hgamma_reliability_reason
+        ),
+        "balmer_pseudocontinuum_hgamma_amplitude_difference": float(
+            hgamma_amplitude_difference
+        ),
         "hbeta_sync_requested": bool(sync_requested),
         "hbeta_sync_attempted": bool(sync_attempted),
         "hbeta_sync_converged": bool(width_converged),
@@ -2960,6 +3382,16 @@ def fit_global_lines(
             lya_coverage is not None and lya_coverage.edge_truncated
         ),
     }
+    metadata.update(hgamma_sync_ratio_metadata)
+    if (
+        "balmer_pseudocontinuum_implied_hbeta_flux_input" in metadata
+        and "balmer_pseudocontinuum_hdelta_rel_hbeta" in metadata
+        and metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"] is not None
+    ):
+        metadata["balmer_pseudocontinuum_implied_hdelta_flux_input"] = (
+            float(metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"])
+            * float(metadata["balmer_pseudocontinuum_hdelta_rel_hbeta"])
+        )
     continuum.metadata.update(
         {
             key: metadata[key]
@@ -2974,9 +3406,28 @@ def fit_global_lines(
                 "hbeta_sync_attempted",
                 "hbeta_sync_converged",
                 "hbeta_sync_iterations",
+                "balmer_pseudocontinuum_flux_source",
+                "balmer_pseudocontinuum_hgamma_sync_status",
+                "balmer_pseudocontinuum_hgamma_sync_requested",
+                "balmer_pseudocontinuum_hgamma_sync_attempted",
+                "balmer_pseudocontinuum_hgamma_sync_converged",
+                "balmer_pseudocontinuum_hgamma_sync_iterations",
+                "balmer_pseudocontinuum_hgamma_flux_snr",
+                "balmer_pseudocontinuum_hgamma_reliability_reason",
+                "balmer_pseudocontinuum_hgamma_amplitude_difference",
             )
         }
     )
+    continuum.metadata.update(hgamma_sync_ratio_metadata)
+    if (
+        "balmer_pseudocontinuum_implied_hbeta_flux_input" in continuum.metadata
+        and "balmer_pseudocontinuum_hdelta_rel_hbeta" in continuum.metadata
+        and continuum.metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"] is not None
+    ):
+        continuum.metadata["balmer_pseudocontinuum_implied_hdelta_flux_input"] = (
+            float(continuum.metadata["balmer_pseudocontinuum_implied_hbeta_flux_input"])
+            * float(continuum.metadata["balmer_pseudocontinuum_hdelta_rel_hbeta"])
+        )
     workflow = WorkflowResult(
         spectrum=spectrum,
         total_spectrum=spectrum,
@@ -3095,6 +3546,62 @@ def _hbeta_sync_reliability(
     ):
         return False, snr, "broad_width_at_bound"
     return True, snr, "reliable"
+
+
+def _hgamma_sync_reliability(
+    fit: Optional[EmissionComplexResult],
+    uncertainty: UncertaintyConfig,
+    minimum_snr: Optional[float],
+) -> Tuple[bool, float, str]:
+    if fit is None:
+        return False, np.nan, "not_covered"
+    if not fit.success:
+        return False, np.nan, "fit_failed"
+    flux = fit.metrics.get("hgamma_broad_flux_input", np.nan)
+    error = fit.metric_errors.get("hgamma_broad_flux_input", np.nan)
+    if not np.isfinite(flux) or flux <= 0:
+        return False, np.nan, "nonpositive_flux"
+    if minimum_snr is not None:
+        if not uncertainty.covariance:
+            return False, np.nan, "covariance_disabled"
+        if not np.isfinite(error) or error <= 0:
+            return False, np.nan, "nonfinite_flux_uncertainty"
+        snr = float(flux / error)
+        if snr < minimum_snr:
+            return False, snr, "low_flux_snr"
+    else:
+        snr = float(flux / error) if np.isfinite(error) and error > 0 else np.nan
+    active = np.asarray(
+        getattr(fit.optimizer_result, "active_mask", np.zeros(len(fit.param_values))),
+        dtype=int,
+    )
+    names = list(fit.param_values)
+    if any(
+        active[index] != 0
+        for index, name in enumerate(names)
+        if name.startswith("Hgamma_broad")
+        or name.startswith("hgamma_broad")
+    ):
+        return False, snr, "broad_parameter_at_bound"
+    return True, snr, "reliable"
+
+
+def _hgamma_implied_balmer_amplitude(
+    fit: EmissionComplexResult,
+    log10_ne: int,
+) -> Tuple[float, Dict[str, float]]:
+    ratios = load_balmer_anchor_ratios(log10_ne=int(log10_ne))
+    hgamma_flux = float(fit.metrics["hgamma_broad_flux_input"])
+    implied_hbeta = hgamma_flux / ratios.hgamma_rel_hbeta
+    return implied_hbeta, {
+        "balmer_pseudocontinuum_hgamma_flux_input": hgamma_flux,
+        "balmer_pseudocontinuum_hgamma_rel_hbeta": ratios.hgamma_rel_hbeta,
+        "balmer_pseudocontinuum_hdelta_rel_hbeta": ratios.hdelta_rel_hbeta,
+        "balmer_pseudocontinuum_hgamma_to_hdelta_ratio": ratios.hgamma_to_hdelta,
+        "balmer_pseudocontinuum_implied_hdelta_flux_input": (
+            implied_hbeta * ratios.hdelta_rel_hbeta
+        ),
+    }
 
 
 def _fit_selected_recipe(
