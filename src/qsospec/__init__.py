@@ -32,9 +32,11 @@ from .extinction import (
     correct_spectrum,
     correct_spectrum_data,
     f99_dereddening_factor,
+    galactic_dereddening_factor,
     prepare_spectrum,
     preflight_galactic_extinction,
     query_galactic_ebv,
+    wang2019_extinction_mag,
 )
 from .fitting.global_fit import (
     fit_global_continuum,
@@ -46,6 +48,7 @@ from .fitting.global_fit import (
 )
 from .io.products import (
     GlobalQAPlotConfig,
+    resolve_qa_plot_config,
     write_global_hbeta_products,
     write_global_line_products,
 )
@@ -151,6 +154,7 @@ __all__ = [
     "fit_batch",
     "fit_euclid_host_aperture_scale",
     "f99_dereddening_factor",
+    "galactic_dereddening_factor",
     "fit_global_continuum",
     "fit_global_hbeta",
     "fit_global_hbeta_workflow",
@@ -183,9 +187,11 @@ __all__ = [
     "read_input_manifest",
     "read_spectrum",
     "render_qa",
+    "resolve_qa_plot_config",
     "resolve_spectrum_metadata",
     "save_local_window_plots",
     "scan_parquet_spectra",
     "write_global_hbeta_products",
     "write_global_line_products",
+    "wang2019_extinction_mag",
 ]

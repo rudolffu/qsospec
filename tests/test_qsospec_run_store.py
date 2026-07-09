@@ -126,6 +126,27 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
         plot_config=qsospec.GlobalQAPlotConfig(output_format="png"),
     )
     assert Path(rendered["object-1"]["global_plot"]).exists()
+    rendered_log = qsospec.render_qa(
+        store,
+        object_ids=["object-1"],
+        overview_yscale="log",
+    )
+    assert Path(rendered_log["object-1"]["global_plot"]).exists()
+
+
+def test_fit_object_to_store_accepts_direct_overview_yscale(tmp_path):
+    result = qsospec.fit_object_to_store(
+        _spectrum_data("log-qa"),
+        str(tmp_path / "log-qa-run"),
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(),
+        complexes=[],
+        write_qa=True,
+        overview_yscale="log",
+        overview_log_min_fraction=1.0e-4,
+    )
+
+    assert Path(result.output_files["main_qa"]).exists()
 
 
 def test_balmer_pseudocontinuum_archive_round_trip(tmp_path):

@@ -25,6 +25,23 @@ _PROVENANCE_KEY = "galactic_extinction"
 _REST_FRAME_KEY = "rest_frame_conversion"
 
 
+class ExtinctionWavelengthRangeError(ValueError):
+    """Raised when an extinction law does not cover the wavelength grid."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        law: str,
+        supported_min: Optional[float] = None,
+        supported_max: Optional[float] = None,
+    ) -> None:
+        super().__init__(message)
+        self.law = law
+        self.supported_min = supported_min
+        self.supported_max = supported_max
+
+
 def _resolved_config(
     config: Optional[GalacticExtinctionConfig],
 ) -> GalacticExtinctionConfig:
@@ -34,6 +51,15 @@ def _resolved_config(
 def _canonical_map_name(name: str) -> str:
     value = str(name).strip().lower()
     return "planck" if value in ("planck", "planck16") else value
+
+
+def _canonical_extinction_law(law: str) -> str:
+    value = str(law).strip().lower()
+    return "wang2019" if value in ("wang2019", "wang19", "w19") else value
+
+
+def _canonical_wavelength_policy(policy: str) -> str:
+    return str(policy).strip().lower()
 
 
 def _resolved_data_dir(config: GalacticExtinctionConfig) -> Optional[str]:
@@ -49,6 +75,10 @@ def _resolved_data_dir(config: GalacticExtinctionConfig) -> Optional[str]:
 def _config_provenance(config: GalacticExtinctionConfig) -> Dict[str, Any]:
     values = asdict(config)
     values["map_name"] = _canonical_map_name(config.map_name)
+    values["law"] = _canonical_extinction_law(config.law)
+    values["wavelength_out_of_range"] = _canonical_wavelength_policy(
+        config.wavelength_out_of_range
+    )
     values["dustmaps_data_dir"] = _resolved_data_dir(config)
     if (
         config.enabled
@@ -217,15 +247,109 @@ def f99_dereddening_factor(
     ):
         supported_min = 1.0e4 / model.x_range[1]
         supported_max = 1.0e4 / model.x_range[0]
-        raise ValueError(
+        raise ExtinctionWavelengthRangeError(
             "Observed wavelengths fall outside the F99 supported range "
-            f"[{supported_min:.1f}, {supported_max:.1f}] Angstrom."
+            f"[{supported_min:.1f}, {supported_max:.1f}] Angstrom.",
+            law="f99",
+            supported_min=supported_min,
+            supported_max=supported_max,
         )
     attenuation = np.asarray(
         model.extinguish(wave * u.AA, Ebv=float(ebv)),
         dtype=float,
     )
     return 1.0 / attenuation
+
+
+def wang2019_extinction_mag(
+    wave_obs: np.ndarray,
+    ebv: float,
+    rv: float = 3.1,
+) -> np.ndarray:
+    r"""Return Wang & Chen (2019) Galactic extinction in magnitudes.
+
+    The formula follows the implementation used by qsofitmore and is evaluated
+    at observed-frame wavelengths in Angstrom. It uses the optical polynomial
+    for :math:`\lambda < 1\,\mu{\rm m}` and the infrared power law for longer
+    wavelengths.
+    """
+
+    wave = np.asarray(wave_obs, dtype=float)
+    if wave.ndim != 1:
+        raise ValueError("Observed wavelengths must be a one-dimensional array.")
+    if not np.all(np.isfinite(wave)) or np.any(wave <= 0):
+        raise ValueError(
+            "Wang+2019 Galactic extinction correction requires positive, "
+            "finite observed wavelengths."
+        )
+    wave_micron = wave / 1.0e4
+    y = 1.0 / wave_micron - 1.82
+    alam_over_av = (
+        1.0
+        + 0.7499 * y
+        - 0.1086 * y**2
+        - 0.08909 * y**3
+        + 0.02905 * y**4
+        + 0.01069 * y**5
+        + 0.001707 * y**6
+        - 0.001002 * y**7
+    )
+    infrared = wave_micron >= 1.0
+    alam_over_av = np.asarray(alam_over_av, dtype=float)
+    alam_over_av[infrared] = 0.3722 * wave_micron[infrared] ** (-2.070)
+    return alam_over_av * float(rv) * float(ebv)
+
+
+def galactic_dereddening_factor(
+    wave_obs: np.ndarray,
+    ebv: float,
+    rv: float = 3.1,
+    law: str = "f99",
+) -> np.ndarray:
+    """Return a multiplicative Galactic dereddening factor."""
+
+    canonical = _canonical_extinction_law(law)
+    if canonical == "f99":
+        return f99_dereddening_factor(wave_obs, ebv, rv=rv)
+    if canonical == "wang2019":
+        return 10.0 ** (0.4 * wang2019_extinction_mag(wave_obs, ebv, rv=rv))
+    raise ValueError(
+        "Galactic extinction law must be 'f99', 'wang2019', 'wang19', or 'w19'."
+    )
+
+
+def _handle_wavelength_range_error(
+    exc: ExtinctionWavelengthRangeError,
+    *,
+    config: GalacticExtinctionConfig,
+    provenance: Dict[str, Any],
+) -> Dict[str, Any]:
+    policy = _canonical_wavelength_policy(config.wavelength_out_of_range)
+    if policy == "raise":
+        raise ValueError(
+            f"{exc} Use GalacticExtinctionConfig(law='wang2019') for longer "
+            "wavelength coverage, set wavelength_out_of_range='skip' to "
+            "continue without applying Milky Way dereddening, or disable the "
+            "step with GalacticExtinctionConfig(enabled=False)."
+        ) from exc
+    if policy != "skip":
+        raise ValueError(
+            "GalacticExtinctionConfig.wavelength_out_of_range must be "
+            "'skip' or 'raise'."
+        ) from exc
+    skipped = dict(provenance)
+    skipped.update(
+        {
+            "requested": True,
+            "applied": False,
+            "status": "skipped_wavelength_out_of_range",
+            "skip_reason": str(exc),
+            "law": _canonical_extinction_law(config.law),
+            "supported_wavelength_min": exc.supported_min,
+            "supported_wavelength_max": exc.supported_max,
+        }
+    )
+    return skipped
 
 
 def _same_correction(
@@ -258,7 +382,7 @@ def correct_spectrum_data(
             "declared_corrected",
         ):
             return _prepare_spectrum_data_rest_frame(spectrum)
-        if existing.get("status") == "disabled":
+        elif existing.get("status") == "disabled":
             if not cfg.enabled and _same_correction(
                 existing, cfg, spectrum.ra, spectrum.dec
             ):
@@ -266,6 +390,14 @@ def correct_spectrum_data(
             metadata.pop(_PROVENANCE_KEY, None)
             spectrum = replace(spectrum, metadata=metadata)
             existing = None
+        elif existing.get("status") == "skipped_wavelength_out_of_range":
+            if _same_correction(existing, cfg, spectrum.ra, spectrum.dec):
+                return _prepare_spectrum_data_rest_frame(spectrum)
+            raise ValueError(
+                "SpectrumData already contains a skipped Galactic-extinction "
+                "correction with different provenance and the raw arrays are "
+                "unavailable."
+            )
     if isinstance(existing, dict):
         if _same_correction(existing, cfg, spectrum.ra, spectrum.dec):
             return _prepare_spectrum_data_rest_frame(spectrum)
@@ -281,7 +413,22 @@ def correct_spectrum_data(
             replace(spectrum, metadata=metadata)
         )
 
-    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
+    try:
+        factor = galactic_dereddening_factor(
+            spectrum.wave_obs,
+            ebv,
+            rv=cfg.rv,
+            law=cfg.law,
+        )
+    except ExtinctionWavelengthRangeError as exc:
+        metadata[_PROVENANCE_KEY] = _handle_wavelength_range_error(
+            exc,
+            config=cfg,
+            provenance=provenance,
+        )
+        return _prepare_spectrum_data_rest_frame(
+            replace(spectrum, metadata=metadata)
+        )
     flux = np.asarray(spectrum.flux, dtype=float) * factor
     error = (
         None
@@ -533,6 +680,27 @@ def prepare_spectrum(
         )
         return _prepare_spectrum_rest_frame(prepared)
 
+    if status == "skipped_wavelength_out_of_range":
+        if not _same_correction(existing, cfg, ra, dec):
+            raise ValueError(
+                "Spectrum already contains a skipped Galactic-extinction "
+                "correction with different provenance and the raw arrays are "
+                "unavailable."
+            )
+        metadata = _updated_spectrum_metadata(
+            spectrum.metadata,
+            ra=ra,
+            dec=dec,
+            corrected=False,
+            provenance=existing,
+        )
+        prepared = (
+            spectrum
+            if metadata == spectrum.metadata
+            else replace(spectrum, metadata=metadata)
+        )
+        return _prepare_spectrum_rest_frame(prepared)
+
     if spectrum.metadata.galactic_extinction_corrected:
         provenance = _config_provenance(cfg)
         provenance.update(
@@ -588,7 +756,31 @@ def prepare_spectrum(
             ) from exc
         raise
 
-    factor = f99_dereddening_factor(spectrum.wave_obs, ebv, cfg.rv)
+    try:
+        factor = galactic_dereddening_factor(
+            spectrum.wave_obs,
+            ebv,
+            rv=cfg.rv,
+            law=cfg.law,
+        )
+    except ExtinctionWavelengthRangeError as exc:
+        provenance = _handle_wavelength_range_error(
+            exc,
+            config=cfg,
+            provenance=provenance,
+        )
+        return _prepare_spectrum_rest_frame(
+            replace(
+                spectrum,
+                metadata=_updated_spectrum_metadata(
+                    spectrum.metadata,
+                    ra=ra,
+                    dec=dec,
+                    corrected=False,
+                    provenance=provenance,
+                ),
+            )
+        )
     provenance.update(
         {
             "correction_factor_min": float(np.min(factor)),

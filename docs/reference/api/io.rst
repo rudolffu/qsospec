@@ -5,6 +5,8 @@ I/O, extinction, and archive API
 
 .. autofunction:: query_galactic_ebv
 .. autofunction:: f99_dereddening_factor
+.. autofunction:: galactic_dereddening_factor
+.. autofunction:: wang2019_extinction_mag
 .. autofunction:: correct_spectrum
 .. autofunction:: correct_spectrum_data
 .. autofunction:: prepare_spectrum

@@ -157,6 +157,173 @@ def test_f99_wavelength_domain_is_enforced():
         qsospec.f99_dereddening_factor(np.array([900.0, 1200.0]), 0.1)
 
 
+def test_f99_out_of_range_skips_by_default_for_spectrum_data():
+    data = _data(wave_obs=np.linspace(3500.0, 40000.0, 64))
+    corrected = qsospec.correct_spectrum_data(
+        data,
+        qsospec.GalacticExtinctionConfig(ebv_override=0.1),
+    )
+
+    provenance = corrected.metadata["galactic_extinction"]
+    assert provenance["status"] == "skipped_wavelength_out_of_range"
+    assert provenance["requested"] is True
+    assert provenance["applied"] is False
+    assert provenance["law"] == "f99"
+    assert provenance["raw_ebv"] == pytest.approx(0.1)
+    assert provenance["applied_ebv"] == pytest.approx(0.1)
+    assert provenance["supported_wavelength_max"] == pytest.approx(33333.333333333336)
+    assert "outside the F99 supported range" in provenance["skip_reason"]
+    np.testing.assert_allclose(corrected.flux, np.full(64, 1.2))
+    np.testing.assert_allclose(corrected.error, np.full(64, 0.12))
+    np.testing.assert_allclose(corrected.ivar, np.full(64, 100.0 / 1.2**2))
+    assert corrected.metadata["flux_frame"] == "rest"
+
+
+def test_f99_out_of_range_raise_policy_is_actionable():
+    config = qsospec.GalacticExtinctionConfig(
+        ebv_override=0.1,
+        wavelength_out_of_range="raise",
+    )
+    with pytest.raises(ValueError, match="law='wang2019'"):
+        qsospec.correct_spectrum_data(
+            _data(wave_obs=np.linspace(3500.0, 40000.0, 64)),
+            config,
+        )
+
+
+def test_wang2019_extends_to_long_wavelengths_and_matches_formula():
+    wave = np.array([5500.0, 10000.0, 40000.0])
+    ebv = 0.12
+    rv = 3.1
+    wave_micron = wave / 1.0e4
+    y = 1.0 / wave_micron - 1.82
+    alam_over_av = (
+        1.0
+        + 0.7499 * y
+        - 0.1086 * y**2
+        - 0.08909 * y**3
+        + 0.02905 * y**4
+        + 0.01069 * y**5
+        + 0.001707 * y**6
+        - 0.001002 * y**7
+    )
+    infrared = wave_micron >= 1.0
+    alam_over_av[infrared] = 0.3722 * wave_micron[infrared] ** (-2.070)
+    expected_mag = alam_over_av * rv * ebv
+
+    np.testing.assert_allclose(
+        qsospec.wang2019_extinction_mag(wave, ebv, rv=rv),
+        expected_mag,
+    )
+    factor = qsospec.galactic_dereddening_factor(
+        wave,
+        ebv,
+        rv=rv,
+        law="w19",
+    )
+    np.testing.assert_allclose(factor, 10.0 ** (0.4 * expected_mag))
+    assert np.all(np.isfinite(factor))
+    assert np.all(factor > 1.0)
+
+
+def test_wang2019_propagates_flux_error_and_ivar_for_spectrum_data():
+    data = _data(wave_obs=np.linspace(3500.0, 40000.0, 64))
+    config = qsospec.GalacticExtinctionConfig(
+        ebv_override=0.08,
+        law="wang19",
+    )
+    corrected = qsospec.correct_spectrum_data(data, config)
+    factor = qsospec.galactic_dereddening_factor(
+        data.wave_obs,
+        0.08,
+        rv=3.1,
+        law="wang2019",
+    )
+    rest_factor = 1.2
+
+    np.testing.assert_allclose(corrected.flux, factor * rest_factor)
+    np.testing.assert_allclose(corrected.error, 0.1 * factor * rest_factor)
+    np.testing.assert_allclose(
+        corrected.ivar,
+        100.0 / (factor * rest_factor) ** 2,
+    )
+    provenance = corrected.metadata["galactic_extinction"]
+    assert provenance["status"] == "applied"
+    assert provenance["law"] == "wang2019"
+    assert provenance["correction_factor_max"] > provenance["correction_factor_min"]
+
+
+def test_prepare_spectrum_out_of_range_skip_is_idempotent(monkeypatch):
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 40000.0, 64),
+        np.ones(64),
+        err=np.full(64, 0.1),
+        z=0.25,
+        ra=12.0,
+        dec=-3.0,
+        flux_unit="relative",
+    )
+    config = qsospec.GalacticExtinctionConfig(ebv_override=0.05)
+    prepared = qsospec.prepare_spectrum(
+        spectrum,
+        galactic_extinction_config=config,
+    )
+
+    assert not prepared.metadata.galactic_extinction_corrected
+    assert (
+        prepared.metadata.galactic_extinction["status"]
+        == "skipped_wavelength_out_of_range"
+    )
+    np.testing.assert_allclose(prepared.flux, 1.25 * spectrum.flux)
+    np.testing.assert_allclose(prepared.err, 1.25 * spectrum.err)
+
+    def unexpected_query(*args, **kwargs):
+        raise AssertionError("skipped correction should be reused")
+
+    monkeypatch.setattr("qsospec.extinction.query_galactic_ebv", unexpected_query)
+    repeated = qsospec.prepare_spectrum(
+        prepared,
+        galactic_extinction_config=config,
+    )
+    assert repeated is prepared
+
+
+def test_run_bundle_round_trips_skipped_extinction_provenance(tmp_path):
+    data = _data(
+        wave_obs=np.linspace(3500.0, 40000.0, 240),
+        flux=np.ones(240),
+        error=np.full(240, 0.05),
+        ivar=None,
+        redshift=0.0,
+    )
+    result = qsospec.fit_object_to_store(
+        data,
+        str(tmp_path / "skipped-run"),
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(
+            ebv_override=0.05,
+        ),
+        global_config=qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=(
+                qsospec.BalmerPseudoContinuumConfig(enabled=False)
+            ),
+            clip_passes=0,
+        ),
+        complexes=[],
+        write_qa=False,
+    )
+    loaded = qsospec.load_model(str(tmp_path / "skipped-run"), "dust-test")
+
+    assert result.metadata["galactic_extinction"]["status"] == (
+        "skipped_wavelength_out_of_range"
+    )
+    assert loaded.metadata["galactic_extinction"]["status"] == (
+        "skipped_wavelength_out_of_range"
+    )
+    np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
+
+
 def test_run_bundle_archives_corrected_arrays_and_provenance(tmp_path):
     data = _data(
         wave_obs=np.linspace(3500.0, 4500.0, 240),

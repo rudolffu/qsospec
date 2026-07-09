@@ -269,8 +269,9 @@ _RECIPES = (
             ),
             _component("SII6718", ("sii_6718",), "narrow", kinematic_group="halpha_narrow"),
             _component("SII6733", ("sii_6733",), "narrow", kinematic_group="halpha_narrow"),
-        ), required_line_ids=("halpha", "nii_6550", "nii_6585", "sii_6718", "sii_6733"),
+        ), required_line_ids=("halpha", "nii_6550", "nii_6585"),
         qa_labels=("halpha", "nii_6550", "nii_6585", "sii_6718", "sii_6733"),
+        coverage_mode="component_adaptive", min_coverage_fraction=0.6,
         auto_enabled=True, priority=100, backend="halpha_adapter", exclusive_group="halpha",
     ),
     ComplexRecipe(

@@ -36,6 +36,13 @@ Supply a known E(B-V) without querying a map:
 
    extinction = qsospec.GalacticExtinctionConfig(ebv_override=0.035)
 
+Use Wang & Chen (2019) for spectra whose observed wavelength grid extends
+beyond the F99 implementation range:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(law="wang2019")
+
 Disable the step explicitly:
 
 .. code-block:: python
@@ -56,6 +63,25 @@ call:
 
 Use ``galactic_extinction_corrected=True`` when constructing arrays that were
 already dereddened.
+
+Wavelength-domain behavior
+--------------------------
+
+The F99 implementation used by ``dust-extinction`` is valid only over its
+supported wavelength range. By default, if an enabled correction encounters an
+observed wavelength grid outside that range, qsospec records
+``status="skipped_wavelength_out_of_range"`` in the Galactic-extinction
+provenance, leaves the flux and uncertainty un-dereddened, and still performs
+the rest-frame wavelength and :math:`F_\lambda` conversion. This keeps long
+wavelength spectra fit-able while making the skipped correction explicit.
+
+For stricter behavior, request a hard failure:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(
+       wavelength_out_of_range="raise"
+   )
 
 See :doc:`../user_guide/preprocessing` for the order of operations and
 :class:`qsospec.GalacticExtinctionConfig` for every field. The complete

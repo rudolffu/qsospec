@@ -36,6 +36,18 @@ Known foreground E(B-V):
 
    extinction = qsospec.GalacticExtinctionConfig(ebv_override=0.035)
 
+Long-wavelength Galactic correction:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(law="wang2019")
+
+The Galactic-extinction provenance status is one of ``applied``,
+``declared_corrected``, ``disabled``, or
+``skipped_wavelength_out_of_range``. The last status means the configured
+extinction law did not cover the observed wavelength grid and the configured
+``wavelength_out_of_range`` policy allowed fitting to continue.
+
 Continuum-only validation:
 
 .. code-block:: python

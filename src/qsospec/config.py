@@ -18,6 +18,7 @@ class GalacticExtinctionConfig:
     enabled: bool = True
     map_name: str = "planck"
     law: str = "f99"
+    wavelength_out_of_range: str = "skip"
     rv: float = 3.1
     sfd_recalibration: float = 0.86
     ebv_override: Optional[float] = None
@@ -31,9 +32,19 @@ class GalacticExtinctionConfig:
                 "GalacticExtinctionConfig.map_name must be 'planck', "
                 "'planck16', or 'sfd'."
             )
-        if str(self.law).strip().lower() != "f99":
+        law = str(self.law).strip().lower()
+        if law not in ("f99", "wang2019", "wang19", "w19"):
             raise ValueError(
-                "GalacticExtinctionConfig currently supports only law='f99'."
+                "GalacticExtinctionConfig.law must be 'f99', 'wang2019', "
+                "'wang19', or 'w19'."
+            )
+        if str(self.wavelength_out_of_range).strip().lower() not in (
+            "skip",
+            "raise",
+        ):
+            raise ValueError(
+                "GalacticExtinctionConfig.wavelength_out_of_range must be "
+                "'skip' or 'raise'."
             )
         if not np.isfinite(self.rv) or not 2.0 <= float(self.rv) <= 6.0:
             raise ValueError(
@@ -606,7 +617,7 @@ class HalphaComplexConfig:
     narrow_fwhm_bounds_kms: Tuple[float, float] = (70.0, 1200.0)
     narrow_velocity_bounds_kms: Tuple[float, float] = (-1000.0, 1000.0)
     nii_ratio_6585_6549: float = 2.96
-    min_coverage_fraction: float = 0.8
+    min_coverage_fraction: float = 0.6
     min_valid_pixels: int = 30
     edge_margin_kms: float = 1000.0
     optimizer_method: str = "auto"

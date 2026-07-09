@@ -31,7 +31,11 @@ from ..extinction import (
     preflight_galactic_extinction,
 )
 from ..fitting.global_fit import fit_global_lines
-from ..io.products import GlobalQAPlotConfig, write_global_line_products
+from ..io.products import (
+    GlobalQAPlotConfig,
+    resolve_qa_plot_config,
+    write_global_line_products,
+)
 from ..global_result import WorkflowResult
 from .host_workflow import (
     _host_decomp_decision,
@@ -546,6 +550,8 @@ def fit_object_to_store(
     resume: bool = True,
     write_qa: bool = True,
     qa_plot_config: Optional[GlobalQAPlotConfig] = None,
+    overview_yscale: Optional[str] = None,
+    overview_log_min_fraction: Optional[float] = None,
     write_legacy_products: bool = False,
 ) -> WorkflowResult:
     """Fit one object into the same run bundle used for batch fitting."""
@@ -690,12 +696,16 @@ def fit_object_to_store(
         "run_directory": str(store.path),
     }
     result.output_files["manifest"] = str(store.path / "manifest.json")
+    resolved_qa_plot_config = resolve_qa_plot_config(
+        qa_plot_config,
+        overview_yscale=overview_yscale,
+        overview_log_min_fraction=overview_log_min_fraction,
+    )
     if write_legacy_products:
-        config = qa_plot_config or GlobalQAPlotConfig()
         files = write_global_line_products(
             result,
             str(store.path / "legacy" / actual_object_id),
-            config,
+            resolved_qa_plot_config,
         )
         result.output_files.update(files)
     elif write_qa:
@@ -704,7 +714,7 @@ def fit_object_to_store(
         rendered = render_qa(
             store,
             object_ids=[actual_object_id],
-            plot_config=qa_plot_config or GlobalQAPlotConfig(),
+            plot_config=resolved_qa_plot_config,
         )
         result.output_files.update(rendered.get(actual_object_id, {}))
         result.output_files = {

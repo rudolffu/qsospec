@@ -170,19 +170,40 @@ class WorkflowResult:
 
         return self.output_files.get("main_qa")
 
-    def plot_qa(self, plot_config=None):
+    def plot_qa(
+        self,
+        plot_config=None,
+        *,
+        overview_yscale=None,
+        overview_log_min_fraction=None,
+    ):
         """Return an open Matplotlib QA figure for notebook use."""
 
         from .io.products import plot_qa_figure
 
-        return plot_qa_figure(self, plot_config)
+        return plot_qa_figure(
+            self,
+            plot_config,
+            overview_yscale=overview_yscale,
+            overview_log_min_fraction=overview_log_min_fraction,
+        )
 
-    def show_qa(self, plot_config=None):
+    def show_qa(
+        self,
+        plot_config=None,
+        *,
+        overview_yscale=None,
+        overview_log_min_fraction=None,
+    ):
         """Display and return the QA figure in an interactive session."""
 
         import matplotlib.pyplot as plt
 
-        figure = self.plot_qa(plot_config)
+        figure = self.plot_qa(
+            plot_config,
+            overview_yscale=overview_yscale,
+            overview_log_min_fraction=overview_log_min_fraction,
+        )
         plt.show()
         return figure
 

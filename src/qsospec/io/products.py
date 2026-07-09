@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 import re
@@ -33,6 +33,8 @@ class GlobalQAPlotConfig:
         (1170.0, 1275.0, "Lyα"),
     )
     show_host_context_in_overview: bool = True
+    overview_yscale: str = "linear"
+    overview_log_min_fraction: float = 1.0e-3
     object_name: Optional[str] = None
     object_label: Optional[str] = None
     show_coordinates: bool = True
@@ -53,6 +55,30 @@ class GlobalQAPlotConfig:
                 )
         if self.output_format not in ("png", "pdf", "both"):
             raise ValueError("output_format must be 'png', 'pdf', or 'both'.")
+        if str(self.overview_yscale).strip().lower() not in ("linear", "log"):
+            raise ValueError("overview_yscale must be 'linear' or 'log'.")
+        if (
+            not np.isfinite(self.overview_log_min_fraction)
+            or self.overview_log_min_fraction <= 0
+        ):
+            raise ValueError("overview_log_min_fraction must be positive and finite.")
+
+
+def resolve_qa_plot_config(
+    plot_config: Optional[GlobalQAPlotConfig] = None,
+    *,
+    overview_yscale: Optional[str] = None,
+    overview_log_min_fraction: Optional[float] = None,
+) -> GlobalQAPlotConfig:
+    """Return a QA plot config with optional convenience overrides applied."""
+
+    config = plot_config or GlobalQAPlotConfig()
+    updates = {}
+    if overview_yscale is not None:
+        updates["overview_yscale"] = overview_yscale
+    if overview_log_min_fraction is not None:
+        updates["overview_log_min_fraction"] = overview_log_min_fraction
+    return replace(config, **updates) if updates else config
 
 
 _SCIENCE_PLOT_STYLE = {
@@ -382,6 +408,28 @@ _LINE_MARKER_STYLE = {
     "linewidth": 0.8,
     "alpha": 0.65,
 }
+
+
+def _zoom_emission_lines_for_fit(
+    complex_name: str,
+    fit,
+) -> Tuple[Tuple[float, str], ...]:
+    labels = tuple(_ZOOM_EMISSION_LINES.get(complex_name, ()))
+    if complex_name not in {"halpha", "halpha_nii_sii"}:
+        return labels
+    disabled = set(
+        getattr(fit, "metadata", {}).get("disabled_optional_line_ids", ())
+    )
+    if not disabled:
+        return labels
+    filtered = []
+    for line_wave, line_label in labels:
+        if "sii_6718" in disabled and np.isclose(line_wave, 6718.29):
+            continue
+        if "sii_6733" in disabled and np.isclose(line_wave, 6732.67):
+            continue
+        filtered.append((line_wave, line_label))
+    return tuple(filtered)
 
 
 def _species_from_component(name: str) -> str:
@@ -796,6 +844,49 @@ def _deduplicated_legend_items(axis):
     return list(items.values()), list(items)
 
 
+def _overview_legend_layout(
+    n_handles: int,
+) -> Tuple[int, int, Tuple[float, float], Tuple[float, float, float, float]]:
+    ncol = max(min(5, int(n_handles)), 1)
+    rows = int(np.ceil(float(n_handles) / float(ncol))) if n_handles else 0
+    if rows <= 1:
+        anchor = (0.5, 0.965)
+        rect = (0.0, 0.0, 1.0, 0.89)
+    elif rows == 2:
+        anchor = (0.5, 0.985)
+        rect = (0.0, 0.0, 1.0, 0.87)
+    else:
+        anchor = (0.5, 1.0)
+        rect = (0.0, 0.0, 1.0, 0.855)
+    return ncol, rows, anchor, rect
+
+
+def _positive_log_lower_limit(
+    arrays,
+    *,
+    overview_upper: Optional[float],
+    min_fraction: float,
+) -> Optional[float]:
+    positive_values = []
+    for array in arrays:
+        if array is None:
+            continue
+        values = np.asarray(array, dtype=float)
+        positive = values[np.isfinite(values) & (values > 0)]
+        if positive.size:
+            positive_values.append(positive)
+    if not positive_values:
+        return None
+    minimum = float(np.min(np.concatenate(positive_values)))
+    candidates = [0.8 * minimum]
+    if overview_upper is not None and np.isfinite(overview_upper) and overview_upper > 0:
+        candidates.append(float(overview_upper) * float(min_fraction))
+    lower = max(candidates)
+    if not np.isfinite(lower) or lower <= 0:
+        return None
+    return float(lower)
+
+
 @_science_plot_style
 def _plot_host_context(
     result: WorkflowResult,
@@ -1036,6 +1127,11 @@ def _plot_qa(
     ]
     result.metadata["qa_plot_style"] = "qsospec_science_serif"
     result.metadata["qa_plot_style_rc"] = dict(_SCIENCE_PLOT_STYLE)
+    overview_yscale = str(config.overview_yscale).strip().lower()
+    result.metadata["qa_overview_yscale"] = overview_yscale
+    result.metadata["qa_overview_log_min_fraction"] = float(
+        config.overview_log_min_fraction
+    )
     result.metadata["qa_smoothing_window_pixels"] = int(
         config.smoothing_window_pixels
     )
@@ -1405,11 +1501,30 @@ def _plot_qa(
     result.metadata["qa_lya_in_valid_coverage"] = lya_in_coverage
     result.metadata["qa_lya_model_fitted"] = lya_model_fitted
     if overview_upper is not None:
+        overview_ymax = max(overview_upper, 0.0)
+        overview_ymin = 0.0
+        if overview_yscale == "log":
+            log_lower = _positive_log_lower_limit(
+                [
+                    overview_data[overview_data_valid],
+                    overview_full_model[overview_model_valid],
+                ],
+                overview_upper=overview_ymax,
+                min_fraction=config.overview_log_min_fraction,
+            )
+            if log_lower is not None and overview_ymax > log_lower:
+                overview_axis.set_yscale("log")
+                overview_ymin = log_lower
+            else:
+                result.metadata["qa_overview_log_fallback"] = (
+                    "no_positive_overview_values"
+                )
         overview_axis.set_ylim(
-            0.0,
-            max(overview_upper, 0.0),
+            overview_ymin,
+            overview_ymax,
         )
-        result.metadata["qa_overview_ymin"] = 0.0
+        result.metadata["qa_overview_ymin"] = float(overview_ymin)
+        result.metadata["qa_overview_ymax"] = float(overview_ymax)
         result.metadata["qa_overview_model_upper_limit"] = overview_upper
         clipped = overview_data_valid & np.isfinite(overview_data) & (
             overview_data > overview_upper
@@ -1484,20 +1599,37 @@ def _plot_qa(
     }
     handles, labels = _deduplicated_legend_items(overview_axis)
     if handles:
+        legend_ncol, legend_rows, legend_anchor, layout_rect = (
+            _overview_legend_layout(len(handles))
+        )
         fig.legend(
             handles,
             labels,
             fontsize=10,
-            ncol=min(5, len(handles)),
+            ncol=legend_ncol,
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.0),
+            bbox_to_anchor=legend_anchor,
             framealpha=0.82,
             borderpad=0.35,
             handlelength=2.4,
         )
+        result.metadata["qa_legend_rows"] = int(legend_rows)
+        result.metadata["qa_legend_ncol"] = int(legend_ncol)
+        result.metadata["qa_legend_bbox_anchor"] = [
+            float(legend_anchor[0]),
+            float(legend_anchor[1]),
+        ]
+        result.metadata["qa_layout_rect"] = [
+            float(value) for value in layout_rect
+        ]
         layout_engine = fig.get_layout_engine()
         if layout_engine is not None:
-            layout_engine.set(rect=(0.0, 0.0, 1.0, 0.855))
+            layout_engine.set(rect=layout_rect)
+    else:
+        result.metadata["qa_legend_rows"] = 0
+        result.metadata["qa_legend_ncol"] = 0
+        result.metadata["qa_legend_bbox_anchor"] = None
+        result.metadata["qa_layout_rect"] = None
 
     if residual_axis is not None:
         residual_mask = (
@@ -1675,7 +1807,7 @@ def _plot_qa(
         result.metadata.setdefault("qa_zoom_line_labels", {})[complex_name] = list(
             _annotate_emission_lines(
                 axis,
-                _ZOOM_EMISSION_LINES.get(complex_name, ()),
+                _zoom_emission_lines_for_fit(complex_name, fit),
                 y_fraction=0.82,
             )
         )
@@ -1724,13 +1856,20 @@ def _plot_qa(
 def plot_qa_figure(
     result: WorkflowResult,
     plot_config: Optional[GlobalQAPlotConfig] = None,
+    *,
+    overview_yscale: Optional[str] = None,
+    overview_log_min_fraction: Optional[float] = None,
 ):
     """Return an open Matplotlib QA figure without writing a file."""
 
     return _plot_qa(
         result,
         None,
-        plot_config or GlobalQAPlotConfig(),
+        resolve_qa_plot_config(
+            plot_config,
+            overview_yscale=overview_yscale,
+            overview_log_min_fraction=overview_log_min_fraction,
+        ),
         return_figure=True,
     )
 

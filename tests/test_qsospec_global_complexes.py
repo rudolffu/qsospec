@@ -150,6 +150,79 @@ def test_halpha_recovers_tied_narrow_lines_and_fixed_nii_ratio():
     assert max(velocities.values()) - min(velocities.values()) < 0.1
 
 
+def test_halpha_partial_coverage_fits_core_and_disables_sii():
+    wave = np.linspace(6200.0, 6651.0, 1400)
+    continuum = np.full_like(wave, 1.5)
+    line = _gaussian_area_profile(wave, 100.0, 6564.61, 2600.0)
+    line += _gaussian_area_profile(wave, 12.0, 6564.61, 320.0)
+    line += _gaussian_area_profile(wave, 25.0, 6585.28, 320.0)
+    line += _gaussian_area_profile(wave, 25.0 / 2.96, 6549.85, 320.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        continuum + line,
+        err=np.full_like(wave, 0.03),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_halpha_complex(
+        spectrum,
+        _continuum_result(spectrum, continuum),
+        compute_covariance=False,
+    )
+
+    assert result.success
+    assert result.metadata["coverage_status"] == "partially_covered"
+    assert result.metadata["disabled_optional_line_ids"] == (
+        "sii_6718",
+        "sii_6733",
+    )
+    assert result.metrics["Ha_broad_flux_input"] == pytest.approx(100.0, rel=2.0e-3)
+    assert result.metrics["NII6585_flux_input"] / result.metrics["NII6549_flux_input"] == pytest.approx(
+        2.96, rel=1.0e-8
+    )
+    assert np.isnan(result.metrics["SII6718_flux_input"])
+    assert np.isnan(result.metrics["SII6733_flux_input"])
+    assert np.isnan(result.metric_errors["SII6718_flux_input"])
+    assert np.isnan(result.metric_errors["SII6733_flux_input"])
+    assert "SII6718.flux" not in result.param_values
+    assert "SII6733.flux" not in result.param_values
+    assert "SII6718" not in result.component_models
+    assert "SII6733" not in result.component_models
+
+
+@pytest.mark.parametrize(
+    ("upper", "success", "coverage_status"),
+    [
+        (6800.0, True, "covered"),
+        (6651.0, True, "partially_covered"),
+        (6605.0, False, None),
+        (6630.0, False, None),
+    ],
+)
+def test_halpha_adaptive_coverage_boundaries(upper, success, coverage_status):
+    wave = np.linspace(6400.0, upper, 600)
+    continuum = np.full_like(wave, 1.5)
+    line = _gaussian_area_profile(wave, 80.0, 6564.61, 2600.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        continuum + line,
+        err=np.full_like(wave, 0.03),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_halpha_complex(
+        spectrum,
+        _continuum_result(spectrum, continuum),
+        compute_covariance=False,
+    )
+
+    assert result.success is success
+    if success:
+        assert result.metadata["coverage_status"] == coverage_status
+    else:
+        assert "line_complex_not_covered" in result.warning_codes()
+
+
 @pytest.mark.parametrize(
     ("wave_range", "covered"),
     [
@@ -381,6 +454,82 @@ def test_global_workflow_fits_only_covered_complexes_and_writes_qa(tmp_path):
     assert compatibility["generic_summary_json"].endswith("qsospec_global_lines_summary.json")
 
 
+def test_global_workflow_fits_partial_halpha_without_sii_and_updates_qa(tmp_path):
+    wave = np.linspace(6200.0, 6651.0, 1400)
+    continuum = np.full_like(wave, 1.5)
+    line = _gaussian_area_profile(wave, 100.0, 6564.61, 2600.0)
+    line += _gaussian_area_profile(wave, 12.0, 6564.61, 320.0)
+    line += _gaussian_area_profile(wave, 25.0, 6585.28, 320.0)
+    line += _gaussian_area_profile(wave, 25.0 / 2.96, 6549.85, 320.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        continuum + line,
+        err=np.full_like(wave, 0.03),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+            continuum_windows=((6200.0, 6450.0),),
+            mask_windows=(),
+            clip_passes=0,
+        ),
+        complexes=["halpha_nii_sii"],
+        uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
+    )
+    files = qsospec.write_global_line_products(result, str(tmp_path))
+    halpha = result.line_complexes["halpha_nii_sii"]
+
+    assert result.complex_statuses["halpha_nii_sii"] == "fit"
+    assert halpha.success
+    assert halpha.metadata["coverage_status"] == "partially_covered"
+    assert halpha.metadata["disabled_optional_line_ids"] == (
+        "sii_6718",
+        "sii_6733",
+    )
+    assert np.isnan(halpha.metrics["SII6718_flux_input"])
+    assert np.isnan(halpha.metrics["SII6733_flux_input"])
+    assert "SII6718" not in halpha.component_models
+    assert "SII6733" not in halpha.component_models
+    assert result.metadata["qa_displayed_complexes"] == ["halpha_nii_sii"]
+    assert set(result.metadata["qa_zoom_line_labels"]["halpha_nii_sii"]) == {
+        "Hα",
+        "[N II] 6550",
+        "[N II] 6585",
+    }
+    assert "main_qa_png" in files
+
+    stored = qsospec.fit_object_to_store(
+        spectrum,
+        str(tmp_path / "partial-halpha-run"),
+        object_id="partial-halpha",
+        global_config=qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+            continuum_windows=((6200.0, 6450.0),),
+            mask_windows=(),
+            clip_passes=0,
+        ),
+        galactic_extinction_config=qsospec.GalacticExtinctionConfig(enabled=False),
+        complexes=["halpha_nii_sii"],
+        uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
+        write_qa=False,
+    )
+    loaded = qsospec.load_model(str(tmp_path / "partial-halpha-run"), "partial-halpha")
+    assert stored.complex_statuses["halpha_nii_sii"] == "fit"
+    assert loaded.line_complexes["halpha_nii_sii"].metadata["coverage_status"] == (
+        "partially_covered"
+    )
+    assert tuple(
+        loaded.line_complexes["halpha_nii_sii"].metadata["disabled_optional_line_ids"]
+    ) == ("sii_6718", "sii_6733")
+
+
 def test_optional_fit_failure_preserves_legacy_success(monkeypatch):
     spectrum = _global_spectrum(np.linspace(2600.0, 7000.0, 2500))
 
@@ -521,9 +670,16 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
         show_residual_panel=True,
         show_fit_regions=True,
         unmodelled_windows=((1170.0, 1275.0, "Lyα"),),
+        show_host_context_in_overview=True,
+        overview_yscale="linear",
+        overview_log_min_fraction=1.0e-3,
     )
     with pytest.raises(ValueError):
         qsospec.GlobalQAPlotConfig(smoothing_window_pixels=4)
+    with pytest.raises(ValueError):
+        qsospec.GlobalQAPlotConfig(overview_yscale="sqrt")
+    with pytest.raises(ValueError):
+        qsospec.GlobalQAPlotConfig(overview_log_min_fraction=0.0)
 
     successful = type("SuccessfulFit", (), {"success": True})()
     monkeypatch.setitem(global_io._COMPLEX_WINDOWS, "civ", (1450.0, 1700.0))
@@ -551,6 +707,27 @@ def test_qa_plot_config_and_selection_contract(monkeypatch):
     )()
     assert _select_zoom_complexes({"oii_nev_neiii_hgamma": fully_covered_blue}, 4)[0] == ("oii_nev_neiii_hgamma",)
     assert _select_zoom_complexes({"oii_nev_neiii_hgamma": partially_covered_blue}, 4)[0] == ()
+
+
+def test_qa_overview_legend_layout_helper():
+    assert global_io._overview_legend_layout(4) == (
+        4,
+        1,
+        (0.5, 0.965),
+        (0.0, 0.0, 1.0, 0.89),
+    )
+    assert global_io._overview_legend_layout(6) == (
+        5,
+        2,
+        (0.5, 0.985),
+        (0.0, 0.0, 1.0, 0.87),
+    )
+    assert global_io._overview_legend_layout(11) == (
+        5,
+        3,
+        (0.5, 1.0),
+        (0.0, 0.0, 1.0, 0.855),
+    )
 
 
 def test_qa_fit_masks_residuals_and_region_precedence(tmp_path, monkeypatch):
@@ -665,6 +842,69 @@ def test_lya_overview_uses_unsmoothed_data_only_percentile(tmp_path):
     assert result.metadata["qa_overview_model_upper_limit"] == pytest.approx(expected)
 
 
+def test_qa_overview_log_scale_uses_positive_limits(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    wave = np.linspace(2600.0, 7000.0, 2200)
+    flux = 3.0 * (wave / 4000.0) ** -1.1
+    flux[:4] = [-2.0, 0.0, -0.5, 0.0]
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        flux,
+        err=np.full_like(wave, 0.05),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(
+        spectrum,
+        qsospec.GlobalContinuumConfig(
+            uv_iron=None,
+            optical_iron=None,
+            balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+            clip_passes=0,
+        ),
+        complexes=[],
+        uncertainty_config=qsospec.UncertaintyConfig(covariance=False),
+    )
+
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda figure: None)
+    _plot_qa(
+        result,
+        tmp_path / "log-overview.png",
+        qsospec.GlobalQAPlotConfig(overview_yscale="log"),
+    )
+    figure = plt.gcf()
+    overview_axis = figure.axes[0]
+
+    assert overview_axis.get_yscale() == "log"
+    assert all(axis.get_yscale() == "linear" for axis in figure.axes[1:])
+    assert result.metadata["qa_overview_yscale"] == "log"
+    assert result.metadata["qa_overview_ymin"] > 0
+    assert result.metadata["qa_overview_ymax"] > result.metadata["qa_overview_ymin"]
+    assert result.metadata["qa_overview_log_min_fraction"] == pytest.approx(1.0e-3)
+    real_close(figure)
+
+
+def test_plot_qa_accepts_direct_overview_yscale(monkeypatch):
+    import matplotlib.pyplot as plt
+
+    result = qsospec.fit_global_lines(
+        _global_spectrum(np.linspace(2600.0, 7000.0, 2200)),
+        _simple_global_config(),
+        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+    )
+
+    real_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda figure: None)
+    figure = result.plot_qa(overview_yscale="log", overview_log_min_fraction=1.0e-4)
+
+    assert figure.axes[0].get_yscale() == "log"
+    assert result.metadata["qa_overview_yscale"] == "log"
+    assert result.metadata["qa_overview_log_min_fraction"] == pytest.approx(1.0e-4)
+    real_close(figure)
+
+
 def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     import matplotlib.pyplot as plt
 
@@ -704,6 +944,20 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
         "ra": None,
         "dec": None,
     }
+    for variant in variants.values():
+        expected_ncol, expected_rows, expected_anchor, expected_rect = (
+            global_io._overview_legend_layout(variant.metadata["qa_legend_ncol"])
+            if variant.metadata["qa_legend_rows"] == 1
+            else global_io._overview_legend_layout(
+                variant.metadata["qa_legend_ncol"]
+                * (variant.metadata["qa_legend_rows"] - 1)
+                + 1
+            )
+        )
+        assert variant.metadata["qa_legend_rows"] == expected_rows
+        assert variant.metadata["qa_legend_ncol"] == expected_ncol
+        assert variant.metadata["qa_legend_bbox_anchor"] == list(expected_anchor)
+        assert variant.metadata["qa_layout_rect"] == list(expected_rect)
 
     real_close = plt.close
     monkeypatch.setattr(plt, "close", lambda figure: None)
@@ -739,6 +993,11 @@ def test_qa_fixed_dimensions_smoothing_and_legends(tmp_path, monkeypatch):
     assert variants["three"].metadata["qa_y_label_policy"] == (
         "overview_and_leftmost_zoom"
     )
+    assert variants["three"].metadata["qa_legend_rows"] >= 2
+    assert variants["three"].metadata["qa_legend_ncol"] <= 5
+    if variants["three"].metadata["qa_legend_rows"] >= 3:
+        assert variants["three"].metadata["qa_legend_bbox_anchor"] == [0.5, 1.0]
+        assert variants["three"].metadata["qa_layout_rect"] == [0.0, 0.0, 1.0, 0.855]
     real_close(figure)
 
 

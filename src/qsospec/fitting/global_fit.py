@@ -1742,9 +1742,15 @@ class _MgIIContext(_SeparableLineContext):
 
 
 class _HalphaContext(_SeparableLineContext):
-    def __init__(self, config: HalphaComplexConfig, flux_scale: float):
+    def __init__(
+        self,
+        config: HalphaComplexConfig,
+        flux_scale: float,
+        active_sii_line_ids: Sequence[str] = ("sii_6718", "sii_6733"),
+    ):
         super().__init__()
         self.config = config
+        self.active_sii_line_ids = tuple(active_sii_line_ids)
         scale = max(float(flux_scale), 1.0e-6)
         for index, ((fwhm_lo, fwhm_hi), fraction) in enumerate(
             zip(config.broad_fwhm_bands_kms, (0.55, 0.30, 0.15)), start=1
@@ -1772,8 +1778,10 @@ class _HalphaContext(_SeparableLineContext):
             config.narrow_fwhm_bounds_kms[1],
         )
         self._add("NII6585.flux", scale * 0.05, 0.0, np.inf)
-        self._add("SII6718.flux", scale * 0.03, 0.0, np.inf)
-        self._add("SII6733.flux", scale * 0.03, 0.0, np.inf)
+        if "sii_6718" in self.active_sii_line_ids:
+            self._add("SII6718.flux", scale * 0.03, 0.0, np.inf)
+        if "sii_6733" in self.active_sii_line_ids:
+            self._add("SII6733.flux", scale * 0.03, 0.0, np.inf)
         self._finalize()
 
     def components(self, theta, wave):
@@ -1804,18 +1812,20 @@ class _HalphaContext(_SeparableLineContext):
             self.shifted(NII_6549_WAVE, narrow_velocity),
             narrow_width,
         )
-        out["SII6718"] = _gaussian_area_profile(
-            wave,
-            self.get(theta, "SII6718.flux"),
-            self.shifted(SII_6718_WAVE, narrow_velocity),
-            narrow_width,
-        )
-        out["SII6733"] = _gaussian_area_profile(
-            wave,
-            self.get(theta, "SII6733.flux"),
-            self.shifted(SII_6733_WAVE, narrow_velocity),
-            narrow_width,
-        )
+        if "sii_6718" in self.active_sii_line_ids:
+            out["SII6718"] = _gaussian_area_profile(
+                wave,
+                self.get(theta, "SII6718.flux"),
+                self.shifted(SII_6718_WAVE, narrow_velocity),
+                narrow_width,
+            )
+        if "sii_6733" in self.active_sii_line_ids:
+            out["SII6733"] = _gaussian_area_profile(
+                wave,
+                self.get(theta, "SII6733.flux"),
+                self.shifted(SII_6733_WAVE, narrow_velocity),
+                narrow_width,
+            )
         return out
 
     def broad_profile(self, theta, wave):
@@ -1869,7 +1879,12 @@ class _HalphaContext(_SeparableLineContext):
                 "narrow.fwhm_kms": nii6585_width + nii6549_width / ratio,
             },
         )
-        for center in (SII_6718_WAVE, SII_6733_WAVE):
+        for line_id, center in (
+            ("sii_6718", SII_6718_WAVE),
+            ("sii_6733", SII_6733_WAVE),
+        ):
+            if line_id not in self.active_sii_line_ids:
+                continue
             basis, velocity_derivative, width_derivative = _gaussian_unit_profile_with_derivatives(
                 wave, center, narrow_velocity, narrow_width
             )
@@ -1955,7 +1970,10 @@ def _metric_errors(theta, covariance, metric_function):
                 jac[i, j] = (pval[name] - mval[name]) / (2.0 * step)
     metric_cov = jac @ covariance @ jac.T
     diag = np.sqrt(np.clip(np.diag(metric_cov), 0.0, np.inf))
-    return {name: float(diag[i]) for i, name in enumerate(names)}
+    return {
+        name: float(diag[i]) if np.isfinite(base[name]) else np.nan
+        for i, name in enumerate(names)
+    }
 
 
 def _complex_coverage(
@@ -1997,6 +2015,106 @@ def _complex_coverage(
         "valid_wave_min": valid_min,
         "valid_wave_max": valid_max,
         "window": (lo, hi),
+    }
+
+
+def _line_center_covered_with_margin(
+    center: float,
+    valid_min: float,
+    valid_max: float,
+    edge_margin_kms: float,
+) -> bool:
+    return (
+        valid_min <= center * np.exp(-edge_margin_kms / C_KMS)
+        and valid_max >= center * np.exp(edge_margin_kms / C_KMS)
+    )
+
+
+def _halpha_adaptive_coverage(
+    spectrum: Spectrum,
+    config: HalphaComplexConfig,
+) -> Tuple[bool, Dict[str, Any]]:
+    valid_wave = spectrum.wave_rest[spectrum.valid_mask]
+    lo, hi = map(float, config.window)
+    if valid_wave.size == 0:
+        return False, {
+            "coverage_fraction": 0.0,
+            "n_valid_pixels": 0,
+            "reason": "no_valid_pixels",
+            "coverage_status": "not_covered",
+            "active_line_ids": (),
+            "disabled_optional_line_ids": ("sii_6718", "sii_6733"),
+        }
+    valid_min = float(valid_wave.min())
+    valid_max = float(valid_wave.max())
+    overlap = max(0.0, min(hi, valid_max) - max(lo, valid_min))
+    coverage_fraction = overlap / (hi - lo)
+    window_mask = spectrum.valid_mask & (spectrum.wave_rest >= lo) & (spectrum.wave_rest <= hi)
+    n_valid_pixels = int(np.count_nonzero(window_mask))
+    centers = {
+        "halpha": HALPHA_WAVE,
+        "nii_6550": NII_6549_WAVE,
+        "nii_6585": NII_6585_WAVE,
+        "sii_6718": SII_6718_WAVE,
+        "sii_6733": SII_6733_WAVE,
+    }
+    covered_line_ids = tuple(
+        line_id
+        for line_id, center in centers.items()
+        if _line_center_covered_with_margin(
+            center,
+            valid_min,
+            valid_max,
+            config.edge_margin_kms,
+        )
+    )
+    covered_set = set(covered_line_ids)
+    required_line_ids = ("halpha", "nii_6550", "nii_6585")
+    missing_required = tuple(
+        line_id for line_id in required_line_ids if line_id not in covered_set
+    )
+    active_sii = tuple(
+        line_id
+        for line_id in ("sii_6718", "sii_6733")
+        if line_id in covered_set
+    )
+    disabled_sii = tuple(
+        line_id
+        for line_id in ("sii_6718", "sii_6733")
+        if line_id not in active_sii
+    )
+    covered = (
+        coverage_fraction >= config.min_coverage_fraction
+        and n_valid_pixels >= config.min_valid_pixels
+        and not missing_required
+    )
+    status = (
+        "covered"
+        if covered and not disabled_sii
+        else "partially_covered"
+        if covered
+        else "not_covered"
+    )
+    active_line_ids = (
+        (*required_line_ids, *active_sii)
+        if covered
+        else ()
+    )
+    return covered, {
+        "coverage_fraction": float(coverage_fraction),
+        "n_valid_pixels": n_valid_pixels,
+        "centers_covered_with_margin": not missing_required,
+        "valid_wave_min": valid_min,
+        "valid_wave_max": valid_max,
+        "window": (lo, hi),
+        "coverage_status": status,
+        "required_line_ids": required_line_ids,
+        "missing_required_line_ids": missing_required,
+        "covered_line_ids": covered_line_ids,
+        "active_line_ids": active_line_ids,
+        "active_sii_line_ids": active_sii,
+        "disabled_optional_line_ids": disabled_sii,
+        "qa_all_lines_covered": bool(covered and not disabled_sii),
     }
 
 
@@ -2083,7 +2201,7 @@ def _broad_complex_metrics(
     }
     if metric_prefix == "Ha":
         ratio = context.config.nii_ratio_6585_6549
-        for name in ("Ha_narrow", "NII6585", "SII6718", "SII6733"):
+        for name in ("Ha_narrow", "NII6585"):
             value = context.get(theta, f"{name}.flux")
             metrics[f"{name}_flux_input"] = value
             metrics[f"{name}_flux_cgs"] = (
@@ -2091,6 +2209,19 @@ def _broad_complex_metrics(
                 if flux_scale_to_cgs is not None
                 else np.nan
             )
+        for name in ("SII6718", "SII6733"):
+            parameter = f"{name}.flux"
+            if parameter in context.index:
+                value = context.get(theta, parameter)
+                metrics[f"{name}_flux_input"] = value
+                metrics[f"{name}_flux_cgs"] = (
+                    value * flux_scale_to_cgs
+                    if flux_scale_to_cgs is not None
+                    else np.nan
+                )
+            else:
+                metrics[f"{name}_flux_input"] = np.nan
+                metrics[f"{name}_flux_cgs"] = np.nan
         nii6549 = context.get(theta, "NII6585.flux") / ratio
         metrics["NII6549_flux_input"] = nii6549
         metrics["NII6549_flux_cgs"] = (
@@ -2122,15 +2253,20 @@ def _fit_separable_emission_complex(
     metric_prefix: str,
     metric_grid: Tuple[float, float],
     compute_covariance: bool,
+    coverage_override: Optional[Tuple[bool, Dict[str, Any]]] = None,
+    context_kwargs: Optional[Dict[str, Any]] = None,
 ) -> EmissionComplexResult:
-    covered, coverage = _complex_coverage(
-        spectrum,
-        config.window,
-        line_centers,
-        config.min_coverage_fraction,
-        config.min_valid_pixels,
-        config.edge_margin_kms,
-    )
+    if coverage_override is None:
+        covered, coverage = _complex_coverage(
+            spectrum,
+            config.window,
+            line_centers,
+            config.min_coverage_fraction,
+            config.min_valid_pixels,
+            config.edge_margin_kms,
+        )
+    else:
+        covered, coverage = coverage_override
     if not covered:
         warning = FitWarning(
             code="line_complex_not_covered",
@@ -2151,7 +2287,7 @@ def _fit_separable_emission_complex(
     line_flux = spectrum.flux - continuum_result.model
     positive = np.clip(line_flux[mask], 0.0, np.inf)
     flux_scale = float(np.trapezoid(positive, wave[mask]))
-    context = context_class(config, flux_scale)
+    context = context_class(config, flux_scale, **(context_kwargs or {}))
     result, optimizer_used, fallback_reason = _solve_once_with_fallback(
         context,
         wave[mask],
@@ -2227,6 +2363,16 @@ def _fit_separable_emission_complex(
             "linear_solve_count": int(getattr(result, "linear_solve_count", 0) or 0),
         }
     )
+    if "coverage_status" in coverage:
+        metadata["coverage_status"] = coverage["coverage_status"]
+    if "active_line_ids" in coverage:
+        metadata["active_line_ids"] = tuple(coverage["active_line_ids"])
+    if "disabled_optional_line_ids" in coverage:
+        metadata["disabled_optional_line_ids"] = tuple(
+            coverage["disabled_optional_line_ids"]
+        )
+    if "qa_all_lines_covered" in coverage:
+        metadata["qa_all_lines_covered"] = bool(coverage["qa_all_lines_covered"])
     return EmissionComplexResult(
         success=bool(result.success),
         status=int(result.status),
@@ -2290,6 +2436,10 @@ def fit_halpha_complex(
 
     require_rest_frame_flux(spectrum)
     cfg = config or HalphaComplexConfig()
+    coverage_override = _halpha_adaptive_coverage(spectrum, cfg)
+    active_sii_line_ids = tuple(
+        coverage_override[1].get("active_sii_line_ids", ())
+    )
     result = _fit_separable_emission_complex(
         spectrum,
         continuum_result,
@@ -2308,6 +2458,8 @@ def fit_halpha_complex(
         metric_prefix="Ha",
         metric_grid=(6200.0, 6900.0),
         compute_covariance=compute_covariance,
+        coverage_override=coverage_override,
+        context_kwargs={"active_sii_line_ids": active_sii_line_ids},
     )
     result.metadata["nii_ratio_6585_6549"] = cfg.nii_ratio_6585_6549
     return result

@@ -15,6 +15,7 @@ from .products import (
     _qa_object_name,
     _save_figure,
     _normalized_file_label,
+    resolve_qa_plot_config,
 )
 from .run_store import RunStore, load_model, open_run
 
@@ -29,6 +30,8 @@ def render_qa(
     random_seed: int = 12345,
     include_failed: bool = False,
     plot_config: Optional[GlobalQAPlotConfig] = None,
+    overview_yscale: Optional[str] = None,
+    overview_log_min_fraction: Optional[float] = None,
     output_dir: Optional[str] = None,
 ) -> Dict[str, Dict[str, str]]:
     """Render main QA figures without refitting archived objects."""
@@ -56,7 +59,11 @@ def render_qa(
             rng.choice(len(objects), size=int(sample), replace=False)
         )
         objects = objects.iloc[indices]
-    config = plot_config or GlobalQAPlotConfig()
+    config = resolve_qa_plot_config(
+        plot_config,
+        overview_yscale=overview_yscale,
+        overview_log_min_fraction=overview_log_min_fraction,
+    )
     destination = Path(output_dir).expanduser() if output_dir else store.path / "qa"
     destination.mkdir(parents=True, exist_ok=True)
     outputs: Dict[str, Dict[str, str]] = {}

@@ -588,15 +588,37 @@ class RunStore:
     def configuration_hash(self) -> str:
         return str(self.manifest["configuration_hash"])
 
-    def plot_qa(self, identifier: str, plot_config=None):
+    def plot_qa(
+        self,
+        identifier: str,
+        plot_config=None,
+        *,
+        overview_yscale=None,
+        overview_log_min_fraction=None,
+    ):
         """Load one archived object and return its open QA figure."""
 
-        return load_model(self, identifier).plot_qa(plot_config)
+        return load_model(self, identifier).plot_qa(
+            plot_config,
+            overview_yscale=overview_yscale,
+            overview_log_min_fraction=overview_log_min_fraction,
+        )
 
-    def show_qa(self, identifier: str, plot_config=None):
+    def show_qa(
+        self,
+        identifier: str,
+        plot_config=None,
+        *,
+        overview_yscale=None,
+        overview_log_min_fraction=None,
+    ):
         """Display and return one archived object's QA figure."""
 
-        return load_model(self, identifier).show_qa(plot_config)
+        return load_model(self, identifier).show_qa(
+            plot_config,
+            overview_yscale=overview_yscale,
+            overview_log_min_fraction=overview_log_min_fraction,
+        )
 
     @classmethod
     def create(

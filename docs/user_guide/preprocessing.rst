@@ -27,6 +27,18 @@ Correction is applied exactly once. Reapplying a different correction to
 already-corrected ``SpectrumData`` is rejected because the raw arrays are no
 longer available.
 
+If F99 does not cover the observed wavelength grid, the default policy is to
+skip only the Milky Way dereddening step, record
+``status="skipped_wavelength_out_of_range"``, and continue with rest-frame
+conversion and fitting. Use Wang & Chen (2019) for longer-wavelength spectra:
+
+.. code-block:: python
+
+   extinction = qsospec.GalacticExtinctionConfig(law="wang2019")
+
+Set ``wavelength_out_of_range="raise"`` when a skipped foreground correction
+should instead abort the workflow.
+
 The subsequent rest-frame conversion multiplies flux and one-sigma
 uncertainty by :math:`1+z` and divides inverse variance by
 :math:`(1+z)^2`. It is also idempotent and still occurs when Galactic
