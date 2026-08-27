@@ -14,3 +14,6 @@ Short, task-oriented recipes with one canonical path each.
    inspect_run
    render_qa
    custom_recipes
+   euclid_dr1_catalog_measurements
+   euclid_dr1_halpha_classification
+   euclid_dr1_narrow_line_classification

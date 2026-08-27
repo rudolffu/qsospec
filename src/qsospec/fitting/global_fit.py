@@ -1751,9 +1751,16 @@ class _HalphaContext(_SeparableLineContext):
         super().__init__()
         self.config = config
         self.active_sii_line_ids = tuple(active_sii_line_ids)
+        self.n_broad_components = len(config.broad_fwhm_bands_kms)
         scale = max(float(flux_scale), 1.0e-6)
+        initial_fractions = {
+            0: (),
+            1: (1.0,),
+            2: (0.65, 0.35),
+            3: (0.55, 0.30, 0.15),
+        }[self.n_broad_components]
         for index, ((fwhm_lo, fwhm_hi), fraction) in enumerate(
-            zip(config.broad_fwhm_bands_kms, (0.55, 0.30, 0.15)), start=1
+            zip(config.broad_fwhm_bands_kms, initial_fractions), start=1
         ):
             prefix = f"Ha_broad{index}"
             self._add(f"{prefix}.flux", scale * fraction, 0.0, np.inf)
@@ -1786,7 +1793,7 @@ class _HalphaContext(_SeparableLineContext):
 
     def components(self, theta, wave):
         out = {}
-        for index in range(1, 4):
+        for index in range(1, self.n_broad_components + 1):
             prefix = f"Ha_broad{index}"
             out[prefix] = _gaussian_area_profile(
                 wave,
@@ -1830,7 +1837,13 @@ class _HalphaContext(_SeparableLineContext):
 
     def broad_profile(self, theta, wave):
         components = self.components(theta, wave)
-        return components["Ha_broad1"] + components["Ha_broad2"] + components["Ha_broad3"]
+        return sum(
+            (
+                components[f"Ha_broad{index}"]
+                for index in range(1, self.n_broad_components + 1)
+            ),
+            np.zeros_like(wave),
+        )
 
     def separable_design(self, nonlinear, wave, need_derivatives):
         values = self._named_values(self.nonlinear_names, nonlinear)
@@ -1845,7 +1858,7 @@ class _HalphaContext(_SeparableLineContext):
                         derivatives.get(name, np.zeros_like(wave))
                     )
 
-        for index in range(1, 4):
+        for index in range(1, self.n_broad_components + 1):
             prefix = f"Ha_broad{index}"
             velocity_name = f"{prefix}.velocity_kms"
             width_name = f"{prefix}.fwhm_kms"
@@ -2440,13 +2453,20 @@ def fit_halpha_complex(
     active_sii_line_ids = tuple(
         coverage_override[1].get("active_sii_line_ids", ())
     )
+    n_broad = len(cfg.broad_fwhm_bands_kms)
+    model_labels = {
+        0: "tied_narrow_only",
+        1: "one_broad_plus_tied_narrow",
+        2: "two_broad_plus_tied_narrow",
+        3: "three_broad_plus_tied_narrow",
+    }
     result = _fit_separable_emission_complex(
         spectrum,
         continuum_result,
         config=cfg,
         context_class=_HalphaContext,
         complex_name="Halpha_NII_SII",
-        selected_model="three_broad_plus_tied_narrow",
+        selected_model=model_labels[n_broad],
         reference_wave=HALPHA_WAVE,
         line_centers=(
             HALPHA_WAVE,
@@ -2462,6 +2482,7 @@ def fit_halpha_complex(
         context_kwargs={"active_sii_line_ids": active_sii_line_ids},
     )
     result.metadata["nii_ratio_6585_6549"] = cfg.nii_ratio_6585_6549
+    result.metadata["n_broad_components"] = n_broad
     return result
 
 

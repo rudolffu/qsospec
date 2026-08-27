@@ -625,8 +625,20 @@ class HalphaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
-        if len(self.broad_fwhm_bands_kms) != 3:
-            raise ValueError("HalphaComplexConfig requires three broad FWHM bands.")
+        if len(self.broad_fwhm_bands_kms) > 3:
+            raise ValueError(
+                "HalphaComplexConfig supports between zero and three broad "
+                "FWHM bands."
+            )
+        for lower, upper in self.broad_fwhm_bands_kms:
+            if lower <= 0 or upper <= lower:
+                raise ValueError(
+                    "Halpha broad FWHM bands must be positive and increasing."
+                )
+        if self.narrow_fwhm_bounds_kms[0] <= 0:
+            raise ValueError("Halpha narrow FWHM bounds must be positive.")
+        if self.narrow_fwhm_bounds_kms[1] <= self.narrow_fwhm_bounds_kms[0]:
+            raise ValueError("Halpha narrow FWHM bounds must be increasing.")
         if self.nii_ratio_6585_6549 <= 0:
             raise ValueError("nii_ratio_6585_6549 must be positive.")
         _validate_complex_optimizer_config(self)
