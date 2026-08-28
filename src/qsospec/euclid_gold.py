@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,13 +13,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from .config import (
-    BalmerPseudoContinuumConfig,
-    GalacticExtinctionConfig,
-    GlobalContinuumConfig,
-    PowerLawConfig,
-    UncertaintyConfig,
-)
+from .euclid_rgs import config_manifest as _generic_config_manifest
+from .euclid_rgs import scientific_configuration as _generic_scientific_configuration
 
 
 GOLD_EXPECTED_ROWS = 8_530
@@ -337,38 +331,9 @@ def select_smoke_rows(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def scientific_configuration(dustmaps_data_dir: str) -> dict[str, Any]:
-    """Return the immutable first-pass scientific configuration."""
+    """Compatibility wrapper for the generic first-pass configuration."""
 
-    global_config = GlobalContinuumConfig(
-        power_law=PowerLawConfig(mode="single"),
-        balmer_pseudocontinuum=BalmerPseudoContinuumConfig(
-            enabled=False,
-            fit_fwhm=False,
-            sync_with_hbeta="never",
-            sync_with_hgamma="never",
-        ),
-    )
-    extinction = GalacticExtinctionConfig(
-        enabled=True,
-        map_name="planck",
-        law="f99",
-        wavelength_out_of_range="raise",
-        rv=3.1,
-        dustmaps_data_dir=str(Path(dustmaps_data_dir).expanduser()),
-    )
-    uncertainty = UncertaintyConfig(
-        covariance=True,
-        monte_carlo_trials=0,
-        random_seed=12345,
-        refit_host_in_mc=False,
-    )
-    return {
-        "global_config": global_config,
-        "galactic_extinction_config": extinction,
-        "uncertainty_config": uncertainty,
-        "run_host_decomp": False,
-        "complexes": None,
-    }
+    return _generic_scientific_configuration(dustmaps_data_dir)
 
 
 def _decode_key_values(items: Any) -> dict[str, Any]:
@@ -536,11 +501,4 @@ def count_warnings(warnings: pd.DataFrame) -> pd.DataFrame:
 
 
 def config_manifest(dustmaps_data_dir: str) -> dict[str, Any]:
-    config = scientific_configuration(dustmaps_data_dir)
-    return {
-        "global_config": asdict(config["global_config"]),
-        "galactic_extinction_config": asdict(config["galactic_extinction_config"]),
-        "uncertainty_config": asdict(config["uncertainty_config"]),
-        "run_host_decomp": False,
-        "complexes": None,
-    }
+    return _generic_config_manifest(dustmaps_data_dir)

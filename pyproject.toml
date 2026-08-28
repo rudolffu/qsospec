@@ -37,6 +37,7 @@ dependencies = [
     "dust-extinction>=1.5",
     "pandas",
     "pyarrow>=12",
+    "tqdm>=4.65",
 ]
 
 [project.optional-dependencies]

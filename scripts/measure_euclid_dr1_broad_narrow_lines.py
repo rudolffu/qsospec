@@ -34,6 +34,7 @@ from qsospec import (
     open_run,
     signed_to_uint64_string,
 )
+from qsospec.euclid_rgs import validate_sample_manifest
 
 EXPECTED_GOLD_ROWS = 8_530
 PRODUCT_NAME = "broad_narrow_r480_v1"
@@ -84,6 +85,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-directory", type=Path)
     parser.add_argument("--measurement-directory", type=Path)
     parser.add_argument(
+        "--sample-manifest", type=Path,
+        help="Portable sample manifest; enables generic per-shard production mode.",
+    )
+    parser.add_argument(
+        "--product-name",
+        help="Versioned product name required with --sample-manifest.",
+    )
+    parser.add_argument(
         "--complexes", nargs="+", choices=BROAD_NARROW_COMPLEX_ORDER,
         default=list(BROAD_NARROW_COMPLEX_ORDER),
     )
@@ -103,6 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-covariance", action="store_true")
     parser.add_argument("--finalize-only", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     parser.add_argument(
         "--allow-active-source-run", action="store_true",
         help="Development only: allow an active/partial source archive.",
@@ -673,14 +683,19 @@ def _finalize(
 
 def main() -> None:
     args = parse_args()
+    requested_product = args.product_name.strip() if args.product_name else PRODUCT_NAME
     root = args.output_root
     if root is None and (
-        args.input is None or args.run_directory is None or args.measurement_directory is None
+        args.input is None or args.run_directory is None
     ):
         root = _default_root()
+    if args.sample_manifest and args.measurement_directory is None and root is None:
+        raise ValueError(
+            "Generic sample-manifest mode requires --measurement-directory or --output-root"
+        )
     input_path = args.input or root / "input/spectra.parquet"
     run_directory = args.run_directory or root / "runs/production_no_balmer_no_host_v1"
-    base = args.measurement_directory or root / f"measurements/{PRODUCT_NAME}"
+    base = args.measurement_directory or root / f"measurements/{requested_product}"
     if args.redshift_override_table and args.measurement_directory is None:
         raise ValueError(
             "--redshift-override-table requires a separate explicit --measurement-directory"
@@ -695,7 +710,18 @@ def main() -> None:
         raise ValueError("Development smoke runs are capped at 100 objects")
 
     input_frame = _read_input(input_path)
-    if len(input_frame) != EXPECTED_GOLD_ROWS and not args.allow_noncanonical_gold_count:
+    sample_validation = None
+    product_name = PRODUCT_NAME
+    if args.sample_manifest:
+        if not args.product_name or not args.product_name.strip():
+            raise ValueError("--product-name is required with --sample-manifest")
+        if args.allow_noncanonical_gold_count:
+            raise ValueError("--allow-noncanonical-gold-count is not used in sample-manifest mode")
+        sample_validation = validate_sample_manifest(input_path, args.sample_manifest)
+        product_name = args.product_name.strip()
+    elif args.product_name:
+        raise ValueError("--product-name requires --sample-manifest")
+    elif len(input_frame) != EXPECTED_GOLD_ROWS and not args.allow_noncanonical_gold_count:
         raise ValueError(f"Expected {EXPECTED_GOLD_ROWS} gold rows; found {len(input_frame)}")
     store = open_run(str(run_directory))
     _validate_source_configuration(store.manifest)
@@ -704,6 +730,18 @@ def main() -> None:
         raise ValueError("Source run is not finalized; pass --allow-active-source-run only for bounded development")
     object_index = store.build_object_index()
     input_frame["object_key"] = input_frame["object_id"].astype(str).map(object_index)
+    if sample_validation is not None:
+        if "qsospec_object_key" not in input_frame:
+            raise KeyError("Generic sample input is missing qsospec_object_key")
+        expected_keys = input_frame["qsospec_object_key"].astype(str)
+        mismatched = input_frame["object_key"].notna() & input_frame["object_key"].astype(str).ne(expected_keys)
+        if mismatched.any():
+            examples = input_frame.loc[mismatched, "object_id"].head(5).tolist()
+            raise ValueError(f"Source run object keys differ from sample manifest input: {examples}")
+        source_sample = store.manifest.get("sample_manifest") or {}
+        for name in ("ordered_object_id_sha256", "ordered_object_key_sha256", "input_sha256"):
+            if source_sample.get(name) != sample_validation.get(name):
+                raise ValueError(f"Source run provenance does not match sample manifest field {name}")
 
     overrides = None
     if args.redshift_override_table:
@@ -782,6 +820,9 @@ def main() -> None:
         "redshift_override_sha256": (
             _sha256(args.redshift_override_table) if args.redshift_override_table else None
         ),
+        "sample_manifest": str(args.sample_manifest.resolve()) if args.sample_manifest else None,
+        "sample_manifest_sha256": _sha256(args.sample_manifest) if args.sample_manifest else None,
+        "sample_validation": sample_validation,
     }
     config_fingerprint = _json_hash({
         key: value for key, value in config_payload.items()
@@ -801,7 +842,7 @@ def main() -> None:
         "measurement_code_git_commit": measurement_commit,
     }
     manifest = {
-        "product": PRODUCT_NAME,
+        "product": product_name,
         "measurement_schema_version": BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION,
         "status": "active",
         "created_at": _now(),
@@ -817,6 +858,11 @@ def main() -> None:
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     if not args.finalize_only:
+        progress = None
+        if not args.no_progress:
+            from tqdm.auto import tqdm
+
+            progress = tqdm(total=len(selected), desc="broad+narrow", unit="object", dynamic_ncols=True)
         executor = (
             ProcessPoolExecutor(
                 max_workers=args.workers,
@@ -840,6 +886,8 @@ def main() -> None:
                 part_path = parts / f"part-{start:06d}-{stop - 1:06d}.parquet"
                 if not args.force and _part_matches(part_path, expected, part_fingerprint):
                     completed_chunks += 1
+                    if progress is not None:
+                        progress.update(len(rows))
                     continue
                 projected = rows.to_dict("records")
                 if args.workers == 1:
@@ -861,7 +909,11 @@ def main() -> None:
                     encoding="utf-8",
                 )
                 completed_chunks += 1
+                if progress is not None:
+                    progress.update(len(rows))
         finally:
+            if progress is not None:
+                progress.close()
             if executor is not None:
                 executor.shutdown(wait=True)
 

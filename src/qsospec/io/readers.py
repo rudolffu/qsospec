@@ -39,14 +39,23 @@ class SpectrumInput:
     redshift: Optional[float] = None
     reader: str = "auto"
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    explicit_object_key: Optional[str] = None
 
     @property
     def object_key(self) -> str:
+        if self.explicit_object_key is not None:
+            value = str(self.explicit_object_key).strip()
+            if not value:
+                raise ValueError("Explicit spectrum object keys must be non-empty")
+            return value
         locator = (
             f"{Path(self.source).expanduser().resolve()}#"
             f"{self.row_index if self.row_index is not None else ''}"
         )
         return locator
+
+
+OBJECT_KEY_ALIASES = ("qsospec_object_key", "object_key", "spectrum_key")
 
 
 def _lookup(columns: Iterable[str], aliases: Iterable[str]) -> Optional[str]:
@@ -175,6 +184,7 @@ def scan_parquet_spectra(
                 RA_ALIASES,
                 DEC_ALIASES,
                 ("targetid", "target_id"),
+                OBJECT_KEY_ALIASES,
             )
             if (column := _lookup(columns, aliases)) is not None
         }
@@ -191,6 +201,8 @@ def scan_parquet_spectra(
             batch_size=int(batch_size),
         )
         absolute_index = 0
+        explicit_keys_seen: set[str] = set()
+        object_key_col = _lookup(columns, OBJECT_KEY_ALIASES)
         for record_batch in scanner.to_batches():
             rows = record_batch.to_pylist()
             for offset, row in enumerate(rows):
@@ -208,7 +220,24 @@ def scan_parquet_spectra(
                     object_id=spectrum.object_id or spectrum.targetid,
                     redshift=spectrum.redshift,
                     reader="parquet",
+                    explicit_object_key=(
+                        str(_value(row, object_key_col)).strip()
+                        if object_key_col is not None
+                        and _value(row, object_key_col) is not None
+                        else None
+                    ),
                 )
+                if object_key_col is not None:
+                    if not descriptor.object_key:
+                        raise ValueError(
+                            f"Empty explicit object key in {source_path} row {row_index}"
+                        )
+                    if descriptor.object_key in explicit_keys_seen:
+                        raise ValueError(
+                            f"Duplicate explicit object key in {source_path}: "
+                            f"{descriptor.object_key!r}"
+                        )
+                    explicit_keys_seen.add(descriptor.object_key)
                 yield descriptor, spectrum
             absolute_index += len(rows)
 
@@ -568,6 +597,14 @@ def read_input_manifest(path: str) -> Tuple[SpectrumInput, ...]:
                     else None
                 ),
                 reader=reader,
+                explicit_object_key=next(
+                    (
+                        str(row[name]).strip()
+                        for name in OBJECT_KEY_ALIASES
+                        if name in table.columns and pd.notna(row[name])
+                    ),
+                    None,
+                ),
                 metadata={
                     str(key): value
                     for key, value in row.items()
@@ -578,9 +615,15 @@ def read_input_manifest(path: str) -> Tuple[SpectrumInput, ...]:
                         "redshift",
                         "z",
                         "reader",
+                        *OBJECT_KEY_ALIASES,
                     }
                     and pd.notna(value)
                 },
             )
         )
+    explicit = [item.object_key for item in descriptors if item.explicit_object_key is not None]
+    if any(not value for value in explicit):
+        raise ValueError("Explicit spectrum object keys must be non-empty")
+    if len(set(explicit)) != len(explicit):
+        raise ValueError("Input manifest contains duplicate explicit spectrum object keys")
     return tuple(descriptors)

@@ -840,6 +840,8 @@ def fit_batch(
     compact_models: bool = False,
     write_legacy_products: bool = False,
     manifest_update_interval: int = 128,
+    show_progress: bool = True,
+    progress_total: Optional[int] = None,
 ) -> BatchResult:
     """Fit a Parquet or FITS sample with resumable process parallelism."""
 
@@ -964,6 +966,26 @@ def fit_batch(
         "numerical_fit_seconds": [],
         "serialization_staging_seconds": [],
     }
+    progress = None
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        progress = tqdm(
+            total=int(progress_total) if progress_total is not None else None,
+            desc="qsospec fits",
+            unit="object",
+            dynamic_ncols=True,
+        )
+
+    def update_progress() -> None:
+        if progress is not None:
+            progress.update(1)
+            progress.set_postfix(
+                completed=completed_count,
+                failed=failed_count,
+                skipped=skipped_count,
+                refresh=False,
+            )
 
     def handle(output):
         nonlocal completed_count, failed_count, promoted_since_manifest
@@ -981,6 +1003,7 @@ def fit_batch(
             completed.discard(object_key)
             all_failed.add(object_key)
             failed_count += 1
+        update_progress()
         for name, value in output.get("timings", {}).items():
             worker_timings.setdefault(name, []).append(float(value))
         promoted_since_manifest += 1
@@ -997,6 +1020,7 @@ def fit_batch(
         for task_group in task_iterator:
             if task_group is None:
                 skipped_count += 1
+                update_progress()
                 continue
             submitted += len(task_group)
             for output in _run_task_group(task_group):
@@ -1021,6 +1045,7 @@ def fit_batch(
                         break
                     if task_group is None:
                         skipped_count += 1
+                        update_progress()
                         continue
                     submitted += len(task_group)
                     future = executor.submit(_run_task_group, task_group)
@@ -1048,6 +1073,8 @@ def fit_batch(
                                 )
                         for output in outputs:
                             handle(output)
+    if progress is not None:
+        progress.close()
     if promoted_since_manifest % manifest_update_interval:
         update_started = time.perf_counter()
         store.update_manifest_counts(

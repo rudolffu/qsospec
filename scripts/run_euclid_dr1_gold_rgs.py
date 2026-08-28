@@ -183,6 +183,8 @@ def main() -> None:
         complexes=None, resume=True, retry_failures=False, finalize=True,
         compact_models=False, write_legacy_products=False,
         manifest_update_interval=args.manifest_update_interval,
+        show_progress=True,
+        progress_total=64 if args.mode == "smoke" else 8_530,
     )
     result_payload = vars(result)
     result_payload["finished_at"] = utc_now()
