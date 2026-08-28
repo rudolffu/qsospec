@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--parquet-batch-size", type=int, default=128)
     parser.add_argument("--task-size", type=int, default=8)
+    parser.add_argument("--manifest-update-interval", type=int, default=128)
     return parser.parse_args()
 
 
@@ -167,6 +168,7 @@ def main() -> None:
         "started_at": utc_now(), "mode": args.mode, "input": str(input_path.resolve()),
         "run_directory": str(run_dir.resolve()), "workers": args.workers,
         "parquet_batch_size": args.parquet_batch_size, "task_size": args.task_size,
+        "manifest_update_interval": args.manifest_update_interval,
         "retry_failures": False, "write_legacy_products": False,
         "write_fit_time_qa": False, "scientific_configuration": config_manifest(str(args.dustmaps_data_dir)),
     }
@@ -180,6 +182,7 @@ def main() -> None:
         global_config=config["global_config"], uncertainty_config=config["uncertainty_config"],
         complexes=None, resume=True, retry_failures=False, finalize=True,
         compact_models=False, write_legacy_products=False,
+        manifest_update_interval=args.manifest_update_interval,
     )
     result_payload = vars(result)
     result_payload["finished_at"] = utc_now()

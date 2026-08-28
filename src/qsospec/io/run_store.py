@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timezone
-from contextlib import contextmanager
 import hashlib
-from importlib.metadata import PackageNotFoundError, version
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from collections import Counter
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 from uuid import uuid4
 
@@ -710,7 +711,18 @@ class RunStore:
     def _staging_path(self) -> Path:
         return self.path / ".staging"
 
-    def _write_manifest(self) -> None:
+    def _write_manifest(self, *, reconcile: bool = True) -> None:
+        """Atomically write the manifest.
+
+        ``reconcile=False`` is deliberately cheap: it never scans datasets or
+        globs table directories.  The authoritative schema-v5 shards remain
+        the source of truth and are scanned by :meth:`reconcile_manifest` at
+        resume and finalization boundaries.
+        """
+
+        reconciled = None
+        if reconcile and self._table_path("objects").exists():
+            reconciled = self._authoritative_state()
         with self._manifest_lock():
             manifest_path = self.path / "manifest.json"
             if manifest_path.exists():
@@ -718,21 +730,65 @@ class RunStore:
                 existing.update(self.manifest)
                 self.manifest = existing
             self.manifest["updated_at"] = _now()
-            if self._table_path("objects").exists():
-                self.manifest["completed_objects"] = len(self.completed_keys())
-                self.manifest["failed_objects"] = len(self.failed_keys())
-                self.manifest["shard_state"] = {
-                    name: len(
-                        tuple(self._table_path(name).glob("*.parquet"))
-                    )
-                    for name in TABLE_NAMES
-                }
+            if reconciled is not None:
+                self.manifest["completed_objects"] = len(
+                    reconciled["completed_keys"]
+                )
+                self.manifest["failed_objects"] = len(
+                    reconciled["failed_keys"]
+                )
+                self.manifest["shard_state"] = reconciled["shard_state"]
+                self.manifest["last_full_reconciliation_at"] = _now()
             temporary = self.path / f"manifest.{uuid4().hex}.tmp"
             temporary.write_text(
                 json.dumps(self.manifest, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
             os.replace(temporary, manifest_path)
+
+    def _authoritative_state(self) -> Dict[str, Any]:
+        """Scan authoritative shards once and return exact run state."""
+
+        completed = self.completed_keys()
+        failed = self.failed_keys()
+        shard_state = {
+            name: sum(1 for _ in self._table_path(name).glob("*.parquet"))
+            for name in TABLE_NAMES
+        }
+        return {
+            "completed_keys": completed,
+            "failed_keys": failed,
+            "shard_state": shard_state,
+        }
+
+    def reconcile_manifest(self) -> Dict[str, Any]:
+        """Rebuild manifest counters from authoritative schema-v5 shards."""
+
+        state = self._authoritative_state()
+        self.manifest["completed_objects"] = len(state["completed_keys"])
+        self.manifest["failed_objects"] = len(state["failed_keys"])
+        self.manifest["shard_state"] = state["shard_state"]
+        self.manifest["last_full_reconciliation_at"] = _now()
+        self.manifest["manifest_count_mode"] = "authoritative_reconciliation"
+        self._write_manifest(reconcile=False)
+        return state
+
+    def update_manifest_counts(
+        self,
+        *,
+        completed_count: int,
+        failed_count: int,
+        promoted_since_reconciliation: int = 0,
+    ) -> None:
+        """Write parent-known counters without touching table directories."""
+
+        self.manifest["completed_objects"] = int(completed_count)
+        self.manifest["failed_objects"] = int(failed_count)
+        self.manifest["manifest_count_mode"] = "parent_in_memory"
+        self.manifest["promoted_since_reconciliation"] = int(
+            promoted_since_reconciliation
+        )
+        self._write_manifest(reconcile=False)
 
     @contextmanager
     def _manifest_lock(self):
@@ -764,10 +820,80 @@ class RunStore:
         return set(table.column("object_key").to_pylist()) if table.num_rows else set()
 
     def clear_failure(self, object_key: str) -> None:
-        digest = hashlib.sha256(object_key.encode("utf-8")).hexdigest()[:20]
-        path = self._table_path("failures") / f"part-{digest}.parquet"
+        path = self.object_shard_path("failures", object_key)
         if path.exists():
             path.unlink()
+
+    def object_shard_path(self, table_name: str, object_key: str) -> Path:
+        """Return the permanent schema-v5 shard path for one object key."""
+
+        if table_name not in SCHEMAS:
+            raise ValueError(f"Unknown run table: {table_name!r}")
+        digest = hashlib.sha256(str(object_key).encode("utf-8")).hexdigest()[:20]
+        return self._table_path(table_name) / f"part-{digest}.parquet"
+
+    def read_object_table(
+        self,
+        table_name: str,
+        object_key: str,
+        *,
+        columns: Optional[Sequence[str]] = None,
+    ) -> pa.Table:
+        """Read and validate only one object's permanent shard."""
+
+        path = self.object_shard_path(table_name, object_key)
+        if not path.exists():
+            table = _empty_table(table_name)
+            return table.select(columns) if columns else table
+        table = pq.read_table(path, columns=columns)
+        if "object_key" in table.column_names:
+            found = set(map(str, table.column("object_key").to_pylist()))
+            if found != {str(object_key)}:
+                raise ValueError(
+                    f"Shard {path} does not match object_key {object_key!r}: "
+                    f"{sorted(found)[:5]}"
+                )
+        return table
+
+    def object_row_by_key(
+        self,
+        table_name: str,
+        object_key: str,
+    ) -> Mapping[str, Any]:
+        """Return the unique row in one object's direct shard."""
+
+        table = self.read_object_table(table_name, object_key)
+        rows = table.to_pylist()
+        if not rows:
+            raise KeyError(f"Object not found in {table_name}: {object_key!r}")
+        if len(rows) != 1:
+            raise ValueError(
+                f"Expected one {table_name} row for {object_key!r}; "
+                f"found {len(rows)}"
+            )
+        return rows[0]
+
+    def build_object_index(self) -> Dict[str, str]:
+        """Build a unique ``object_id -> object_key`` mapping in one scan."""
+
+        table = self.read_table("objects", columns=["object_id", "object_key"])
+        grouped: Dict[str, list[str]] = {}
+        for row in table.to_pylist():
+            grouped.setdefault(str(row["object_id"]), []).append(
+                str(row["object_key"])
+            )
+        ambiguous = {
+            object_id: keys
+            for object_id, keys in grouped.items()
+            if len(set(keys)) != 1
+        }
+        if ambiguous:
+            sample = list(ambiguous.items())[:5]
+            raise ValueError(
+                "Duplicate/ambiguous object IDs in run; use object_key: "
+                f"{sample}"
+            )
+        return {object_id: keys[0] for object_id, keys in grouped.items()}
 
     def stage_payload(
         self,
@@ -809,7 +935,12 @@ class RunStore:
         )
         return staging
 
-    def promote(self, staging: Union[str, Path]) -> Dict[str, str]:
+    def promote(
+        self,
+        staging: Union[str, Path],
+        *,
+        update_manifest: bool = True,
+    ) -> Dict[str, str]:
         """Validate and atomically promote a worker staging directory."""
 
         source = Path(staging)
@@ -850,14 +981,19 @@ class RunStore:
             os.replace(file_path, destination)
             promoted[name] = str(destination)
         shutil.rmtree(source, ignore_errors=True)
-        self._write_manifest()
+        if update_manifest:
+            self._write_manifest()
         return promoted
 
     def write_payload(
         self,
         payload: Mapping[str, Sequence[Mapping[str, Any]]],
+        *,
+        update_manifest: bool = True,
     ) -> Dict[str, str]:
-        return self.promote(self.stage_payload(payload))
+        return self.promote(
+            self.stage_payload(payload), update_manifest=update_manifest
+        )
 
     def read_table(
         self,
@@ -881,19 +1017,30 @@ class RunStore:
         *,
         table_name: str = "models",
     ) -> Mapping[str, Any]:
-        table = self.read_table(table_name)
-        matches = [
-            row
-            for row in table.to_pylist()
-            if row["object_key"] == identifier or row["object_id"] == identifier
-        ]
-        if not matches:
-            raise KeyError(f"Object not found in {table_name}: {identifier!r}")
-        if len(matches) > 1:
-            raise ValueError(
-                f"Object identifier is ambiguous; use object_key: {identifier!r}"
-            )
-        return matches[0]
+        direct = self.object_shard_path(table_name, identifier)
+        if direct.exists():
+            return self.object_row_by_key(table_name, identifier)
+        index = self.build_object_index()
+        try:
+            object_key = index[str(identifier)]
+        except KeyError:
+            # Failed objects do not have an ``objects`` row.  Preserve the
+            # legacy display-ID fallback for non-model tables while keeping
+            # the normal completed-object path direct.
+            matches = [
+                row for row in self.read_table(table_name).to_pylist()
+                if str(row.get("object_id")) == str(identifier)
+            ]
+            if not matches:
+                raise KeyError(
+                    f"Object not found in {table_name}: {identifier!r}"
+                ) from None
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Object identifier is ambiguous; use object_key: {identifier!r}"
+                )
+            return matches[0]
+        return self.object_row_by_key(table_name, object_key)
 
 
 def open_run(path: str) -> RunStore:
@@ -903,20 +1050,18 @@ def open_run(path: str) -> RunStore:
 
 
 def _measurement_maps(
-    store: RunStore,
-    object_key: str,
+    rows: Sequence[Mapping[str, Any]],
     section: str,
     recipe_id: Optional[str],
 ) -> tuple[Dict[str, float], Dict[str, float]]:
-    rows = [
+    selected = [
         row
-        for row in store.read_table("measurements").to_pylist()
-        if row["object_key"] == object_key
-        and row["section"] == section
+        for row in rows
+        if row["section"] == section
         and row["recipe_id"] == recipe_id
     ]
-    values = {row["quantity"]: row["value"] for row in rows}
-    errors = {row["quantity"]: row["error"] for row in rows}
+    values = {row["quantity"]: row["value"] for row in selected}
+    errors = {row["quantity"]: row["error"] for row in selected}
     return values, errors
 
 
@@ -936,12 +1081,18 @@ def _archived_host_masks(
     return None, None, "unavailable"
 
 
-def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
-    """Reconstruct a workflow result from the Parquet model archive."""
+def load_model_by_key(
+    run: Union[str, RunStore], object_key: str
+) -> WorkflowResult:
+    """Reconstruct one workflow using only its schema-v5 object shards."""
 
     store = open_run(run) if isinstance(run, str) else run
-    row = store.object_row(identifier, table_name="models")
-    object_row = store.object_row(row["object_key"], table_name="objects")
+    row = store.object_row_by_key("models", object_key)
+    object_row = store.object_row_by_key("objects", object_key)
+    measurement_rows = store.read_object_table(
+        "measurements", object_key
+    ).to_pylist()
+    warning_rows = store.read_object_table("warnings", object_key).to_pylist()
     workflow_metadata = _from_key_values(row["workflow_metadata"])
     spectrum_metadata_values = _from_key_values(row["spectrum_metadata"])
     extinction = dict(
@@ -1000,13 +1151,8 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         np.zeros_like(spectrum.flux, dtype=float),
     )
     continuum_values, continuum_errors = _measurement_maps(
-        store, row["object_key"], "continuum_parameter", None
+        measurement_rows, "continuum_parameter", None
     )
-    warning_rows = [
-        item
-        for item in store.read_table("warnings").to_pylist()
-        if item["object_key"] == row["object_key"]
-    ]
 
     def archived_warnings(section: str, recipe_id=None) -> list[FitWarning]:
         return [
@@ -1054,10 +1200,10 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     for item in row["complexes"]:
         recipe_id = item["recipe_id"]
         parameters, parameter_errors = _measurement_maps(
-            store, row["object_key"], "complex_parameter", recipe_id
+            measurement_rows, "complex_parameter", recipe_id
         )
         metrics, metric_errors = _measurement_maps(
-            store, row["object_key"], "complex_metric", recipe_id
+            measurement_rows, "complex_metric", recipe_id
         )
         complex_metadata = _from_key_values(item["metadata"])
         component_models = complex_components.get(recipe_id, {})
@@ -1128,6 +1274,21 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     return workflow
 
 
+def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
+    """Load by object key directly or resolve a unique object ID once."""
+
+    store = open_run(run) if isinstance(run, str) else run
+    if store.object_shard_path("models", identifier).exists():
+        object_key = str(identifier)
+    else:
+        index = store.build_object_index()
+        try:
+            object_key = index[str(identifier)]
+        except KeyError as error:
+            raise KeyError(f"Object not found: {identifier!r}") from error
+    return load_model_by_key(store, object_key)
+
+
 def finalize_run(
     run: Union[str, RunStore],
     *,
@@ -1141,7 +1302,7 @@ def finalize_run(
         "object_key"
     ).to_pylist()
     duplicates = sorted(
-        {key for key in object_keys if object_keys.count(key) > 1}
+        key for key, count in Counter(object_keys).items() if count > 1
     )
     if duplicates:
         raise ValueError(f"Duplicate object keys in run: {duplicates[:10]}")
@@ -1151,13 +1312,24 @@ def finalize_run(
         if table_path.exists():
             outputs[name] = str(table_path)
     staging = store._staging_path()
-    if staging.exists() and not any(staging.iterdir()):
+    staged_entries = sorted(staging.iterdir()) if staging.exists() else []
+    if staged_entries:
+        store.manifest["unpromoted_staging"] = [
+            str(path.relative_to(store.path)) for path in staged_entries
+        ]
+        store._write_manifest(reconcile=False)
+        raise RuntimeError(
+            "Run has unpromoted staging directories; reconcile or remove them "
+            f"explicitly before finalization: {store.manifest['unpromoted_staging'][:5]}"
+        )
+    if staging.exists():
         staging.rmdir()
     store.manifest["status"] = "complete"
     store.manifest["finalized_at"] = _now()
     store.manifest["datasets"] = outputs
     store.manifest.pop("compact_outputs", None)
-    store._write_manifest()
+    store.manifest.pop("unpromoted_staging", None)
+    store.reconcile_manifest()
     return outputs
 
 

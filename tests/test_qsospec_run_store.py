@@ -453,6 +453,7 @@ def test_failure_archive_keeps_input_locator(tmp_path):
     store = qsospec.open_run(str(run))
     assert store.read_table("failures").num_rows == 1
     assert store.read_table("inputs").to_pylist()[0]["source"] == missing.source
+    assert store.object_row("missing", table_name="failures")["object_id"] == "missing"
 
 
 def test_parquet_scanner_projects_case_insensitive_vector_columns(tmp_path):
@@ -546,3 +547,106 @@ def test_manifest_records_schema_and_shard_state(tmp_path):
     assert "hbeta_config" not in manifest["configuration"]
     assert manifest["shard_state"]["models"] == 1
     assert pads.dataset(run / "data" / "models", format="parquet").count_rows() == 1
+
+
+def test_deferred_promotion_and_authoritative_manifest_reconciliation(tmp_path, monkeypatch):
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 4500.0, 240),
+        _spectrum_data().flux,
+        err=_spectrum_data().error,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(spectrum, _continuum_config(), complexes=[])
+    result.metadata["object_id"] = "deferred"
+    store = RunStore.create(str(tmp_path / "deferred"), configuration={"test": True})
+    payload = workflow_payload(
+        result,
+        run_id=store.run_id,
+        object_key="deferred-key",
+        object_id="deferred",
+        input_record={"source": "memory", "row_index": 0, "reader": "memory", "metadata": {}},
+    )
+    original = store._write_manifest
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("deferred promotion must not write/reconcile the manifest")
+
+    monkeypatch.setattr(store, "_write_manifest", forbidden)
+    store.write_payload(payload, update_manifest=False)
+    monkeypatch.setattr(store, "_write_manifest", original)
+    assert store.manifest["completed_objects"] == 0
+    state = store.reconcile_manifest()
+    assert state["completed_keys"] == {"deferred-key"}
+    assert store.manifest["completed_objects"] == 1
+    assert store.manifest["manifest_count_mode"] == "authoritative_reconciliation"
+
+
+def test_direct_model_load_does_not_scan_whole_tables(tmp_path, monkeypatch):
+    run = tmp_path / "direct"
+    qsospec.fit_object_to_store(
+        _spectrum_data("direct-object"),
+        str(run),
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(),
+        complexes=[],
+        write_qa=False,
+    )
+    store = qsospec.open_run(str(run))
+    object_key = store.build_object_index()["direct-object"]
+
+    def forbidden_scan(*args, **kwargs):
+        raise AssertionError("load_model_by_key must not scan a whole table")
+
+    monkeypatch.setattr(store, "read_table", forbidden_scan)
+    loaded = qsospec.load_model_by_key(store, object_key)
+    assert loaded.metadata["object_id"] == "direct-object"
+    np.testing.assert_allclose(loaded.spectrum.flux, _spectrum_data("direct-object").flux)
+
+
+def test_object_index_rejects_ambiguous_display_ids(tmp_path):
+    source = tmp_path / "duplicate-index.parquet"
+    rows = []
+    for index in range(2):
+        item = _spectrum_data("same-display-id", 1.0 + index * 0.1)
+        rows.append({
+            "TARGETID": item.object_id,
+            "WAVELENGTH": item.wave_obs.tolist(),
+            "FLUX": item.flux.tolist(),
+            "ERROR": item.error.tolist(),
+            "Z": item.redshift,
+        })
+    pd.DataFrame(rows).to_parquet(source, index=False)
+    run = tmp_path / "duplicate-index-run"
+    qsospec.fit_batch(
+        str(source), str(run), n_workers=1,
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(), complexes=[],
+    )
+    with pytest.raises(ValueError, match="Duplicate/ambiguous object IDs"):
+        qsospec.open_run(str(run)).build_object_index()
+
+
+def test_batch_records_storage_timings_and_rejects_noop_compaction(tmp_path):
+    source = tmp_path / "timings.parquet"
+    _parquet_input(source, count=2)
+    run = tmp_path / "timings-run"
+    output = qsospec.fit_batch(
+        str(source), str(run), n_workers=1,
+        manifest_update_interval=2,
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(), complexes=[],
+    )
+    assert output.timings["parent_promotion_seconds"] >= 0.0
+    assert output.timings["lightweight_manifest_update_seconds"] >= 0.0
+    manifest = qsospec.open_run(str(run)).manifest
+    assert "performance_timings_last_invocation" in manifest
+
+    with pytest.raises(ValueError, match="compact_models is not implemented"):
+        qsospec.fit_batch(
+            str(source), str(tmp_path / "compact-noop"), n_workers=1,
+            compact_models=True,
+            galactic_extinction_config=_extinction_config(),
+            global_config=_continuum_config(), complexes=[],
+        )

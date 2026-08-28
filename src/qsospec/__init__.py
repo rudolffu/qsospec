@@ -63,6 +63,16 @@ from .hei_pgamma_classification import (
     fit_hei_pgamma_model_pair,
     hei_pgamma_classification_recipe,
 )
+from .broad_narrow_measurements import (
+    COMPLEX_ORDER as BROAD_NARROW_COMPLEX_ORDER,
+    MEASUREMENT_SCHEMA_VERSION as BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION,
+    BroadNarrowMeasurementConfig,
+    broad_narrow_recipe,
+    measure_broad_narrow_complex,
+    measure_broad_narrow_complexes,
+    measurement_record as broad_narrow_measurement_record,
+    signed_to_uint64_string,
+)
 from .narrow_line_calibration import (
     selection_mask as narrow_line_calibration_selection_mask,
     stratified_recovery as narrow_line_stratified_recovery,
@@ -111,6 +121,7 @@ from .io.run_store import (
     compute_derived_quantities,
     finalize_run,
     load_model,
+    load_model_by_key,
     open_run,
 )
 from .spectrum import Spectrum
@@ -139,7 +150,10 @@ __all__ = [
     "BalmerPseudoContinuumConfig",
     "BalmerAnchorRatios",
     "BalmerSeriesTemplate",
+    "BROAD_NARROW_COMPLEX_ORDER",
+    "BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION",
     "BatchResult",
+    "BroadNarrowMeasurementConfig",
     "ComponentRecipe",
     "ComplexRecipe",
     "FitResult",
@@ -217,6 +231,7 @@ __all__ = [
     "load_balmer_template",
     "load_iron_template",
     "load_model",
+    "load_model_by_key",
     "luminosity_distance",
     "intrinsic_fwhm_kms",
     "monochromatic_luminosity",
@@ -244,4 +259,9 @@ __all__ = [
     "write_global_line_products",
     "wang2019_extinction_mag",
     "diagnostic_bic_sweep",
+    "broad_narrow_recipe",
+    "broad_narrow_measurement_record",
+    "measure_broad_narrow_complex",
+    "measure_broad_narrow_complexes",
+    "signed_to_uint64_string",
 ]

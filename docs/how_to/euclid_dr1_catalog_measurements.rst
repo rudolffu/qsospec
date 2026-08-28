@@ -99,6 +99,11 @@ This initial workflow does not perform physical type-1/type-2
 reclassification, luminosities, Balmer-continuum fitting, or host
 decomposition.
 
+For the measurement-first catalogue that reuses this archive and fits one
+narrow plus one broad family in H-alpha, H-beta, Mg II, and He I/Pa-gamma, see
+:doc:`euclid_dr1_broad_narrow_measurements`.  That catalogue reports continuous
+flux fractions and profile widths and does not assign a type-1/type-2 class.
+
 Luminosities
 ------------
 

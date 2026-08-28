@@ -75,7 +75,9 @@ class ComplexRecipe:
     def __post_init__(self) -> None:
         if self.coverage_mode not in ("full", "component_adaptive"):
             raise ValueError("coverage_mode must be 'full' or 'component_adaptive'.")
-        if self.continuum_mode not in ("fixed_global", "constant", "linear", "absent"):
+        if self.continuum_mode not in (
+            "fixed_global", "constant", "linear", "residual_linear", "absent"
+        ):
             raise ValueError("Unsupported continuum_mode.")
         if self.backend not in (
             "generic",

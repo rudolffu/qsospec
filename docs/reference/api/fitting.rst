@@ -16,3 +16,8 @@ Fitting and workflow API
 .. autofunction:: fit_with_optional_host_decomp
 .. autofunction:: fit_object_to_store
 .. autofunction:: fit_batch
+.. autoclass:: BroadNarrowMeasurementConfig
+   :members:
+.. autofunction:: broad_narrow_recipe
+.. autofunction:: measure_broad_narrow_complex
+.. autofunction:: measure_broad_narrow_complexes

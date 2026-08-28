@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
+import time
 import traceback
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Sequence, Union
 
 import numpy as np
@@ -66,6 +67,7 @@ class BatchResult:
     n_skipped: int
     n_workers: int
     datasets: Dict[str, str]
+    timings: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +87,9 @@ def _auto_workers(number_of_objects: Optional[int]) -> int:
     return min(available, 8)
 
 
+_WORKER_STORES: Dict[str, RunStore] = {}
+
+
 def _worker_initializer() -> None:
     for variable in (
         "OMP_NUM_THREADS",
@@ -94,6 +99,15 @@ def _worker_initializer() -> None:
         "NUMEXPR_NUM_THREADS",
     ):
         os.environ[variable] = "1"
+    _WORKER_STORES.clear()
+
+
+def _worker_store(run_directory: str) -> RunStore:
+    store = _WORKER_STORES.get(run_directory)
+    if store is None:
+        store = RunStore.open(run_directory)
+        _WORKER_STORES[run_directory] = store
+    return store
 
 
 def _process_pool_available() -> bool:
@@ -332,10 +346,10 @@ def _failure_payload(
 
 
 def _run_task(task: _Task) -> Dict[str, Any]:
-    _worker_initializer()
-    store = RunStore.open(task.run_directory)
+    store = _worker_store(task.run_directory)
     descriptor = task.descriptor
     try:
+        load_started = time.perf_counter()
         spectrum_data = task.spectrum_data or read_spectrum(
             descriptor.source,
             row_index=descriptor.row_index,
@@ -343,6 +357,7 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             object_id=descriptor.object_id,
             reader=descriptor.reader,
         )
+        load_seconds = time.perf_counter() - load_started
         options = dict(task.fit_options)
         uncertainty = options["uncertainty_config"]
         options["uncertainty_config"] = UncertaintyConfig(
@@ -355,11 +370,14 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             ),
             refit_host_in_mc=uncertainty.refit_host_in_mc,
         )
+        fit_started = time.perf_counter()
         result, object_id = _fit_spectrum_data(
             spectrum_data,
             descriptor=descriptor,
             **options,
         )
+        fit_seconds = time.perf_counter() - fit_started
+        serialization_started = time.perf_counter()
         payload = workflow_payload(
             result,
             run_id=store.run_id,
@@ -373,6 +391,7 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             },
         )
         staging = store.stage_payload(payload)
+        serialization_seconds = time.perf_counter() - serialization_started
         legacy_files = {}
         if task.legacy_output:
             legacy_files = write_global_line_products(
@@ -385,6 +404,11 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             "object_id": object_id,
             "staging": str(staging),
             "legacy_files": legacy_files,
+            "timings": {
+                "input_load_seconds": load_seconds,
+                "numerical_fit_seconds": fit_seconds,
+                "serialization_staging_seconds": serialization_seconds,
+            },
         }
     except Exception as exception:
         staging = store.stage_payload(
@@ -815,11 +839,19 @@ def fit_batch(
     finalize: bool = True,
     compact_models: bool = False,
     write_legacy_products: bool = False,
+    manifest_update_interval: int = 128,
 ) -> BatchResult:
     """Fit a Parquet or FITS sample with resumable process parallelism."""
 
     if num_shards < 1 or not 0 <= shard_index < num_shards:
         raise ValueError("Require num_shards >= 1 and 0 <= shard_index < num_shards.")
+    if manifest_update_interval < 1:
+        raise ValueError("manifest_update_interval must be positive.")
+    if compact_models:
+        raise ValueError(
+            "compact_models is not implemented for schema-v5 per-object shards; "
+            "the misleading no-op has been disabled."
+        )
     hbeta_config = hbeta_config or HbetaComplexConfig()
     mgii_config = mgii_config or MgIIComplexConfig()
     halpha_config = halpha_config or HalphaComplexConfig()
@@ -852,8 +884,12 @@ def fit_batch(
         run_id=run_id,
         resume=resume,
     )
-    completed = store.completed_keys() if resume else set()
-    failed = store.failed_keys() if resume and not retry_failures else set()
+    startup_started = time.perf_counter()
+    authoritative = store.reconcile_manifest()
+    startup_reconcile_seconds = time.perf_counter() - startup_started
+    completed = set(authoritative["completed_keys"]) if resume else set()
+    all_failed = set(authoritative["failed_keys"]) if resume else set()
+    failed = set(all_failed) if resume and not retry_failures else set()
     options = _fit_options(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
@@ -920,15 +956,42 @@ def fit_batch(
     if worker_count > 1 and not _process_pool_available():
         worker_count = 1
     submitted = completed_count = failed_count = skipped_count = 0
+    promoted_since_manifest = 0
+    promotion_seconds = 0.0
+    lightweight_manifest_seconds = 0.0
+    worker_timings: Dict[str, list[float]] = {
+        "input_load_seconds": [],
+        "numerical_fit_seconds": [],
+        "serialization_staging_seconds": [],
+    }
 
     def handle(output):
-        nonlocal completed_count, failed_count
-        store.promote(output["staging"])
+        nonlocal completed_count, failed_count, promoted_since_manifest
+        nonlocal promotion_seconds, lightweight_manifest_seconds
+        promotion_started = time.perf_counter()
+        store.promote(output["staging"], update_manifest=False)
+        promotion_seconds += time.perf_counter() - promotion_started
+        object_key = output["object_key"]
         if output["success"]:
-            store.clear_failure(output["object_key"])
+            store.clear_failure(object_key)
+            completed.add(object_key)
+            all_failed.discard(object_key)
             completed_count += 1
         else:
+            completed.discard(object_key)
+            all_failed.add(object_key)
             failed_count += 1
+        for name, value in output.get("timings", {}).items():
+            worker_timings.setdefault(name, []).append(float(value))
+        promoted_since_manifest += 1
+        if promoted_since_manifest % manifest_update_interval == 0:
+            update_started = time.perf_counter()
+            store.update_manifest_counts(
+                completed_count=len(completed),
+                failed_count=len(all_failed),
+                promoted_since_reconciliation=promoted_since_manifest,
+            )
+            lightweight_manifest_seconds += time.perf_counter() - update_started
 
     if worker_count == 1:
         for task_group in task_iterator:
@@ -973,18 +1036,53 @@ def fit_batch(
                         except Exception as exception:
                             outputs = []
                             for task in task_group:
-                                store.write_payload(
-                                    _failure_payload(
-                                        store, task.descriptor, exception
-                                    )
+                                staged = store.stage_payload(
+                                    _failure_payload(store, task.descriptor, exception)
                                 )
-                                failed_count += 1
+                                handle(
+                                    {
+                                        "success": False,
+                                        "object_key": task.descriptor.object_key,
+                                        "staging": str(staged),
+                                    }
+                                )
                         for output in outputs:
                             handle(output)
-    datasets = (
-        finalize_run(store)
-        if finalize and num_shards == 1 else {}
-    )
+    if promoted_since_manifest % manifest_update_interval:
+        update_started = time.perf_counter()
+        store.update_manifest_counts(
+            completed_count=len(completed),
+            failed_count=len(all_failed),
+            promoted_since_reconciliation=promoted_since_manifest,
+        )
+        lightweight_manifest_seconds += time.perf_counter() - update_started
+    final_reconcile_started = time.perf_counter()
+    datasets = finalize_run(store) if finalize and num_shards == 1 else {}
+    final_reconcile_seconds = time.perf_counter() - final_reconcile_started
+
+    def summarize(values: Sequence[float]) -> Dict[str, float]:
+        array = np.asarray(values, dtype=float)
+        if not array.size:
+            return {"count": 0, "sum": 0.0, "median": np.nan, "p95": np.nan}
+        return {
+            "count": int(array.size),
+            "sum": float(np.sum(array)),
+            "median": float(np.median(array)),
+            "p95": float(np.percentile(array, 95.0)),
+        }
+
+    timings = {
+        "startup_manifest_reconciliation_seconds": startup_reconcile_seconds,
+        "parent_promotion_seconds": promotion_seconds,
+        "lightweight_manifest_update_seconds": lightweight_manifest_seconds,
+        "finalization_reconciliation_seconds": final_reconcile_seconds,
+        "worker": {
+            name: summarize(values) for name, values in worker_timings.items()
+        },
+        "manifest_update_interval": int(manifest_update_interval),
+    }
+    store.manifest["performance_timings_last_invocation"] = timings
+    store._write_manifest(reconcile=False)
     return BatchResult(
         run_directory=str(store.path),
         run_id=store.run_id,
@@ -994,4 +1092,5 @@ def fit_batch(
         n_skipped=skipped_count,
         n_workers=worker_count,
         datasets=datasets,
+        timings=timings,
     )

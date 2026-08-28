@@ -21,6 +21,12 @@ Execution
 - Each worker limits BLAS/OpenMP to one thread.
 - Missing coordinates become per-object failures; globally missing dust maps
   abort before the run begins.
+- Workers retain a process-local run-store handle.  Parent promotion is
+  decoupled from full manifest reconciliation; lightweight counters default to
+  128-object intervals.
+- The returned ``BatchResult.timings`` separates input loading, numerical fit,
+  staging/serialization, promotion, lightweight manifest updates, and full
+  reconciliation/finalization.
 
 Resume and partitioning
 -----------------------
@@ -48,3 +54,6 @@ Finalize after all shards complete:
 
 Batch fitting does not render all QA by default. Select objects afterward with
 :func:`qsospec.render_qa`. See :doc:`../reference/run_bundles`.
+
+``compact_models=True`` is rejected in schema v5 because it was a misleading
+no-op.  Per-object permanent shards remain the crash-safe authoritative layout.

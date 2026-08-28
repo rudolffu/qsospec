@@ -13,6 +13,7 @@ I/O, extinction, and archive API
 .. autofunction:: preflight_galactic_extinction
 .. autofunction:: open_run
 .. autofunction:: load_model
+.. autofunction:: load_model_by_key
 .. autofunction:: finalize_run
 .. autofunction:: build_science_catalog
 .. autofunction:: compute_derived_quantities

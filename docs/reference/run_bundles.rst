@@ -82,7 +82,11 @@ After every job completes:
 
 Partitioning is deterministic from the internal source-and-row object key.
 Workers write checksummed private staging shards; only the coordinator promotes
-validated shards.
+validated shards.  Promotion updates in-memory authoritative key sets and writes
+only lightweight manifest counters at ``manifest_update_interval`` (128 objects
+by default).  Exact shard counts are reconciled at startup and finalization,
+not after every promoted object.  A stale counter in an interrupted manifest is
+therefore recoverable from the permanent shards.
 
 Resume and inspection
 ---------------------
@@ -95,6 +99,15 @@ rejected; use a new run directory or run ID.
 
    run = qsospec.open_run("runs/sample")
    model = qsospec.load_model(run, "scientific-object-id")
+
+For scalable downstream work, build the ID index once and load by immutable
+``object_key``.  This opens a constant number of hashed object shards rather
+than scanning full datasets:
+
+.. code-block:: python
+
+   object_key = run.build_object_index()["scientific-object-id"]
+   model = qsospec.load_model_by_key(run, object_key)
 
 Object IDs need not be unique. Use the internal ``object_key`` when an ID is
 ambiguous.

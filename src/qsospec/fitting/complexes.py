@@ -489,9 +489,9 @@ class GenericComplexContext:
                 if width_name not in self.names:
                     band = bands[min(index, len(bands) - 1)]
                     self._add(width_name, 0.5 * (band[0] + band[1]), band[0], band[1])
-        if recipe.continuum_mode in ("constant", "linear"):
+        if recipe.continuum_mode in ("constant", "linear", "residual_linear"):
             self._add("continuum.constant", 0.0, -np.inf, np.inf)
-        if recipe.continuum_mode == "linear":
+        if recipe.continuum_mode in ("linear", "residual_linear"):
             self._add("continuum.slope", 0.0, -np.inf, np.inf)
         self.initial = np.asarray(self.initial, dtype=float)
         self.lower = np.asarray(self.lower, dtype=float)
@@ -697,10 +697,10 @@ def fit_generic_complex(
     if np.count_nonzero(mask) < recipe.min_valid_pixels:
         return _failed_result(spectrum, continuum, recipe, coverage)
     line_flux = spectrum.flux - continuum.model
-    if recipe.continuum_mode != "fixed_global":
-        fit_flux = spectrum.flux if recipe.continuum_mode != "absent" else line_flux
-    else:
+    if recipe.continuum_mode in ("fixed_global", "residual_linear", "absent"):
         fit_flux = line_flux
+    else:
+        fit_flux = spectrum.flux
     positive = np.clip(line_flux[mask], 0.0, np.inf)
     scale = float(np.trapezoid(positive, spectrum.wave_rest[mask]))
     context = GenericComplexContext(recipe, coverage.active_component_ids, scale)
