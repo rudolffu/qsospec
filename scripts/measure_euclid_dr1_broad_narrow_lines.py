@@ -15,6 +15,7 @@ import subprocess
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from qsospec import (
     BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION,
     BroadNarrowMeasurementConfig,
     LineSpreadFunctionConfig,
+    Spectrum,
     load_model_by_key,
     measure_broad_narrow_complex,
     open_run,
@@ -90,6 +92,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-size", type=int, default=128)
     parser.add_argument("--smoke-count", type=int, default=64)
     parser.add_argument("--selection", type=Path)
+    parser.add_argument(
+        "--redshift-override-table", type=Path,
+        help=(
+            "Explicit reviewed override table. Only accepted_vi/accepted_manual "
+            "rows are refitted, and --measurement-directory is required."
+        ),
+    )
     parser.add_argument("--max-chunks", type=int)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-covariance", action="store_true")
@@ -128,6 +137,30 @@ def _read_selection(path: Path) -> set[str]:
     if keys.duplicated().any():
         raise ValueError("Selection contains duplicate object IDs")
     return set(keys)
+
+
+def _read_redshift_overrides(path: Path) -> pd.DataFrame:
+    frame = pd.read_parquet(path) if path.suffix.lower() == ".parquet" else pd.read_csv(path)
+    required = {
+        "object_id", "z_original", "z_revised", "redshift_revision_reason",
+        "redshift_revision_status", "redshift_revision_source", "alias_rule_version",
+    }
+    missing = required - set(frame)
+    if missing:
+        raise KeyError(f"Redshift override table is missing {sorted(missing)}")
+    frame = frame.copy()
+    frame["object_id"] = frame["object_id"].map(lambda value: int(str(value))).astype("int64")
+    if frame["object_id"].duplicated().any():
+        raise ValueError("Redshift override table contains duplicate object IDs")
+    accepted = frame["redshift_revision_status"].isin(["accepted_vi", "accepted_manual"])
+    frame = frame.loc[accepted].copy()
+    revised = pd.to_numeric(frame["z_revised"], errors="coerce")
+    original = pd.to_numeric(frame["z_original"], errors="coerce")
+    if not (np.isfinite(revised) & (revised > -1.0) & np.isfinite(original)).all():
+        raise ValueError("Accepted redshift overrides require finite original/revised redshifts")
+    if not len(frame):
+        raise ValueError("Redshift override table contains no accepted rows")
+    return frame
 
 
 def _validate_source_configuration(manifest: dict[str, Any]) -> None:
@@ -238,8 +271,14 @@ def _fit_one(
         "object_id_uint64": signed_to_uint64_string(object_id),
         "object_key": None if not object_key else str(object_key),
         "membership_order": int(payload["membership_order"]),
-        "adopted_redshift": payload.get("redshift", payload.get("z_final")),
-        "redshift_source": payload.get("qsospec_redshift_source"),
+        "adopted_redshift": payload.get(
+            "z_revised", payload.get("redshift", payload.get("z_final"))
+        ),
+        "redshift_source": (
+            "reviewed_redshift_override"
+            if payload.get("z_revised") is not None and np.isfinite(float(payload["z_revised"]))
+            else payload.get("qsospec_redshift_source")
+        ),
     }
     if not object_key:
         return [
@@ -276,6 +315,31 @@ def _fit_one(
             for name in complexes
         ]
     load_seconds = time.perf_counter() - load_start
+    revised = payload.get("z_revised")
+    if revised is not None and np.isfinite(float(revised)):
+        revised = float(revised)
+        reframed = Spectrum.from_arrays(
+            loaded.spectrum.wave_obs,
+            loaded.spectrum.flux,
+            err=loaded.spectrum.err,
+            z=revised,
+            wave_frame="observed",
+            mask=loaded.spectrum.mask,
+            metadata=loaded.spectrum.metadata,
+        )
+        loaded.spectrum = reframed
+        loaded.continuum = replace(
+            loaded.continuum,
+            wave_rest=reframed.wave_rest.copy(),
+            metadata={
+                **loaded.continuum.metadata,
+                "redshift_override_applied": True,
+                "z_original": float(payload["z_original"]),
+                "z_revised": revised,
+                "redshift_revision_status": str(payload["redshift_revision_status"]),
+                "redshift_revision_source": str(payload["redshift_revision_source"]),
+            },
+        )
     records = []
     for complex_name in complexes:
         fit_start = time.perf_counter()
@@ -306,6 +370,13 @@ def _fit_one(
             "archived_object_load_seconds": load_seconds,
             "local_fit_total_seconds": fit_seconds,
         })
+        for name in (
+            "z_original", "z_revised", "redshift_revision_reason",
+            "redshift_revision_status", "redshift_revision_source",
+            "alias_rule_version", "review_timestamp",
+        ):
+            if name in payload:
+                record[name] = payload[name]
     return records
 
 
@@ -610,6 +681,10 @@ def main() -> None:
     input_path = args.input or root / "input/spectra.parquet"
     run_directory = args.run_directory or root / "runs/production_no_balmer_no_host_v1"
     base = args.measurement_directory or root / f"measurements/{PRODUCT_NAME}"
+    if args.redshift_override_table and args.measurement_directory is None:
+        raise ValueError(
+            "--redshift-override-table requires a separate explicit --measurement-directory"
+        )
     directory = base / "smoke" if args.mode == "smoke" and args.measurement_directory is None else base
     directory.mkdir(parents=True, exist_ok=True)
     parts = directory / "parts"
@@ -630,6 +705,15 @@ def main() -> None:
     object_index = store.build_object_index()
     input_frame["object_key"] = input_frame["object_id"].astype(str).map(object_index)
 
+    overrides = None
+    if args.redshift_override_table:
+        overrides = _read_redshift_overrides(args.redshift_override_table)
+        audit_columns = [column for column in overrides if column != "object_id"]
+        input_frame = input_frame.merge(
+            overrides[["object_id", *audit_columns]], on="object_id", how="left",
+            validate="one_to_one", sort=False,
+        )
+
     complexes = tuple(args.complexes)
     if len(set(complexes)) != len(complexes):
         raise ValueError("--complexes contains duplicates")
@@ -637,7 +721,19 @@ def main() -> None:
         args.resolving_power, 480.0, rtol=0.0, atol=1.0e-12
     ):
         raise ValueError("The broad_narrow_r480_v1 production product is locked to R=480")
-    if args.selection:
+    if overrides is not None:
+        accepted_ids = set(overrides["object_id"].astype(str))
+        if args.selection:
+            requested_ids = _read_selection(args.selection)
+            unaccepted = requested_ids - accepted_ids
+            if unaccepted:
+                raise ValueError(
+                    "Selection contains objects without accepted redshift overrides: "
+                    f"{sorted(unaccepted)[:5]}"
+                )
+            accepted_ids = requested_ids
+        selected = input_frame[input_frame["object_id"].astype(str).isin(accepted_ids)].copy()
+    elif args.selection:
         selected_ids = _read_selection(args.selection)
         missing = selected_ids - set(input_frame["object_id"].astype(str))
         if missing:
@@ -680,6 +776,12 @@ def main() -> None:
         "measurement_code_git_commit": measurement_commit,
         "measurement_script_sha256": _sha256(Path(__file__).resolve()),
         "measurement_module_sha256": _sha256(measurement_module),
+        "redshift_override_table": (
+            str(args.redshift_override_table.resolve()) if args.redshift_override_table else None
+        ),
+        "redshift_override_sha256": (
+            _sha256(args.redshift_override_table) if args.redshift_override_table else None
+        ),
     }
     config_fingerprint = _json_hash({
         key: value for key, value in config_payload.items()

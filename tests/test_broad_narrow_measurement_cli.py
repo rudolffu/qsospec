@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
+
+import qsospec
+from qsospec.global_result import GlobalContinuumResult
 
 
 def _load_script():
@@ -111,3 +116,67 @@ def test_smoke_selection_hard_cap_is_100():
         assert "capped at 100" in str(error)
     else:
         raise AssertionError("101-object development smoke selection was accepted")
+
+
+def test_override_reader_keeps_only_explicitly_accepted_rows(tmp_path):
+    module = _load_script()
+    path = tmp_path / "overrides.parquet"
+    pd.DataFrame(
+        {
+            "object_id": [1, 2, 3],
+            "z_original": [1.0, 1.0, 1.0],
+            "z_revised": [0.5, 0.6, 0.7],
+            "redshift_revision_reason": ["alias"] * 3,
+            "redshift_revision_status": ["candidate_only", "accepted_vi", "accepted_manual"],
+            "redshift_revision_source": ["rule", "vi", "review"],
+            "alias_rule_version": ["v1"] * 3,
+        }
+    ).to_parquet(path, index=False)
+    accepted = module._read_redshift_overrides(path)
+    assert accepted["object_id"].tolist() == [2, 3]
+
+
+def test_selective_fit_reframes_archived_pixels_and_records_provenance(monkeypatch):
+    module = _load_script()
+    wave = np.linspace(12000.0, 18000.0, 100)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        np.ones(100),
+        err=np.ones(100),
+        z=1.0,
+        wave_frame="observed",
+        flux_unit="relative",
+    )
+    continuum = GlobalContinuumResult(
+        True, 1, "archived", {}, {}, None, 0.0, 1, 0.0,
+        spectrum.wave_rest.copy(), np.ones(100), {}, np.ones(100, dtype=bool),
+        np.ones(100, dtype=bool),
+    )
+    loaded = SimpleNamespace(spectrum=spectrum, continuum=continuum)
+    monkeypatch.setattr(module, "load_model_by_key", lambda store, key: loaded)
+    seen = []
+
+    def fake_measure(reframed, reframed_continuum, complex_name, config):
+        seen.append((reframed.z, reframed_continuum.wave_rest.copy()))
+        return {"complex_name": complex_name, "fit_status": "complete"}, None
+
+    monkeypatch.setattr(module, "measure_broad_narrow_complex", fake_measure)
+    payload = {
+        "object_id": -1,
+        "object_key": "source#0",
+        "membership_order": 0,
+        "z_original": 1.0,
+        "z_revised": 0.5,
+        "redshift_revision_reason": "reviewed alias",
+        "redshift_revision_status": "accepted_manual",
+        "redshift_revision_source": "review",
+        "alias_rule_version": "v1",
+    }
+    records = module._fit_one(
+        object(), payload, ("halpha",), qsospec.BroadNarrowMeasurementConfig(), {}
+    )
+    assert seen[0][0] == 0.5
+    assert np.allclose(seen[0][1], wave / 1.5)
+    assert records[0]["adopted_redshift"] == 0.5
+    assert records[0]["redshift_source"] == "reviewed_redshift_override"
+    assert records[0]["redshift_revision_status"] == "accepted_manual"

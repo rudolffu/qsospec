@@ -125,6 +125,14 @@ from .io.run_store import (
     open_run,
 )
 from .spectrum import Spectrum
+from .signed_lines import (
+    LocalLinePatternResult,
+    SignedLineAmplitudeResult,
+    SignedLineComponent,
+    fit_local_line_pattern,
+    measure_signed_line_amplitude,
+    measure_signed_line_grid,
+)
 from .luminosity import (
     MonochromaticLuminosity,
     bolometric_luminosity,
@@ -190,6 +198,9 @@ __all__ = [
     "PowerLawConfig",
     "RunStore",
     "Spectrum",
+    "SignedLineAmplitudeResult",
+    "SignedLineComponent",
+    "LocalLinePatternResult",
     "SpectrumInput",
     "SpectrumMetadata",
     "UncertaintyConfig",
@@ -218,6 +229,7 @@ __all__ = [
     "fit_hbeta_complex",
     "fit_mgii_complex",
     "fit_line_complex",
+    "fit_local_line_pattern",
     "fit_local",
     "fit_object_to_store",
     "fit_with_optional_host_decomp",
@@ -235,6 +247,8 @@ __all__ = [
     "luminosity_distance",
     "intrinsic_fwhm_kms",
     "monochromatic_luminosity",
+    "measure_signed_line_amplitude",
+    "measure_signed_line_grid",
     "open_run",
     "observed_fwhm_kms",
     "observed_halpha_width_bounds",
