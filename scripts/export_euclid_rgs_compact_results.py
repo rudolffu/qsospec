@@ -122,6 +122,19 @@ class _TableSink:
         if self.writer is None:
             self.writer = pq.ParquetWriter(self.path, table.schema, compression="zstd", write_statistics=True)
         elif table.schema != self.writer.schema:
+            expected = self.writer.schema.names
+            actual = table.schema.names
+            missing = sorted(set(expected) - set(actual))
+            extra = sorted(set(actual) - set(expected))
+            if missing or extra:
+                raise ValueError(
+                    f"Incompatible schema for shard {shard_id}: missing columns={missing}, extra columns={extra}"
+                )
+            # PyArrow requires matching field order before casting. Individual
+            # broad/narrow shards may contain the same projected fields in a
+            # different order because their source parts activated different
+            # line complexes first.
+            table = table.select(expected)
             table = table.cast(self.writer.schema)
         self.writer.write_table(table)
         self.rows += table.num_rows

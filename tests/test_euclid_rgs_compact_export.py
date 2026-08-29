@@ -120,3 +120,29 @@ def test_partial_broad_narrow_merge_is_explicit_and_ordered(tmp_path):
     assert coverage[1]["available"] is False
     merged = pq.read_table(output / "broad_narrow_line_measurements.parquet")
     assert merged.column("source_shard_id").to_pylist() == [0, 0, 0, 0]
+
+
+def test_table_sink_reorders_equivalent_shard_schemas(tmp_path):
+    module = _load_script()
+    path = tmp_path / "merged.parquet"
+    sink = module._TableSink(path)
+    sink.write(pa.table({"object_id": [1], "value": [1.5]}), shard_id=0)
+    sink.write(pa.table({"value": [2.5], "object_id": [2]}), shard_id=1)
+    sink.close()
+
+    merged = pq.read_table(path)
+    assert merged.column_names == ["object_id", "value", "source_shard_id"]
+    assert merged.to_pydict() == {
+        "object_id": [1, 2],
+        "value": [1.5, 2.5],
+        "source_shard_id": [0, 1],
+    }
+
+
+def test_table_sink_rejects_true_schema_column_mismatch(tmp_path):
+    module = _load_script()
+    sink = module._TableSink(tmp_path / "merged.parquet")
+    sink.write(pa.table({"object_id": [1], "value": [1.5]}), shard_id=0)
+    with pytest.raises(ValueError, match="missing columns=.*value.*extra columns=.*other"):
+        sink.write(pa.table({"object_id": [2], "other": [2.5]}), shard_id=1)
+    sink.close()
