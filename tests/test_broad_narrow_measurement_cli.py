@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pytest
 
 import qsospec
 from qsospec.global_result import GlobalContinuumResult
@@ -116,6 +118,57 @@ def test_smoke_selection_hard_cap_is_100():
         assert "capped at 100" in str(error)
     else:
         raise AssertionError("101-object development smoke selection was accepted")
+
+
+def test_finalized_source_failures_are_retained_as_unavailable_rows():
+    module = _load_script()
+    selected = pd.DataFrame({
+        "object_id": [-1, 2],
+        "object_key": [None, "source#1"],
+        "qsospec_object_key": ["source#0", "source#1"],
+        "membership_order": [0, 1],
+    })
+    failure_table = pa.Table.from_pylist([{
+        "object_id": "-1",
+        "object_key": "source#0",
+        "exception_type": "ValueError",
+        "message": "Too few valid continuum-window pixels.",
+    }])
+    store = SimpleNamespace(read_table=lambda name, columns: failure_table.select(columns))
+
+    reconciled = module._reconcile_finalized_source_failures(
+        selected, store, require_expected_keys=True
+    )
+    assert reconciled.loc[0, "source_failure_object_key"] == "source#0"
+    assert reconciled.loc[0, "source_failure_exception_type"] == "ValueError"
+    records = module._fit_one(
+        object(), reconciled.iloc[0].to_dict(), ("halpha",),
+        qsospec.BroadNarrowMeasurementConfig(), {},
+    )
+    assert records[0]["fit_status"] == "not_available"
+    assert "Too few valid continuum-window pixels" in records[0]["fit_message"]
+
+
+def test_finalized_source_reconciliation_rejects_unexplained_missing_object():
+    module = _load_script()
+    selected = pd.DataFrame({
+        "object_id": [-1],
+        "object_key": [None],
+        "qsospec_object_key": ["source#0"],
+        "membership_order": [0],
+    })
+    empty = pa.table({
+        "object_id": pa.array([], type=pa.string()),
+        "object_key": pa.array([], type=pa.string()),
+        "exception_type": pa.array([], type=pa.string()),
+        "message": pa.array([], type=pa.string()),
+    })
+    store = SimpleNamespace(read_table=lambda name, columns: empty.select(columns))
+
+    with pytest.raises(ValueError, match="neither archived nor recorded as failures"):
+        module._reconcile_finalized_source_failures(
+            selected, store, require_expected_keys=True
+        )
 
 
 def test_override_reader_keeps_only_explicitly_accepted_rows(tmp_path):

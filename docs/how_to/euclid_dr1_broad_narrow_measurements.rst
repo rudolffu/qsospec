@@ -103,6 +103,12 @@ The default directory is
 ``not_available`` are explicit statuses.  Failed and uncovered fluxes are
 missing, never zero.  No product contains a physical-class count.
 
+A finalized source run may contain terminal upstream fit failures as well as
+successful archives.  Such objects remain in the measurement ledger with
+``not_available`` status and their source exception recorded.  An object that
+is neither archived nor present in the source failure table remains a hard
+provenance error.
+
 Exploration and selected QA
 ---------------------------
 

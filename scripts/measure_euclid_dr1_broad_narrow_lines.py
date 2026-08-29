@@ -259,6 +259,82 @@ def _status_record(object_id: int, complex_name: str, status: str, message: str)
     }
 
 
+def _reconcile_finalized_source_failures(
+    selected: pd.DataFrame,
+    store: Any,
+    *,
+    require_expected_keys: bool,
+) -> pd.DataFrame:
+    """Annotate selected rows that have a recorded, finalized source-fit failure.
+
+    A finalized run may contain both successful object archives and terminal
+    failure rows.  ``build_object_index`` intentionally indexes only successful
+    archives, so missing keys are acceptable only when the same object is
+    represented uniquely in the run's failure table.
+    """
+
+    missing = selected["object_key"].isna()
+    if not missing.any():
+        return selected
+
+    failure_rows = store.read_table(
+        "failures",
+        columns=["object_id", "object_key", "exception_type", "message"],
+    ).to_pylist()
+    failures: dict[str, dict[str, Any]] = {}
+    for row in failure_rows:
+        object_id = str(row["object_id"])
+        if object_id in failures:
+            raise ValueError(
+                "Finalized source run has duplicate/ambiguous failure rows for "
+                f"object_id {object_id}"
+            )
+        failures[object_id] = row
+
+    missing_rows = selected.loc[missing]
+    missing_ids = missing_rows["object_id"].astype(str)
+    unexplained = [object_id for object_id in missing_ids if object_id not in failures]
+    if unexplained:
+        raise ValueError(
+            "Finalized source run has selected objects that are neither archived "
+            "nor recorded as failures; examples: "
+            f"{unexplained[:5]}"
+        )
+
+    if require_expected_keys:
+        if "qsospec_object_key" not in selected:
+            raise KeyError("Generic sample input is missing qsospec_object_key")
+        mismatched = []
+        for row in missing_rows.itertuples(index=False):
+            failure_key = str(failures[str(row.object_id)]["object_key"])
+            if failure_key != str(row.qsospec_object_key):
+                mismatched.append(str(row.object_id))
+        if mismatched:
+            raise ValueError(
+                "Source failure object keys differ from sample manifest input: "
+                f"{mismatched[:5]}"
+            )
+
+    result = selected.copy()
+    failure_by_id = {
+        object_id: {
+            "source_failure_object_key": str(row["object_key"]),
+            "source_failure_exception_type": str(row["exception_type"]),
+            "source_failure_message": str(row["message"]),
+        }
+        for object_id, row in failures.items()
+    }
+    for column in (
+        "source_failure_object_key",
+        "source_failure_exception_type",
+        "source_failure_message",
+    ):
+        result[column] = result["object_id"].astype(str).map(
+            lambda object_id, name=column: failure_by_id.get(object_id, {}).get(name)
+        )
+    return result
+
+
 def _fit_one(
     store: Any,
     payload: dict[str, Any],
@@ -289,11 +365,21 @@ def _fit_one(
             if payload.get("z_revised") is not None and np.isfinite(float(payload["z_revised"]))
             else payload.get("qsospec_redshift_source")
         ),
+        "source_failure_object_key": payload.get("source_failure_object_key"),
+        "source_failure_exception_type": payload.get("source_failure_exception_type"),
+        "source_failure_message": payload.get("source_failure_message"),
     }
     if not object_key:
+        source_error = payload.get("source_failure_message")
+        source_exception = payload.get("source_failure_exception_type")
+        message = (
+            f"Source fit failed ({source_exception}): {source_error}"
+            if source_error
+            else "Object is not yet archived."
+        )
         return [
             {
-                **_status_record(object_id, name, "not_available", "Object is not yet archived."),
+                **_status_record(object_id, name, "not_available", message),
                 **context,
                 "broad_fwhm_observed_lower_bound_kms": config.observed_bounds(
                     broad=True, hei=name == "hei_pgamma"
@@ -784,11 +870,11 @@ def main() -> None:
     else:
         selected = input_frame.copy()
     selected = selected.sort_values("membership_order", kind="stable").reset_index(drop=True)
-    if args.mode == "production" and source_status == "complete" and selected["object_key"].isna().any():
-        missing_ids = selected.loc[selected["object_key"].isna(), "object_id"].astype(str).head(5).tolist()
-        raise ValueError(
-            "Finalized source run is missing selected gold objects; examples: "
-            f"{missing_ids}"
+    if args.mode == "production" and source_status == "complete":
+        selected = _reconcile_finalized_source_failures(
+            selected,
+            store,
+            require_expected_keys=sample_validation is not None,
         )
 
     config = BroadNarrowMeasurementConfig(
