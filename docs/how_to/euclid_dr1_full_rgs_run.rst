@@ -85,6 +85,32 @@ provenance, and membership order. It does not use the synthetic-test-only
 resumed when their fingerprints match, and chunk progress includes reused
 parts.
 
+Compact survey export
+---------------------
+
+Keep the full model archives beside the compute host. After the source shards
+are finalized, export projected science tables without reading or copying model
+arrays:
+
+.. code-block:: bash
+
+   python scripts/export_euclid_rgs_compact_results.py \
+     --sample-root "$SAMPLE_ROOT" \
+     --output-directory "$SAMPLE_ROOT/analysis/compact_v1" \
+     --allow-partial-measurements \
+     --overwrite
+
+The exporter requires exact source-shard membership reconciliation. It writes a
+canonical source-fit status ledger, projected object and long-form measurement
+tables, compact warnings and failures, warning counts, available broad/narrow
+products, shard coverage, checksums, and provenance. A finalized source failure
+is retained explicitly; an object absent from both the successful archive and
+failure table is a hard error.
+
+``--allow-partial-measurements`` applies only to the optional broad/narrow
+second pass. Source-run completeness remains strict unless the separately named
+development override is supplied.
+
 Gold compatibility
 ------------------
 

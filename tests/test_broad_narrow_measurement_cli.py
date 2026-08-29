@@ -124,7 +124,7 @@ def test_finalized_source_failures_are_retained_as_unavailable_rows():
     module = _load_script()
     selected = pd.DataFrame({
         "object_id": [-1, 2],
-        "object_key": [None, "source#1"],
+        "object_key": [np.nan, "source#1"],
         "qsospec_object_key": ["source#0", "source#1"],
         "membership_order": [0, 1],
     })

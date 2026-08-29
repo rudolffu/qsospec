@@ -343,7 +343,8 @@ def _fit_one(
     provenance: dict[str, Any],
 ) -> list[dict[str, Any]]:
     object_id = int(payload["object_id"])
-    object_key = payload.get("object_key")
+    raw_object_key = payload.get("object_key")
+    object_key = None if pd.isna(raw_object_key) else str(raw_object_key)
     context = {
         "resolving_power": config.lsf.resolving_power,
         "instrumental_fwhm_kms": config.instrumental_fwhm_kms,
@@ -355,7 +356,7 @@ def _fit_one(
         **provenance,
         "object_id": object_id,
         "object_id_uint64": signed_to_uint64_string(object_id),
-        "object_key": None if not object_key else str(object_key),
+        "object_key": object_key,
         "membership_order": int(payload["membership_order"]),
         "adopted_redshift": payload.get(
             "z_revised", payload.get("redshift", payload.get("z_final"))
