@@ -301,6 +301,20 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
             "object_id": "host-mask-object",
             "host_decomp_enabled": True,
             "host_mask_provenance": "exact",
+            "host_template_profile": "xsl_preconvolved",
+            "host_template_product_kind": "preconvolved",
+            "host_fit_template_sha256": "fit-hash",
+            "host_source_template_sha256": "source-hash",
+            "host_continuum_reliable": True,
+            "host_fraction_reliable": True,
+            "stellar_kinematics_resolution_status": (
+                "resolution_matched_candidate"
+            ),
+            "host_fit_quality": {
+                "template_coarser_than_data_fraction": 0.2,
+                "additional_template_sigma_nonzero_fraction": 0.8,
+                "preconvolution_validation_status": "preconvolved_exact",
+            },
         }
     )
     run_path = tmp_path / "host-mask-run"
@@ -335,6 +349,13 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     for name, values in result.host_component_models.items():
         np.testing.assert_allclose(loaded.host_component_models[name], values)
     assert loaded.metadata["host_mask_provenance"] == "exact"
+    assert loaded.metadata["host_template_profile"] == "xsl_preconvolved"
+    assert loaded.metadata["host_fit_template_sha256"] == "fit-hash"
+    assert loaded.metadata["host_source_template_sha256"] == "source-hash"
+    assert loaded.metadata["host_continuum_reliable"] is True
+    assert loaded.metadata["host_fit_quality"][
+        "preconvolution_validation_status"
+    ] == "preconvolved_exact"
     assert loaded.host_reconstruction_state == result.host_reconstruction_state
     assert qsospec.load_host_reconstruction_state(
         store, "host-mask-object"

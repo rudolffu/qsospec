@@ -42,7 +42,19 @@ from .ppxf_host import (
     reconstruct_host_sed_from_state,
     run_ppxf_host_fit,
 )
-from .templates import PPXFTemplateLibrary, load_ppxf_npz_templates
+from .preconvolved_templates import (
+    PreconvolvedTemplateProduct,
+    build_preconvolved_xsl_product,
+    preconvolution_cache_key,
+    preconvolution_contract,
+    validate_preconvolved_xsl_product,
+)
+from .templates import (
+    PPXFTemplateLibrary,
+    ResolvedHostTemplateProfile,
+    load_ppxf_npz_templates,
+    resolve_host_template_profile,
+)
 
 __all__ = [
     "HostDecompConfig",
@@ -63,6 +75,8 @@ __all__ = [
     "HostSEDReconstructionError",
     "PPXFHostFitResult",
     "PPXFTemplateLibrary",
+    "PreconvolvedTemplateProduct",
+    "ResolvedHostTemplateProfile",
     "SpectrumData",
     "default_config",
     "build_host_agn_template_bundle",
@@ -73,6 +87,11 @@ __all__ = [
     "euclid_nir_line_mask",
     "fit_euclid_host_aperture_scale",
     "load_ppxf_npz_templates",
+    "resolve_host_template_profile",
+    "build_preconvolved_xsl_product",
+    "preconvolution_cache_key",
+    "preconvolution_contract",
+    "validate_preconvolved_xsl_product",
     "predict_host_sed",
     "predict_host_sed_on_grid",
     "reconstruct_host_sed_from_state",

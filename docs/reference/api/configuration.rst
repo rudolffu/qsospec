@@ -27,3 +27,4 @@ Configuration API
    HostBroadLinePrefitConfig
    HostAgnPseudoContinuumConfig
    HostCoverageConfig
+   ResolvedHostTemplateProfile

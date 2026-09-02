@@ -29,11 +29,12 @@ from .templates import (
     TEMPLATE_FLATTENING_CONVENTION,
     PPXFTemplateLibrary,
 )
-from ...resolution import additional_template_sigma
+from .preconvolved_templates import validate_preconvolved_xsl_product
+from ...resolution import match_template_resolution_toward_data
 
 
 _C_KMS = 299792.458
-HOST_RECONSTRUCTION_STATE_VERSION = "1"
+HOST_RECONSTRUCTION_STATE_VERSION = "2"
 HOST_SED_METHOD = "stellar_template_weighted_sed"
 HOST_SED_METHOD_VERSION = "1"
 
@@ -95,6 +96,12 @@ class PPXFHostFitResult:
     quality_metrics: Dict[str, Any] = field(default_factory=dict)
     host_fit_reliable: bool = True
     host_fit_reliability_reasons: List[str] = field(default_factory=list)
+    host_continuum_reliable: bool = True
+    host_fraction_reliable: bool = True
+    host_absorption_subtraction_status: str = "available"
+    stellar_kinematics_resolution_status: str = "unavailable"
+    stellar_population_resolution_status: str = "unavailable"
+    host_sed_prediction_reliable: bool = True
     warnings: List[str] = field(default_factory=list)
     strategy_requested: str = "masked_simple"
     strategy_used: str = "masked_simple"
@@ -143,6 +150,17 @@ class HostReconstructionState:
     template_family: str
     template_file_name: str
     template_file_sha256: str
+    template_profile: str
+    template_product_kind: str
+    fit_template_file_name: str
+    fit_template_file_sha256: str
+    fit_template_wave_sha256: str
+    fit_template_matrix_sha256: str
+    source_template_file_name: str
+    source_template_file_sha256: str
+    source_template_wave_sha256: str
+    source_template_matrix_sha256: str
+    template_axis_metadata: Dict[str, Any]
     template_grid_id: str
     template_wave_sha256: str
     template_matrix_sha256: str
@@ -231,6 +249,10 @@ def _log_resample(
     wave = np.asarray(wave, dtype=float)
     log_wave = np.linspace(np.log(wave[0]), np.log(wave[-1]), len(wave))
     wave_log = np.exp(log_wave)
+    wave_log[0] = wave[0]
+    wave_log[-1] = wave[-1]
+    log_wave[0] = np.log(wave[0])
+    log_wave[-1] = np.log(wave[-1])
     flux_log = np.interp(wave_log, wave, flux)
     noise_log = np.interp(wave_log, wave, noise)
     mask_float = np.interp(wave_log, wave, emission_mask.astype(float))
@@ -394,6 +416,7 @@ def prepare_spectrum_for_host_decomp(
         velscale=velscale,
         metadata={
             **dict(spectrum.metadata),
+            "object_id": spectrum.object_id or spectrum.targetid,
             "observed_artifact_windows": [
                 [float(lower), float(upper)]
                 for lower, upper in observed_artifact_windows
@@ -403,6 +426,8 @@ def prepare_spectrum_for_host_decomp(
             ),
             "systematic_error_floor": float(systematic_floor),
             "max_native_gap_pixels": float(max_native_gap_pixels),
+            "host_fit_range": [float(fit_range[0]), float(fit_range[1])],
+            "native_data_preserved": True,
         },
         mask_provenance={
             "input_mask_rejected": input_mask_rejected,
@@ -443,41 +468,160 @@ def _build_agn_basis(wave: np.ndarray, slopes: Sequence[float]) -> np.ndarray:
 
 def _resample_stellar_templates(prep: PreprocessedSpectrum, templates: PPXFTemplateLibrary):
     wave = prep.wave_log
-    in_range = (wave >= templates.wavelength_coverage[0]) & (wave <= templates.wavelength_coverage[1])
+    in_range = (
+        (wave >= templates.wavelength_coverage[0])
+        & (wave <= templates.wavelength_coverage[1])
+    )
     if np.sum(in_range) < len(wave):
-        warnings.warn("Template wavelength coverage does not span the full pPXF fit range.", RuntimeWarning)
-    matrix = np.empty((len(wave), templates.n_templates), dtype=float)
-    for j in range(templates.n_templates):
-        matrix[:, j] = np.interp(wave, templates.wave, templates.flux[:, j], left=0.0, right=0.0)
+        warnings.warn(
+            "Template wavelength coverage does not span the full pPXF fit range.",
+            RuntimeWarning,
+    )
+    if templates.product_kind == "preconvolved":
+        validation_start = perf_counter()
+        validation = validate_preconvolved_xsl_product(
+            templates,
+            prep,
+            fit_range=tuple(prep.metadata.get("host_fit_range", ())),
+            object_key=(
+                prep.metadata.get("host_preconvolution_object_key")
+                or prep.metadata.get("object_id")
+            ),
+        )
+        validation["preconvolved_validation_seconds"] = float(
+            perf_counter() - validation_start
+        )
+        matrix = np.asarray(templates.fit_flux, dtype=float).copy()
+        if matrix.shape != (len(wave), templates.n_templates):
+            raise ValueError(
+                "Preconvolved XSL matrix shape does not match the exact pPXF grid."
+            )
+        prep.metadata.update(validation)
+    else:
+        matrix = np.empty((len(wave), templates.n_templates), dtype=float)
+        for j in range(templates.n_templates):
+            matrix[:, j] = np.interp(
+                wave,
+                templates.fit_wave,
+                templates.fit_flux[:, j],
+                left=0.0,
+                right=0.0,
+            )
     resolution = prep.metadata.get("spectral_resolution")
     if resolution is None:
         prep.metadata["host_fit_resolution_status"] = "missing"
+        prep.metadata["template_resolution_status"] = "data_resolution_missing"
     else:
         prep.metadata.update(resolution.metadata())
         prep.metadata["host_fit_resolution_status"] = resolution.status
         if resolution.status == "valid" and resolution.mode == "banded_matrix":
             prep.metadata["host_fit_resolution_status"] = "unsupported_banded_resolution_matrix"
+            prep.metadata["template_resolution_status"] = "data_resolution_missing"
         elif resolution.status == "valid":
+            lsf_interpolation_start = perf_counter()
             observed = wave * (1.0 + prep.redshift)
             data_sigma = resolution.sigma_lambda(observed) / (1.0 + prep.redshift)
-            template_fwhm = templates.metadata.get("fwhm")
+            template_fwhm = templates.source_resolution_metadata.get("fwhm")
             if template_fwhm is None:
-                prep.metadata["host_fit_resolution_status"] = "invalid_template_resolution_missing"
+                prep.metadata["template_resolution_status"] = (
+                    "template_resolution_unknown"
+                )
+                prep.warnings.append("template_resolution_metadata_missing")
             else:
-                template_sigma = np.interp(wave, templates.wave, np.asarray(template_fwhm, float)) / 2.354820045
-                broadening, invalid_resolution = additional_template_sigma(data_sigma, template_sigma)
-                in_range &= ~invalid_resolution
+                fwhm = np.asarray(template_fwhm, dtype=float)
+                if fwhm.size == 1:
+                    template_sigma = np.full_like(wave, float(fwhm.item()))
+                else:
+                    template_sigma = np.interp(
+                        wave,
+                        np.asarray(templates.source_wave, dtype=float),
+                        fwhm,
+                        left=np.nan,
+                        right=np.nan,
+                    )
+                template_sigma /= 2.354820045
+                prep.metadata["lsf_interpolation_seconds"] = float(
+                    perf_counter() - lsf_interpolation_start
+                )
+                match = match_template_resolution_toward_data(
+                    data_sigma,
+                    template_sigma,
+                    wave,
+                )
+                in_range &= match.comparable
+                prep.metadata.update(match.metadata)
+                prep.metadata["template_resolution_comparable_mask"] = (
+                    match.comparable.tolist()
+                )
+                prep.metadata["template_coarser_than_data_mask"] = (
+                    match.template_coarser_than_data.tolist()
+                )
+                coarser = match.template_coarser_than_data & in_range
+                if np.any(coarser):
+                    prep.metadata["template_coarser_wave_min"] = float(
+                        np.min(wave[coarser])
+                    )
+                    prep.metadata["template_coarser_wave_max"] = float(
+                        np.max(wave[coarser])
+                    )
+                    if templates.metadata.get("template_coarser_action", "warn") == "warn":
+                        prep.warnings.append("template_coarser_than_data")
+                else:
+                    prep.metadata["template_coarser_wave_min"] = np.nan
+                    prep.metadata["template_coarser_wave_max"] = np.nan
                 pixel_width = np.gradient(wave)
-                sigma_pixels = np.divide(broadening, pixel_width, out=np.zeros_like(broadening), where=np.isfinite(broadening) & (pixel_width > 0))
-                try:
-                    from ppxf.ppxf_util import gaussian_filter1d as variable_gaussian_filter1d
-                    for j in range(matrix.shape[1]):
-                        matrix[:, j] = variable_gaussian_filter1d(matrix[:, j], sigma_pixels)
-                except Exception:
-                    prep.metadata["host_fit_resolution_status"] = "invalid_variable_broadening_unavailable"
+                broadening = np.nan_to_num(
+                    match.additional_sigma_lambda, nan=0.0
+                )
+                sigma_pixels = np.divide(
+                    broadening,
+                    pixel_width,
+                    out=np.zeros_like(broadening),
+                    where=pixel_width > 0,
+                )
+                if templates.product_kind == "preconvolved":
+                    prep.metadata["template_resolution_status"] = (
+                        "preconvolved_exact"
+                    )
+                    prep.metadata["preconvolution_residual_match_status"] = (
+                        "not_required"
+                    )
+                else:
+                    try:
+                        from ppxf.ppxf_util import (
+                            gaussian_filter1d as variable_gaussian_filter1d,
+                        )
+
+                        runtime_convolution_start = perf_counter()
+                        for j in range(matrix.shape[1]):
+                            matrix[:, j] = variable_gaussian_filter1d(
+                                matrix[:, j], sigma_pixels
+                            )
+                        prep.metadata["runtime_convolution_seconds"] = float(
+                            perf_counter() - runtime_convolution_start
+                        )
+                    except Exception:
+                        prep.metadata["host_fit_resolution_status"] = (
+                            "invalid_variable_broadening_unavailable"
+                        )
                 prep.metadata["effective_data_sigma_lambda"] = data_sigma.tolist()
                 prep.metadata["effective_template_sigma_lambda"] = template_sigma.tolist()
                 prep.metadata["additional_template_sigma_lambda"] = broadening.tolist()
+    prep.metadata.update(
+        {
+            "stellar_template_profile": templates.profile_id,
+            "stellar_template_family": templates.family,
+            "stellar_template_product_kind": templates.product_kind,
+            "stellar_template_fit_file": templates.fit_source_path,
+            "stellar_template_fit_sha256": templates.fit_source_sha256,
+            "stellar_template_source_file": templates.source_library_path,
+            "stellar_template_source_sha256": templates.source_library_sha256,
+            "native_data_preserved": True,
+            "template_resolution_matching_mode": templates.metadata.get(
+                "resolution_matching_mode"
+            ),
+        }
+    )
     scales = np.nanmedian(np.abs(matrix), axis=0)
     scales[~np.isfinite(scales) | (scales <= 0)] = 1.0
     return matrix / scales, scales, in_range
@@ -611,6 +755,11 @@ def run_ppxf_host_fit(
     stellar_template_start = perf_counter()
     stellar_matrix, stellar_scales, in_template_range = _resample_stellar_templates(preprocessed, templates)
     stellar_template_seconds = perf_counter() - stellar_template_start
+    warnings_out = list(
+        dict.fromkeys(
+            [*warnings_out, *preprocessed.warnings, *templates.warnings]
+        )
+    )
     agn_bundle: Optional[HostAgnTemplateBundle] = None
     agn_template_seconds = 0.0
     if strategy == "agn_pseudocontinuum_masked":
@@ -870,6 +1019,65 @@ def run_ppxf_host_fit(
         "agn_template_build_seconds": float(agn_template_seconds),
         "ppxf_fit_seconds": float(ppxf_fit_seconds),
     }
+    resolution_diagnostic_keys = (
+        "stellar_template_profile",
+        "stellar_template_family",
+        "stellar_template_product_kind",
+        "stellar_template_fit_file",
+        "stellar_template_fit_sha256",
+        "stellar_template_source_file",
+        "stellar_template_source_sha256",
+        "native_data_preserved",
+        "template_resolution_matching_mode",
+        "template_resolution_status",
+        "template_sharper_than_data_fraction",
+        "template_equal_to_data_fraction",
+        "template_coarser_than_data_fraction",
+        "template_coarser_wave_min",
+        "template_coarser_wave_max",
+        "median_template_minus_data_sigma_angstrom",
+        "p95_template_minus_data_sigma_angstrom",
+        "maximum_template_minus_data_sigma_angstrom",
+        "median_template_minus_data_sigma_kms",
+        "p95_template_minus_data_sigma_kms",
+        "maximum_template_minus_data_sigma_kms",
+        "additional_template_sigma_nonzero_fraction",
+        "additional_template_sigma_median_angstrom",
+        "additional_template_sigma_p95_angstrom",
+        "preconvolution_cache_key",
+        "preconvolution_validation_status",
+        "preconvolution_residual_match_status",
+        "preconvolved_validation_seconds",
+        "source_template_load_seconds",
+        "preconvolved_cache_read_seconds",
+        "lsf_interpolation_seconds",
+        "runtime_convolution_seconds",
+    )
+    quality_metrics.update(
+        {
+            key: preprocessed.metadata.get(key)
+            for key in resolution_diagnostic_keys
+            if key in preprocessed.metadata
+        }
+    )
+    for timing_name in (
+        "source_template_load_seconds",
+        "preconvolved_cache_read_seconds",
+    ):
+        if templates.metadata.get(timing_name) is not None:
+            quality_metrics[timing_name] = templates.metadata[timing_name]
+    coarser_mask = np.asarray(
+        preprocessed.metadata.get(
+            "template_coarser_than_data_mask",
+            np.zeros_like(final_good),
+        ),
+        dtype=bool,
+    )
+    quality_metrics["template_coarser_than_data_fraction_goodpixels"] = (
+        float(np.count_nonzero(coarser_mask & final_good) / clean_count)
+        if clean_count and coarser_mask.shape == final_good.shape
+        else np.nan
+    )
 
     weights = np.asarray(getattr(result, "weights", np.zeros(fit_templates.shape[1])), dtype=float)
     n_stellar = stellar_matrix.shape[1]
@@ -895,7 +1103,17 @@ def run_ppxf_host_fit(
         "stellar": host_log_norm,
     }
     component_weights: Dict[str, float] = {}
-    component_metadata: Dict[str, Dict[str, Any]] = {}
+    component_metadata: Dict[str, Dict[str, Any]] = {
+        "stellar": {
+            "template_profile": templates.profile_id,
+            "template_family": templates.family,
+            "fit_template_resolution_product": templates.product_kind,
+            "source_template_resolution_product": "native",
+            "fit_template_sha256": templates.fit_source_sha256,
+            "source_template_sha256": templates.source_library_sha256,
+            "native_data_preserved": True,
+        }
+    }
     if agn_bundle is None:
         component_models_log_norm["powerlaw"] = agn_log_norm
         component_weights.update(
@@ -1041,6 +1259,39 @@ def run_ppxf_host_fit(
     }
     residual = preprocessed.flux - total_model
 
+    template_resolution_status = str(
+        quality_metrics.get("template_resolution_status", "template_resolution_unknown")
+    )
+    has_coarser = bool(np.any(coarser_mask & in_template_range))
+    if has_coarser:
+        host_absorption_status = "template_resolution_limited"
+        stellar_kinematics_status = "template_resolution_mismatch_not_corrected"
+        stellar_population_status = "template_resolution_limited"
+    elif template_resolution_status in {
+        "matched_by_runtime_convolution",
+        "approximately_equal",
+        "preconvolved_exact",
+        "preconvolved_exact_plus_residual_match",
+    }:
+        host_absorption_status = "available"
+        stellar_kinematics_status = "resolution_matched_candidate"
+        stellar_population_status = "resolution_matched_candidate"
+    else:
+        host_absorption_status = "resolution_unknown"
+        stellar_kinematics_status = "resolution_unavailable"
+        stellar_population_status = "resolution_unavailable"
+    overall_reliable = not reliability_reasons
+    quality_metrics.update(
+        {
+            "host_continuum_reliable": overall_reliable,
+            "host_fraction_reliable": overall_reliable,
+            "host_absorption_subtraction_status": host_absorption_status,
+            "stellar_kinematics_resolution_status": stellar_kinematics_status,
+            "stellar_population_resolution_status": stellar_population_status,
+            "host_sed_prediction_reliable": overall_reliable,
+        }
+    )
+
     sol = np.ravel(np.asarray(getattr(result, "sol", [np.nan, np.nan]), dtype=float))
     return PPXFHostFitResult(
         preprocessed=preprocessed,
@@ -1068,8 +1319,14 @@ def run_ppxf_host_fit(
         final_goodpixels_mask_log=final_good,
         noise_rescale_factors=noise_rescale_factors,
         quality_metrics=quality_metrics,
-        host_fit_reliable=not reliability_reasons,
+        host_fit_reliable=overall_reliable,
         host_fit_reliability_reasons=reliability_reasons,
+        host_continuum_reliable=overall_reliable,
+        host_fraction_reliable=overall_reliable,
+        host_absorption_subtraction_status=host_absorption_status,
+        stellar_kinematics_resolution_status=stellar_kinematics_status,
+        stellar_population_resolution_status=stellar_population_status,
+        host_sed_prediction_reliable=overall_reliable,
         warnings=warnings_out,
         strategy_requested=strategy_requested or strategy,
         strategy_used=strategy,
@@ -1098,6 +1355,8 @@ def build_host_reconstruction_state(
         "source_sha256",
         "template_wave_sha256",
         "template_matrix_sha256",
+        "fit_template_wave_sha256",
+        "fit_template_matrix_sha256",
     )
     missing = [name for name in required if not metadata.get(name)]
     if missing:
@@ -1117,6 +1376,23 @@ def build_host_reconstruction_state(
             metadata.get("source_file_name") or Path(templates.source_path).name
         ),
         template_file_sha256=str(metadata["source_sha256"]),
+        template_profile=str(templates.profile_id),
+        template_product_kind=str(templates.product_kind),
+        fit_template_file_name=Path(
+            str(templates.fit_source_path)
+        ).name,
+        fit_template_file_sha256=str(templates.fit_source_sha256),
+        fit_template_wave_sha256=str(metadata["fit_template_wave_sha256"]),
+        fit_template_matrix_sha256=str(
+            metadata["fit_template_matrix_sha256"]
+        ),
+        source_template_file_name=Path(
+            str(templates.source_library_path)
+        ).name,
+        source_template_file_sha256=str(templates.source_library_sha256),
+        source_template_wave_sha256=str(metadata["template_wave_sha256"]),
+        source_template_matrix_sha256=str(metadata["template_matrix_sha256"]),
+        template_axis_metadata=dict(templates.template_axis_metadata),
         template_grid_id=f"sha256:{metadata['template_wave_sha256']}",
         template_wave_sha256=str(metadata["template_wave_sha256"]),
         template_matrix_sha256=str(metadata["template_matrix_sha256"]),
@@ -1132,8 +1408,8 @@ def build_host_reconstruction_state(
         selected_template_indices=None,
         host_sed_method=HOST_SED_METHOD,
         host_sed_method_version=HOST_SED_METHOD_VERSION,
-        host_sed_wavelength_min=float(templates.wavelength_coverage[0]),
-        host_sed_wavelength_max=float(templates.wavelength_coverage[1]),
+        host_sed_wavelength_min=float(templates.source_wavelength_coverage[0]),
+        host_sed_wavelength_max=float(templates.source_wavelength_coverage[1]),
         strategy_used=str(fit.strategy_used),
         fit_redshift=float(fit.preprocessed.redshift),
         fit_normalization_convention=(
@@ -1190,7 +1466,9 @@ def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
     """Evaluate the fitted host model on the full template wavelength grid."""
 
     templates = fit.templates
-    scaled_templates = templates.flux / fit.stellar_template_scales[np.newaxis, :]
+    scaled_templates = np.asarray(templates.source_flux, dtype=float) / (
+        fit.stellar_template_scales[np.newaxis, :]
+    )
     host_flux = scaled_templates @ fit.stellar_weights * fit.preprocessed.normalization
     try:
         state = build_host_reconstruction_state(fit)
@@ -1199,11 +1477,11 @@ def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
     if state is not None:
         fit.host_reconstruction_state = state.to_dict()
     return _host_sed_from_arrays(
-        templates.wave,
+        np.asarray(templates.source_wave, dtype=float),
         host_flux,
         warnings_in=fit.warnings,
         provenance={
-            "template_wave": templates.wave,
+            "template_wave": np.asarray(templates.source_wave, dtype=float),
             "host_sed_method": HOST_SED_METHOD,
             "host_sed_method_version": HOST_SED_METHOD_VERSION,
             "host_reconstruction_state_version": (
@@ -1221,6 +1499,11 @@ def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
             "template_matrix_sha256": (
                 state.template_matrix_sha256 if state is not None else None
             ),
+            "host_sed_template_family": templates.family,
+            "host_sed_source_template_sha256": templates.source_library_sha256,
+            "host_sed_uses_native_source_library": True,
+            "template_profile": templates.profile_id,
+            "template_product_kind": templates.product_kind,
             "strategy_used": getattr(fit, "strategy_used", None),
         },
     )
@@ -1250,12 +1533,11 @@ def reconstruct_host_sed_from_state(
     from .templates import load_ppxf_npz_templates
 
     value = _state_mapping(state)
-    if value.get("host_reconstruction_state_version") != (
-        HOST_RECONSTRUCTION_STATE_VERSION
-    ):
+    state_version = str(value.get("host_reconstruction_state_version"))
+    if state_version not in {"1", HOST_RECONSTRUCTION_STATE_VERSION}:
         raise HostSEDReconstructionError(
             "unsupported_reconstruction_state_version",
-            f"expected {HOST_RECONSTRUCTION_STATE_VERSION!r}",
+            f"expected '1' or {HOST_RECONSTRUCTION_STATE_VERSION!r}",
         )
     if value.get("host_sed_method") != HOST_SED_METHOD or value.get(
         "host_sed_method_version"
@@ -1282,7 +1564,12 @@ def reconstruct_host_sed_from_state(
             "unsupported_template_subset",
             "this state requires an unsupported selected-template subset",
         )
-    filename = str(template_file or value.get("template_file_name") or "")
+    filename = str(
+        template_file
+        or value.get("source_template_file_name")
+        or value.get("template_file_name")
+        or ""
+    )
     if not filename:
         raise HostSEDReconstructionError(
             "template_file_unavailable", "state does not name its template file"
@@ -1293,13 +1580,31 @@ def reconstruct_host_sed_from_state(
         template_family=str(value.get("template_family", "emiles")),
         write_report=False,
     )
-    identities = {
-        "template_file_sha256": templates.metadata.get("source_sha256"),
-        "template_wave_sha256": templates.metadata.get("template_wave_sha256"),
-        "template_matrix_sha256": templates.metadata.get(
-            "template_matrix_sha256"
-        ),
-    }
+    if state_version == "1":
+        identities = {
+            "template_file_sha256": templates.metadata.get("source_sha256"),
+            "template_wave_sha256": templates.metadata.get("template_wave_sha256"),
+            "template_matrix_sha256": templates.metadata.get(
+                "template_matrix_sha256"
+            ),
+        }
+    else:
+        identities = {
+            "template_file_sha256": templates.source_library_sha256,
+            "template_wave_sha256": templates.metadata.get(
+                "template_wave_sha256"
+            ),
+            "template_matrix_sha256": templates.metadata.get(
+                "template_matrix_sha256"
+            ),
+            "source_template_file_sha256": templates.source_library_sha256,
+            "source_template_wave_sha256": templates.metadata.get(
+                "template_wave_sha256"
+            ),
+            "source_template_matrix_sha256": templates.metadata.get(
+                "template_matrix_sha256"
+            ),
+        }
     if verify_hash:
         for name, actual in identities.items():
             expected = value.get(name)
@@ -1330,14 +1635,17 @@ def reconstruct_host_sed_from_state(
             "invalid_preprocessing_normalization",
             "normalization must be finite and positive",
         )
-    host_flux = (templates.flux / scales[np.newaxis, :]) @ weights
+    host_flux = (
+        np.asarray(templates.source_flux, dtype=float)
+        / scales[np.newaxis, :]
+    ) @ weights
     host_flux *= normalization
     return _host_sed_from_arrays(
-        templates.wave,
+        np.asarray(templates.source_wave, dtype=float),
         host_flux,
         warnings_in=value.get("fit_warnings", []),
         provenance={
-            "template_wave": templates.wave,
+            "template_wave": np.asarray(templates.source_wave, dtype=float),
             "host_sed_method": HOST_SED_METHOD,
             "host_sed_method_version": HOST_SED_METHOD_VERSION,
             "host_reconstruction_state_version": (
@@ -1345,6 +1653,13 @@ def reconstruct_host_sed_from_state(
             ),
             **identities,
             "template_file_name": filename,
+            "host_sed_template_family": templates.family,
+            "host_sed_source_template_sha256": templates.source_library_sha256,
+            "host_sed_uses_native_source_library": True,
+            "template_profile": value.get("template_profile", templates.profile_id),
+            "template_product_kind": value.get(
+                "template_product_kind", templates.product_kind
+            ),
             "strategy_used": value.get("strategy_used"),
             "reconstructed_without_ppxf": True,
         },
@@ -1424,6 +1739,14 @@ def _summary_dict(
         "flux_unit": spectrum.metadata.get("flux_unit", "cgs"),
         "flux_scale": spectrum.metadata.get("flux_scale", 1e-17),
         "template_file_used": fit.templates.source_path,
+        "stellar_template_profile": fit.templates.profile_id,
+        "stellar_template_family": fit.templates.family,
+        "stellar_template_product_kind": fit.templates.product_kind,
+        "stellar_template_fit_file": fit.templates.fit_source_path,
+        "stellar_template_fit_sha256": fit.templates.fit_source_sha256,
+        "stellar_template_source_file": fit.templates.source_library_path,
+        "stellar_template_source_sha256": fit.templates.source_library_sha256,
+        "native_data_preserved": True,
         "template_wavelength_min": fit.templates.wavelength_coverage[0],
         "template_wavelength_max": fit.templates.wavelength_coverage[1],
         "host_fit_range_min": float(np.nanmin(fit.preprocessed.wave_log)),
@@ -1460,6 +1783,18 @@ def _summary_dict(
         "stellar_velocity_dispersion": fit.stellar_sigma,
         "ppxf_reduced_chi2": fit.reduced_chi2,
         "host_fit_reliable": fit.host_fit_reliable,
+        "host_continuum_reliable": fit.host_continuum_reliable,
+        "host_fraction_reliable": fit.host_fraction_reliable,
+        "host_absorption_subtraction_status": (
+            fit.host_absorption_subtraction_status
+        ),
+        "stellar_kinematics_resolution_status": (
+            fit.stellar_kinematics_resolution_status
+        ),
+        "stellar_population_resolution_status": (
+            fit.stellar_population_resolution_status
+        ),
+        "host_sed_prediction_reliable": fit.host_sed_prediction_reliable,
         "host_fit_reliability_reasons": list(
             fit.host_fit_reliability_reasons
         ),

@@ -8,7 +8,7 @@ import os
 import time
 import traceback
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Sequence, Union
 
@@ -135,6 +135,17 @@ def _fit_spectrum_data(
     uncertainty_config,
     complexes,
 ):
+    # Preserve the stable input-record identity for exact object-specific
+    # template products.  ``SpectrumData.object_id`` can be a survey or Euclid
+    # identifier, whereas ``descriptor.object_key`` also disambiguates source
+    # file and row.
+    spectrum_data = replace(
+        spectrum_data,
+        metadata={
+            **dict(spectrum_data.metadata),
+            "host_preconvolution_object_key": descriptor.object_key,
+        },
+    )
     source = (
         f"{descriptor.source}:row_index={descriptor.row_index}"
         if descriptor.row_index is not None else descriptor.source

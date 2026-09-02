@@ -111,6 +111,10 @@ from .workflows.host import (
     euclid_nir_line_mask,
     fit_euclid_host_aperture_scale,
     reconstruct_host_sed_from_state,
+    ResolvedHostTemplateProfile,
+    PreconvolvedTemplateProduct,
+    build_preconvolved_xsl_product,
+    resolve_host_template_profile,
 )
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
 from .io.qa import render_qa
@@ -139,7 +143,9 @@ from .io.run_store import (
 from .spectrum import Spectrum
 from .resolution import (
     SpectralResolution,
+    TemplateResolutionMatch,
     additional_template_sigma,
+    match_template_resolution_toward_data,
     smooth_constant_resolving_power,
 )
 from .signed_lines import (
@@ -224,6 +230,7 @@ __all__ = [
     "RunStore",
     "Spectrum",
     "SpectralResolution",
+    "TemplateResolutionMatch",
     "SignedLineAmplitudeResult",
     "SignedLineComponent",
     "LocalLinePatternResult",
@@ -234,6 +241,7 @@ __all__ = [
     "build_science_catalog",
     "bolometric_luminosity",
     "additional_template_sigma",
+    "match_template_resolution_toward_data",
     "smooth_constant_resolving_power",
     "compute_derived_quantities",
     "correct_spectrum",
@@ -282,6 +290,10 @@ __all__ = [
     "reconstruct_host_sed_from_model_row",
     "reconstruct_host_sed_from_run",
     "reconstruct_host_sed_from_state",
+    "ResolvedHostTemplateProfile",
+    "PreconvolvedTemplateProduct",
+    "build_preconvolved_xsl_product",
+    "resolve_host_template_profile",
     "observed_fwhm_kms",
     "observed_halpha_width_bounds",
     "narrow_line_calibration_selection_mask",

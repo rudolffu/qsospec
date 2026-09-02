@@ -1,7 +1,12 @@
 include CHANGELOG.md
 include LICENSE
 include README.md
+include EMILES_XSL_HOST_COMPARISON.md
+include STELLAR_TEMPLATE_PROFILE_IMPLEMENTATION_PLAN.md
+include STELLAR_TEMPLATE_PROFILE_IMPLEMENTATION_REPORT.md
+include XSL_RUNTIME_PRECONVOLVED_PARITY.md
 recursive-include docs *.css *.md *.png *.py *.rst
 prune docs/_build
 recursive-include examples *.csv *.md
+recursive-include scripts *.py
 recursive-include src/qsospec/data *.csv *.txt

@@ -77,6 +77,141 @@ class SpectralResolution:
         return {"resolution_mode": self.mode, "resolution_source": self.source, "resolution_version": self.version, "resolution_is_object_specific": self.is_object_specific, "resolution_is_approximate": self.is_approximate, "resolution_status": self.status, "resolution_coverage": self.coverage}
 
 
+@dataclass(frozen=True)
+class TemplateResolutionMatch:
+    """One-sided template-to-data resolution match and diagnostics.
+
+    A coarser template cannot be deconvolved, but remains comparable and usable.
+    Only missing or non-positive resolution values are marked unusable.
+    """
+
+    additional_sigma_lambda: np.ndarray
+    comparable: np.ndarray
+    template_sharper_than_data: np.ndarray
+    approximately_equal: np.ndarray
+    template_coarser_than_data: np.ndarray
+    missing_or_invalid: np.ndarray
+    delta_sigma_lambda: np.ndarray
+    delta_sigma_kms: np.ndarray
+    metadata: Mapping[str, Any]
+
+
+def _finite_distribution(values: np.ndarray) -> tuple[float, float, float]:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return np.nan, np.nan, np.nan
+    return (
+        float(np.median(finite)),
+        float(np.percentile(finite, 95.0)),
+        float(np.max(finite)),
+    )
+
+
+def match_template_resolution_toward_data(
+    data_sigma_lambda: np.ndarray,
+    template_sigma_lambda: np.ndarray,
+    wavelength: np.ndarray,
+    *,
+    equality_tolerance_fraction: float = 1.0e-3,
+) -> TemplateResolutionMatch:
+    """Match a template toward the data without altering the science spectrum.
+
+    The returned additional broadening is positive only where the template is
+    sharper than the data. It is exactly zero where the two are approximately
+    equal or the template is coarser. Missing/invalid entries remain ``NaN`` so
+    callers can distinguish unavailable resolution from a physical mismatch.
+    """
+
+    data = np.asarray(data_sigma_lambda, dtype=float)
+    template = np.asarray(template_sigma_lambda, dtype=float)
+    wave = np.asarray(wavelength, dtype=float)
+    if data.shape != template.shape or data.shape != wave.shape:
+        raise ValueError(
+            "Data resolution, template resolution, and wavelength arrays must match."
+        )
+    tolerance_fraction = float(equality_tolerance_fraction)
+    if not np.isfinite(tolerance_fraction) or tolerance_fraction < 0:
+        raise ValueError("equality_tolerance_fraction must be finite and non-negative.")
+
+    missing = (
+        ~np.isfinite(data)
+        | ~np.isfinite(template)
+        | ~np.isfinite(wave)
+        | (data <= 0)
+        | (template <= 0)
+        | (wave <= 0)
+    )
+    comparable = ~missing
+    tolerance = tolerance_fraction * np.maximum(data, template)
+    sharper = comparable & (template < data - tolerance)
+    coarser = comparable & (template > data + tolerance)
+    equal = comparable & ~(sharper | coarser)
+
+    additional = np.full_like(data, np.nan)
+    additional[comparable] = np.sqrt(
+        np.maximum(data[comparable] ** 2 - template[comparable] ** 2, 0.0)
+    )
+    delta = np.full_like(data, np.nan)
+    delta[comparable] = template[comparable] - data[comparable]
+    delta_kms = np.full_like(data, np.nan)
+    delta_kms[comparable] = delta[comparable] / wave[comparable] * _C_KMS
+
+    count = int(np.count_nonzero(comparable))
+    def fraction(mask: np.ndarray) -> float:
+        return float(np.count_nonzero(mask) / count) if count else np.nan
+    positive_delta = np.where(coarser, delta, np.nan)
+    positive_delta_kms = np.where(coarser, delta_kms, np.nan)
+    median_delta, p95_delta, maximum_delta = _finite_distribution(positive_delta)
+    median_delta_kms, p95_delta_kms, maximum_delta_kms = _finite_distribution(
+        positive_delta_kms
+    )
+    nonzero_additional = comparable & (additional > 0)
+    additional_values = np.where(nonzero_additional, additional, np.nan)
+    additional_median, additional_p95, _ = _finite_distribution(additional_values)
+
+    if not count:
+        status = "invalid_resolution_metadata"
+    elif np.any(coarser) and np.any(sharper):
+        status = "mixed_match_template_coarser_allowed"
+    elif np.any(coarser):
+        status = "template_coarser_allowed"
+    elif np.any(sharper):
+        status = "matched_by_runtime_convolution"
+    else:
+        status = "approximately_equal"
+    metadata = {
+        "template_resolution_status": status,
+        "template_resolution_comparable_fraction": fraction(comparable),
+        "template_sharper_than_data_fraction": fraction(sharper),
+        "template_equal_to_data_fraction": fraction(equal),
+        "template_coarser_than_data_fraction": fraction(coarser),
+        "median_template_minus_data_sigma_angstrom": median_delta,
+        "p95_template_minus_data_sigma_angstrom": p95_delta,
+        "maximum_template_minus_data_sigma_angstrom": maximum_delta,
+        "median_template_minus_data_sigma_kms": median_delta_kms,
+        "p95_template_minus_data_sigma_kms": p95_delta_kms,
+        "maximum_template_minus_data_sigma_kms": maximum_delta_kms,
+        "additional_template_sigma_nonzero_fraction": fraction(
+            nonzero_additional
+        ),
+        "additional_template_sigma_median_angstrom": additional_median,
+        "additional_template_sigma_p95_angstrom": additional_p95,
+        "resolution_matching_equality_tolerance_fraction": tolerance_fraction,
+    }
+    return TemplateResolutionMatch(
+        additional_sigma_lambda=additional,
+        comparable=comparable,
+        template_sharper_than_data=sharper,
+        approximately_equal=equal,
+        template_coarser_than_data=coarser,
+        missing_or_invalid=missing,
+        delta_sigma_lambda=delta,
+        delta_sigma_kms=delta_kms,
+        metadata=metadata,
+    )
+
+
 def additional_template_sigma(data_sigma_lambda: np.ndarray, template_sigma_lambda: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Quadrature broadening and invalid mask when templates are lower resolution."""
     data = np.asarray(data_sigma_lambda, float)

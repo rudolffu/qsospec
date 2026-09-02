@@ -17,6 +17,13 @@ published broad-line width, and fits pPXF with:
 * the qsospec KD13/Storey-Hummer Balmer continuum and high-order series at the
   same width.
 
+Native E-MILES remains the default stellar profile. Native XSL and exact,
+object-specific preconvolved XSL are optional alternatives; see
+:doc:`stellar_template_resolution_profiles`. In every profile, qsospec keeps
+the native science spectrum unchanged and convolves only a template that is
+sharper than the data. A coarser template is retained with a diagnostic rather
+than causing the pixel to be discarded.
+
 Strong emission lines remain masked in pPXF. Only the fitted stellar SSP
 component is subtracted; the power law, Fe II, Balmer emission, and spectral
 lines remain for the final standard qsospec fit.
@@ -103,15 +110,17 @@ distributed. Emission lines are masked rather than fitted as pPXF gas
 components. The result therefore records
 ``host_pseudocontinuum_exact_replication=False``.
 
-The E-MILES stellar templates and AGN templates receive separate pPXF
+The stellar templates and AGN templates receive separate pPXF
 components: stellar velocity and dispersion are fitted, while the physically
 prebroadened AGN templates have fixed independent kinematics. An available
-object-specific instrumental LSF is applied once. Intrinsic bundled templates
-are cached, while object-specific LSF convolution remains per object.
+object-specific instrumental LSF is applied once to the fit-time templates,
+never to the input data. Intrinsic bundled AGN templates and native stellar
+libraries are cached, while object-specific runtime convolution remains per
+object unless an exact preconvolved XSL product is selected. HostSED
+reconstruction always uses the native source SSP library.
 
 The historical :math:`z<1.2` request gate is retained. Actual wavelength
 coverage still determines reliability. Monte Carlo is off by default; a
 configured host-refit Monte Carlo uses the selected strategy but can be
 expensive. Compare both strategies on a bounded validation sample before
 changing a production pipeline.
-

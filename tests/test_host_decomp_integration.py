@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from qsospec.resolution import SpectralResolution
 from qsospec.workflows.host.io import SpectrumData
 from qsospec.workflows.host.ppxf_host import (
     predict_host_sed,
@@ -76,3 +77,59 @@ def test_local_ppxf_agn_pseudocontinuum_smoke():
         rtol=1e-8,
         atol=1e-8,
     )
+
+
+def test_emiles_coarser_than_data_is_diagnostic_not_pixel_veto():
+    if importlib.util.find_spec("ppxf") is None:
+        pytest.skip("pPXF is not installed")
+    template_path = Path.home() / "tools/ppxf_data/spectra_emiles_9.0.npz"
+    if not template_path.exists():
+        pytest.skip("local pPXF E-MILES template file not found")
+
+    wave = np.linspace(3600.0, 7000.0, 500)
+    spectrum = SpectrumData(
+        wave_obs=wave,
+        flux=2.0 * (wave / 5100.0) ** -1.0,
+        ivar=np.full_like(wave, 400.0),
+        redshift=0.0,
+        object_id="synthetic-emiles-resolution",
+        resolution=SpectralResolution(
+            mode="sigma_lambda",
+            values=np.full_like(wave, 0.35),
+            wavelength=wave,
+            source="synthetic_high_resolution_data",
+            is_object_specific=True,
+        ),
+    )
+    templates = load_ppxf_npz_templates(write_report=False)
+    prep = prepare_spectrum_for_host_decomp(
+        spectrum, fit_range=(3600.0, 7000.0)
+    )
+    prep.metadata["spectral_resolution"] = spectrum.resolution
+    native_wave = prep.wave_rest.copy()
+    native_flux = prep.flux.copy()
+    native_error = prep.error.copy()
+    fit = run_ppxf_host_fit(
+        prep,
+        templates,
+        residual_clip_iterations=0,
+        minimum_clean_pixels=20,
+        minimum_clean_fraction=0.1,
+        minimum_continuum_snr=0.0,
+        quiet=True,
+    )
+
+    assert fit.status == "success"
+    assert fit.quality_metrics["template_coarser_than_data_fraction"] > 0
+    assert fit.quality_metrics[
+        "template_coarser_than_data_fraction_goodpixels"
+    ] > 0
+    assert "resolution_approximate_or_missing" not in (
+        fit.host_fit_reliability_reasons
+    )
+    assert fit.stellar_kinematics_resolution_status == (
+        "template_resolution_mismatch_not_corrected"
+    )
+    np.testing.assert_array_equal(prep.wave_rest, native_wave)
+    np.testing.assert_array_equal(prep.flux, native_flux)
+    np.testing.assert_array_equal(prep.error, native_error)

@@ -169,13 +169,52 @@ def plot_ppxf_host_fit(
     coverage = fit.coverage.coverage_class if fit.coverage is not None else "unavailable"
     fagn = fit.ppxf_agn_fraction_flux_global
     closure = fit.closure_metrics.get("closure_relative_to_normalization")
+    preprocessed_metadata = getattr(fit.preprocessed, "metadata", {})
     text_lines = [
         f"strategy: {fit.strategy_used}",
+        (
+            f"stellar templates: {quality.get('stellar_template_profile', fit.templates.profile_id)} "
+            f"({quality.get('stellar_template_product_kind', fit.templates.product_kind)})"
+        ),
+        f"native data preserved: {quality.get('native_data_preserved', True)}",
         f"coverage: {coverage}",
         f"broad prefit: {prefit_line or 'unavailable'}; width={width or 'n/a'} km/s",
         f"global AGN fraction: {fagn:.3f}" if np.isfinite(fagn) else "global AGN fraction: unavailable",
         f"closure/norm: {closure:.2e}" if closure is not None and np.isfinite(closure) else "closure/norm: unavailable",
-        f"LSF: {quality.get('resolution_status', 'unavailable')}",
+        (
+            f"data LSF: {quality.get('resolution_status', 'unavailable')} / "
+            f"{preprocessed_metadata.get('resolution_source', 'unspecified')}"
+        ),
+        (
+            f"template resolution: "
+            f"{quality.get('template_resolution_status', 'unavailable')}"
+        ),
+        (
+            "template coarser on good pixels: "
+            f"{quality.get('template_coarser_than_data_fraction_goodpixels', np.nan):.3f}"
+            if np.isfinite(
+                quality.get(
+                    "template_coarser_than_data_fraction_goodpixels", np.nan
+                )
+            )
+            else "template coarser on good pixels: unavailable"
+        ),
+        (
+            "one-sided convolution fraction: "
+            f"{quality.get('additional_template_sigma_nonzero_fraction', np.nan):.3f}"
+            if np.isfinite(
+                quality.get("additional_template_sigma_nonzero_fraction", np.nan)
+            )
+            else "one-sided convolution fraction: unavailable"
+        ),
+        (
+            "preconvolution: "
+            f"{quality.get('preconvolution_validation_status', 'not applicable')}"
+        ),
+        f"host continuum reliable: {fit.host_continuum_reliable}",
+        f"host fraction reliable: {fit.host_fraction_reliable}",
+        f"absorption subtraction: {fit.host_absorption_subtraction_status}",
+        f"stellar kinematics: {fit.stellar_kinematics_resolution_status}",
         f"reliable: {fit.host_fit_reliable}",
     ]
     axes[0].text(

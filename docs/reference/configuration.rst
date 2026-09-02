@@ -113,3 +113,12 @@ in run hashing. ``use_regularization=True`` and historical
 ``n_iterations != 1`` are rejected because they otherwise represented silent
 no-op settings. See
 :doc:`../how_to/agn_aware_ppxf_host_decomposition`.
+
+Stellar-template profile preset
+-------------------------------
+
+The default resolves to ``emiles_native`` and
+``spectra_emiles_9.0.npz``. Optional ``xsl_native`` and
+``xsl_preconvolved`` profiles must be selected explicitly and preserve the
+native science arrays. Profile/family/product conflicts are rejected. See
+:doc:`../how_to/stellar_template_resolution_profiles`.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 
@@ -214,6 +215,13 @@ class HostDecompConfig:
     template_root: str = "~/tools/ppxf_data"
     template_file: str = "spectra_emiles_9.0.npz"
     template_family: str = "emiles"
+    template_profile: str | None = None
+    template_product_kind: str = "native"
+    source_template_file: str | None = None
+    resolution_matching_mode: str = "convolve_template_toward_data_only"
+    template_coarser_action: str = "warn"
+    preserve_native_data: bool = True
+    preconvolved_validation: str = "exact"
     fit_range: Tuple[float, float] = (3600.0, 7000.0)
     line_mask_widths: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_LINE_MASK_WIDTHS))
     broad_line_mask_widths: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_BROAD_LINE_MASK_WIDTHS))
@@ -260,6 +268,69 @@ class HostDecompConfig:
                 "HostDecompConfig.strategy must be 'masked_simple' or "
                 "'agn_pseudocontinuum_masked'."
             )
+        if self.template_profile not in {
+            None,
+            "emiles_native",
+            "xsl_native",
+            "xsl_preconvolved",
+            "custom_native",
+        }:
+            raise ValueError(
+                "template_profile must be emiles_native, xsl_native, "
+                "xsl_preconvolved, custom_native, or None."
+            )
+        if self.template_product_kind not in {"native", "preconvolved"}:
+            raise ValueError(
+                "template_product_kind must be 'native' or 'preconvolved'."
+            )
+        if self.resolution_matching_mode not in {
+            "convolve_template_toward_data_only",
+            "object_specific_runtime",
+            "preconvolved_exact",
+        }:
+            raise ValueError("Unsupported resolution_matching_mode.")
+        resolved_profile = self.template_profile
+        if resolved_profile is None:
+            if self.template_product_kind == "preconvolved":
+                resolved_profile = "xsl_preconvolved"
+            elif Path(self.template_file).name == "spectra_xsl_9.0.npz":
+                resolved_profile = "xsl_native"
+            elif Path(self.template_file).name == "spectra_emiles_9.0.npz":
+                resolved_profile = "emiles_native"
+            else:
+                resolved_profile = "custom_native"
+        expected_matching_mode = {
+            "xsl_native": "object_specific_runtime",
+            "xsl_preconvolved": "preconvolved_exact",
+        }.get(resolved_profile, "convolve_template_toward_data_only")
+        if self.resolution_matching_mode != expected_matching_mode:
+            # The historical/default value describes E-MILES. Resolve it to
+            # the selected profile's contract; reject any other contradiction.
+            if self.resolution_matching_mode == "convolve_template_toward_data_only":
+                self.resolution_matching_mode = expected_matching_mode
+            else:
+                raise ValueError(
+                    f"Template profile {resolved_profile!r} requires "
+                    f"resolution_matching_mode={expected_matching_mode!r}."
+                )
+        if self.template_coarser_action not in {"warn", "ignore"}:
+            raise ValueError("template_coarser_action must be 'warn' or 'ignore'.")
+        if not self.preserve_native_data:
+            raise ValueError(
+                "Host decomposition requires preserve_native_data=True; "
+                "qsospec never smooths the science spectrum to the template resolution."
+            )
+        if self.preconvolved_validation != "exact":
+            raise ValueError("Only preconvolved_validation='exact' is supported.")
+        if self.template_profile == "xsl_preconvolved":
+            if self.template_product_kind != "preconvolved":
+                raise ValueError(
+                    "xsl_preconvolved requires template_product_kind='preconvolved'."
+                )
+            if not self.source_template_file:
+                raise ValueError(
+                    "xsl_preconvolved requires source_template_file naming the native XSL library."
+                )
         if self.use_regularization:
             raise ValueError(
                 "HostDecompConfig.use_regularization is not implemented; "

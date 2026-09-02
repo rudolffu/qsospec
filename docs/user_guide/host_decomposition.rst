@@ -51,3 +51,12 @@ pseudo-continuum templates while determining the stellar weights, then
 subtracts only the stellar model. See
 :doc:`../how_to/agn_aware_ppxf_host_decomposition` for configuration,
 provenance, coverage classes, fractions, and limitations.
+
+Stellar-template resolution profiles
+------------------------------------
+
+E-MILES remains the default. Native XSL and exact object-specific preconvolved
+XSL are optional profiles. All preserve the native input spectrum, and a
+stellar template that is coarser than the data is retained with diagnostics
+rather than excluded. See
+:doc:`../how_to/stellar_template_resolution_profiles`.

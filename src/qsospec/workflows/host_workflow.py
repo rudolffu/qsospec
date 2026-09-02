@@ -239,6 +239,11 @@ def _host_subtracted_spectrum(
         template_file=effective_template_file,
         report_dir=cfg.output_dir,
         template_family=cfg.template_family,
+        template_profile=cfg.template_profile,
+        template_product_kind=cfg.template_product_kind,
+        source_template_file=cfg.source_template_file,
+        template_coarser_action=cfg.template_coarser_action,
+        preserve_native_data=cfg.preserve_native_data,
     )
     prep = prepare_spectrum_for_host_decomp(
         spectrum_data,
@@ -368,6 +373,9 @@ def _host_subtracted_spectrum(
     host_sed = predict_host_sed(host_fit)
     host_fit.quality_metrics["host_sed_prediction_seconds"] = float(
         perf_counter() - sed_start
+    )
+    host_fit.quality_metrics["host_sed_reconstruction_seconds"] = (
+        host_fit.quality_metrics["host_sed_prediction_seconds"]
     )
     full_wave_obs = np.asarray(spectrum_data.wave_obs, dtype=float)
     full_wave_rest = full_wave_obs / (1.0 + float(redshift))
@@ -1005,6 +1013,30 @@ def _run_global_fit_with_optional_host(
                 list(host_fit.host_fit_reliability_reasons)
                 if host_fit is not None else []
             ),
+            "host_continuum_reliable": (
+                bool(getattr(host_fit, "host_continuum_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
+            ),
+            "host_fraction_reliable": (
+                bool(getattr(host_fit, "host_fraction_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
+            ),
+            "host_absorption_subtraction_status": (
+                getattr(host_fit, "host_absorption_subtraction_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "stellar_kinematics_resolution_status": (
+                getattr(host_fit, "stellar_kinematics_resolution_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "stellar_population_resolution_status": (
+                getattr(host_fit, "stellar_population_resolution_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "host_sed_prediction_reliable": (
+                bool(getattr(host_fit, "host_sed_prediction_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
+            ),
             "host_fit_quality": (
                 dict(host_fit.quality_metrics)
                 if host_fit is not None else {}
@@ -1039,6 +1071,48 @@ def _run_global_fit_with_optional_host(
             ),
             "host_template_file_sha256": (
                 host_fit.templates.metadata.get("source_sha256")
+                if host_fit is not None else None
+            ),
+            "host_template_profile": (
+                getattr(host_fit.templates, "profile_id", "custom_native")
+                if host_fit is not None else None
+            ),
+            "host_template_product_kind": (
+                getattr(host_fit.templates, "product_kind", "native")
+                if host_fit is not None else None
+            ),
+            "host_fit_template_file": (
+                getattr(host_fit.templates, "fit_source_path", host_fit.templates.source_path)
+                if host_fit is not None else None
+            ),
+            "host_fit_template_sha256": (
+                getattr(
+                    host_fit.templates,
+                    "fit_source_sha256",
+                    host_fit.templates.metadata.get("source_sha256"),
+                )
+                if host_fit is not None else None
+            ),
+            "host_source_template_file": (
+                getattr(host_fit.templates, "source_library_path", host_fit.templates.source_path)
+                if host_fit is not None else None
+            ),
+            "host_source_template_sha256": (
+                getattr(
+                    host_fit.templates,
+                    "source_library_sha256",
+                    host_fit.templates.metadata.get("source_sha256"),
+                )
+                if host_fit is not None else None
+            ),
+            "host_source_template_wavelength_coverage": (
+                list(
+                    getattr(
+                        host_fit.templates,
+                        "source_wavelength_coverage",
+                        host_fit.templates.wavelength_coverage,
+                    )
+                )
                 if host_fit is not None else None
             ),
             "host_template_wave_sha256": (
