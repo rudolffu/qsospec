@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from .measurement_vocabulary import is_final_host_fraction_name
 from .spectrum import Spectrum
 from .warnings import FitWarning
 
@@ -262,7 +263,7 @@ class WorkflowResult:
                 "fractions": {
                     name: value
                     for name, value in continuum_samples.items()
-                    if name.startswith("fracHost_")
+                    if is_final_host_fraction_name(name)
                 },
             },
             "power_law_mode": self.metadata.get(

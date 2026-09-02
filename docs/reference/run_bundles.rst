@@ -120,11 +120,64 @@ Wide science catalogs are views over the authoritative long-form
 
 .. code-block:: python
 
-   measurements = run.read_table("measurements").to_pandas()
+   measurements = run.read_measurements().to_pandas()
    print(
        measurements[["section", "recipe_id", "quantity"]]
        .drop_duplicates()
    )
+
+``read_measurements()`` returns the canonical measurement vocabulary. For a
+forensic view of strings exactly as stored in a historical shard, use
+``run.read_table("measurements")`` or
+``run.read_measurements(canonical=False)``. Canonicalization never rewrites the
+Parquet files.
+
+.. _host-fraction-vocabulary:
+
+Host-fraction vocabulary
+------------------------
+
+Run manifests record ``measurement_vocabulary_version = 2``. Wavelength-local
+host measurements use source-explicit names:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Quantity
+     - Meaning
+   * - ``fHost_<wave>``
+     - pPXF stellar-host flux density used in the final qsospec-refined sample.
+   * - ``fAGN_<wave>``
+     - Final qsospec AGN-continuum flux density.
+   * - ``fracHost_<wave>``
+     - Final host fraction using the pPXF host and final qsospec AGN continuum.
+   * - ``fHost_pPXF_<wave>``
+     - Direct pPXF stellar-host model sample on the fitted grid.
+   * - ``fAGN_pPXF_<wave>``
+     - Direct pPXF AGN nuisance-continuum sample.
+   * - ``fTotal_pPXF_<wave>``
+     - Direct total pPXF model sample.
+   * - ``fracHost_pPXF_<wave>``
+     - Direct pPXF host/total fraction at the same wavelength.
+   * - ``ppxf_agn_fraction_flux_global``
+     - pPXF AGN fraction integrated over fitted spectral support.
+
+Thus ``fAGN_5100`` is a flux density, not an AGN fraction.
+``fracHost_5100`` and ``fracHost_pPXF_5100`` share the same pPXF stellar-host
+solution but use different AGN/total continuum definitions. When both are
+finite, ``host_metric`` also contains
+``deltaFracHost_final_pPXF_<wave> = fracHost_<wave> -
+fracHost_pPXF_<wave>``.
+
+Each host-sample row records its definition identifier, component sources,
+rest wavelength, direct-coverage requirement, host strategy, method, and unit
+in measurement metadata. Historical ``host_sample`` names such as
+``fHostFit_5100`` and ``fracHost_5100`` are mapped using their section context;
+the final ``continuum_sample/fracHost_5100`` name is not changed.
+An existing schema-v5 run without vocabulary version 2 remains readable, but
+must not be resumed; start a new run directory to avoid mixing raw v1 and v2
+names in one immutable bundle.
 
 Derived quantities are a separate calibration stage. A calculator receives an
 object record and all of its long-form measurements, and returns one or more

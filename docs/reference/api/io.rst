@@ -11,6 +11,9 @@ I/O, extinction, and archive API
 .. autofunction:: correct_spectrum_data
 .. autofunction:: prepare_spectrum
 .. autofunction:: preflight_galactic_extinction
+.. autofunction:: final_host_sample_name
+.. autofunction:: ppxf_host_sample_name
+.. autofunction:: canonicalize_legacy_measurement_name
 .. autofunction:: open_run
 .. autofunction:: load_model
 .. autofunction:: load_model_by_key

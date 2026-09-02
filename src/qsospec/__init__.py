@@ -117,6 +117,12 @@ from .workflows.host import (
     resolve_host_template_profile,
 )
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
+from .measurement_vocabulary import (
+    MEASUREMENT_VOCABULARY_VERSION,
+    canonicalize_legacy_measurement_name,
+    final_host_sample_name,
+    ppxf_host_sample_name,
+)
 from .io.qa import render_qa
 from .io.readers import (
     SpectrumInput,
@@ -222,6 +228,7 @@ __all__ = [
     "LocalFitResult",
     "LorentzianComponent",
     "MgIIComplexConfig",
+    "MEASUREMENT_VOCABULARY_VERSION",
     "MonochromaticLuminosity",
     "FitWarning",
     "HostWorkflowResult",
@@ -244,6 +251,7 @@ __all__ = [
     "match_template_resolution_toward_data",
     "smooth_constant_resolving_power",
     "compute_derived_quantities",
+    "canonicalize_legacy_measurement_name",
     "correct_spectrum",
     "correct_spectrum_data",
     "detect_fits_reader",
@@ -269,6 +277,7 @@ __all__ = [
     "fit_local",
     "fit_object_to_store",
     "fit_with_optional_host_decomp",
+    "final_host_sample_name",
     "evaluate_balmer_pseudocontinuum",
     "evaluate_balmer_pseudocontinuum_with_derivatives",
     "euclid_nir_line_mask",
@@ -300,6 +309,7 @@ __all__ = [
     "narrow_line_calibration_threshold_sweep",
     "narrow_line_stratified_recovery",
     "prepare_spectrum",
+    "ppxf_host_sample_name",
     "preflight_galactic_extinction",
     "query_galactic_ebv",
     "plot_line_result",

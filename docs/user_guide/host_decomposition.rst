@@ -37,7 +37,12 @@ Inspect:
 - ``result.metadata["host_decomp_skip_reason"]``
 
 Host fractions are shown only where the rest-frame data constrain the
-requested wavelength. Host-refit Monte Carlo is available through
+requested wavelength. ``fracHost_5100`` is the final/adopted fraction formed
+from the pPXF stellar host and final qsospec AGN continuum;
+``fracHost_pPXF_5100`` is the direct pPXF host/total fraction. These are related
+but not interchangeable. See :ref:`the run-bundle host-fraction vocabulary
+<host-fraction-vocabulary>` for definitions and archived names. Host-refit
+Monte Carlo is available through
 ``UncertaintyConfig(refit_host_in_mc=True)`` and runs only when host
 decomposition was enabled.
 

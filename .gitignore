@@ -225,3 +225,6 @@ __marimo__/
 /outputs/
 /runs/
 /benchmarks/
+
+# Local implementation notes and reports
+/.local-notes/

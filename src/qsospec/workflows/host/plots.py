@@ -179,7 +179,11 @@ def plot_ppxf_host_fit(
         f"native data preserved: {quality.get('native_data_preserved', True)}",
         f"coverage: {coverage}",
         f"broad prefit: {prefit_line or 'unavailable'}; width={width or 'n/a'} km/s",
-        f"global AGN fraction: {fagn:.3f}" if np.isfinite(fagn) else "global AGN fraction: unavailable",
+        (
+            f"global pPXF AGN fraction: {fagn:.3f}"
+            if np.isfinite(fagn)
+            else "global pPXF AGN fraction: unavailable"
+        ),
         f"closure/norm: {closure:.2e}" if closure is not None and np.isfinite(closure) else "closure/norm: unavailable",
         (
             f"data LSF: {quality.get('resolution_status', 'unavailable')} / "

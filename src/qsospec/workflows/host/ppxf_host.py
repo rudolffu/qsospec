@@ -30,6 +30,7 @@ from .templates import (
     PPXFTemplateLibrary,
 )
 from .preconvolved_templates import validate_preconvolved_xsl_product
+from ...measurement_vocabulary import ppxf_host_sample_name
 from ...resolution import match_template_resolution_toward_data
 
 
@@ -1710,13 +1711,14 @@ def fitted_host_fraction_samples(fit: PPXFHostFitResult) -> Dict[str, float]:
         host = _interp_no_extrapolate(wave, fit.preprocessed.wave_rest, fit.host_model)
         agn = _interp_no_extrapolate(wave, fit.preprocessed.wave_rest, fit.agn_model)
         total = _interp_no_extrapolate(wave, fit.preprocessed.wave_rest, fit.total_model)
-        samples[f"fHostFit_{suffix}"] = host
-        samples[f"fAGNFit_{suffix}"] = agn
-        samples[f"fTotalFit_{suffix}"] = total
+        samples[ppxf_host_sample_name("host", suffix)] = host
+        samples[ppxf_host_sample_name("agn", suffix)] = agn
+        samples[ppxf_host_sample_name("total", suffix)] = total
+        fraction_name = ppxf_host_sample_name("host_fraction", suffix)
         if np.isfinite(host) and np.isfinite(total) and total != 0:
-            samples[f"fracHost_{suffix}"] = float(host / total)
+            samples[fraction_name] = float(host / total)
         else:
-            samples[f"fracHost_{suffix}"] = float("nan")
+            samples[fraction_name] = float("nan")
     return samples
 
 
@@ -1809,7 +1811,6 @@ def _summary_dict(
             ).items()
         },
         "qsospec_reduced_chi2": np.nan,
-        "fAGN_5100": _interp_no_extrapolate(5100.0, fit.preprocessed.wave_rest, fit.agn_model),
         "broad_Halpha_detected": False,
         "broad_Hbeta_detected": False,
         "host_model_reliability": "template_weighted_ppxf_fit",

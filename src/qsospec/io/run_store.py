@@ -28,6 +28,16 @@ from ..global_result import (
     WorkflowResult,
 )
 from ..metadata import resolve_spectrum_metadata
+from ..measurement_vocabulary import (
+    HOST_FRACTION_DELTA_DEFINITION_ID,
+    MEASUREMENT_VOCABULARY_VERSION,
+    canonicalize_host_fit_samples,
+    canonicalize_legacy_measurement_name,
+    delta_host_fraction_name,
+    host_sample_measurement_descriptor,
+    is_final_host_fraction_name,
+    ppxf_host_sample_name,
+)
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
@@ -303,6 +313,9 @@ def _measurement_rows(
         errors: Mapping[str, Any],
         method: str,
         units: Optional[Mapping[str, str]] = None,
+        metadata_by_quantity: Optional[
+            Mapping[str, Mapping[str, Any]]
+        ] = None,
     ) -> None:
         for quantity, value in values.items():
             numeric = _float(value)
@@ -323,7 +336,9 @@ def _measurement_rows(
                     "error": _float(errors.get(quantity)),
                     "unit": (units or {}).get(str(quantity)),
                     "method": method,
-                    "metadata": [],
+                    "metadata": _key_values(
+                        (metadata_by_quantity or {}).get(str(quantity), {})
+                    ),
                 }
             )
 
@@ -369,19 +384,99 @@ def _measurement_rows(
             fit.metric_errors,
             "covariance",
         )
-    for quantity, value in result.metadata.get("continuum_samples", {}).items():
-        add("continuum_sample", None, {quantity: value}, {}, "interpolation")
-    for quantity, value in result.metadata.get("host_fit_samples", {}).items():
+    host_strategy = result.metadata.get("host_strategy_used")
+    continuum_samples = result.metadata.get("continuum_samples", {})
+    for quantity, value in continuum_samples.items():
+        descriptor = host_sample_measurement_descriptor(
+            "continuum_sample",
+            str(quantity),
+            host_strategy_used=host_strategy,
+        )
+        add(
+            "continuum_sample",
+            None,
+            {quantity: value},
+            {},
+            descriptor["method"] if descriptor else "interpolation",
+            units=(
+                {quantity: descriptor["unit"]}
+                if descriptor else None
+            ),
+            metadata_by_quantity=(
+                {quantity: descriptor["metadata"]}
+                if descriptor else None
+            ),
+        )
+    host_fit_samples = result.metadata.get("host_fit_samples", {})
+    for quantity, value in host_fit_samples.items():
+        descriptor = host_sample_measurement_descriptor(
+            "host_sample",
+            str(quantity),
+            host_strategy_used=host_strategy,
+        )
         add(
             "host_sample",
             None,
             {quantity: value},
             {},
-            "ppxf_component_interpolation",
+            descriptor["method"] if descriptor else "ppxf_component_interpolation",
             units={quantity: (
-                "dimensionless" if str(quantity).startswith("fracHost_")
-                else "input_flux_density"
+                descriptor["unit"]
+                if descriptor else "input_flux_density"
             )},
+            metadata_by_quantity=(
+                {quantity: descriptor["metadata"]}
+                if descriptor else None
+            ),
+        )
+    for final_name, final_value in continuum_samples.items():
+        if not is_final_host_fraction_name(str(final_name)):
+            continue
+        suffix = str(final_name).removeprefix("fracHost_")
+        ppxf_name = ppxf_host_sample_name("host_fraction", suffix)
+        ppxf_value = host_fit_samples.get(ppxf_name)
+        final_numeric = _float(final_value)
+        ppxf_numeric = _float(ppxf_value)
+        if (
+            final_numeric is None
+            or ppxf_numeric is None
+            or not np.isfinite(final_numeric)
+            or not np.isfinite(ppxf_numeric)
+        ):
+            continue
+        delta_name = delta_host_fraction_name(suffix)
+        descriptor = host_sample_measurement_descriptor(
+            "continuum_sample",
+            str(final_name),
+            host_strategy_used=host_strategy,
+        )
+        wavelength = (
+            descriptor["metadata"].get("wavelength_rest_angstrom")
+            if descriptor else None
+        )
+        add(
+            "host_metric",
+            None,
+            {delta_name: final_numeric - ppxf_numeric},
+            {},
+            "derived_host_fraction_comparison",
+            units={delta_name: "dimensionless"},
+            metadata_by_quantity={
+                delta_name: {
+                    "measurement_vocabulary_version": (
+                        MEASUREMENT_VOCABULARY_VERSION
+                    ),
+                    "definition_id": HOST_FRACTION_DELTA_DEFINITION_ID,
+                    "final_quantity": str(final_name),
+                    "ppxf_quantity": ppxf_name,
+                    "wavelength_rest_angstrom": wavelength,
+                    "sign_convention": (
+                        "positive means the final qsospec-refined fraction "
+                        "is more host-dominated than the direct pPXF fraction"
+                    ),
+                    "host_strategy_used": host_strategy,
+                }
+            },
         )
     host_quality = result.metadata.get("host_fit_quality", {})
     host_scalars = {
@@ -473,6 +568,62 @@ def _measurement_rows(
         units=host_units,
     )
     return rows
+
+
+def canonicalize_measurement_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return vocabulary-v2 measurement rows without mutating stored rows."""
+
+    output: list[dict[str, Any]] = []
+    host_keys: dict[tuple[str, str], tuple[str, float | None]] = {}
+    for raw_row in rows:
+        row = dict(raw_row)
+        section = str(row.get("section", ""))
+        stored_quantity = str(row.get("quantity", ""))
+        quantity, legacy_metadata = canonicalize_legacy_measurement_name(
+            section, stored_quantity
+        )
+        row["quantity"] = quantity
+        metadata = _from_key_values(row.get("metadata"))
+        descriptor = host_sample_measurement_descriptor(
+            section,
+            quantity,
+            host_strategy_used=metadata.get("host_strategy_used"),
+        )
+        if descriptor is not None:
+            metadata = {**descriptor["metadata"], **metadata}
+            row["unit"] = descriptor["unit"]
+            row["method"] = descriptor["method"]
+        metadata.update(legacy_metadata)
+        row["metadata"] = _key_values(metadata)
+
+        if descriptor is not None:
+            key = (str(row.get("object_key", "")), quantity)
+            value = _float(row.get("value"))
+            if key in host_keys:
+                previous_section, previous_value = host_keys[key]
+                raise ValueError(
+                    "Canonical host-measurement collision for object "
+                    f"{key[0]!r}, quantity {quantity!r}: sections "
+                    f"{previous_section!r} and {section!r}, values "
+                    f"{previous_value!r} and {value!r}. Explicit source "
+                    "resolution is required."
+                )
+            host_keys[key] = (section, value)
+        output.append(row)
+    return output
+
+
+def canonicalize_measurement_table(table: pa.Table) -> pa.Table:
+    """Return a vocabulary-v2 Arrow view of a raw measurement table."""
+
+    if table.num_rows == 0:
+        return _empty_table("measurements")
+    return pa.Table.from_pylist(
+        canonicalize_measurement_rows(table.to_pylist()),
+        schema=SCHEMAS["measurements"],
+    )
 
 
 def _warning_rows(
@@ -755,6 +906,16 @@ class RunStore:
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             cls._require_current_schema(manifest)
+            vocabulary_version = str(
+                manifest.get("measurement_vocabulary_version", "1")
+            )
+            if vocabulary_version != MEASUREMENT_VOCABULARY_VERSION:
+                raise ValueError(
+                    "Cannot resume a run written with measurement vocabulary "
+                    f"{vocabulary_version!r} using vocabulary "
+                    f"{MEASUREMENT_VOCABULARY_VERSION!r}. The historical run "
+                    "remains readable; use a new run directory for new fits."
+                )
             if manifest.get("configuration_hash") != config_hash:
                 raise ValueError(
                     "Run configuration does not match the immutable manifest. "
@@ -772,6 +933,9 @@ class RunStore:
         )
         manifest = {
             "schema_version": SCHEMA_VERSION,
+            "measurement_vocabulary_version": (
+                MEASUREMENT_VOCABULARY_VERSION
+            ),
             "run_id": actual_run_id,
             "configuration_hash": config_hash,
             "configuration": _jsonable(
@@ -1128,6 +1292,23 @@ class RunStore:
         dataset = pads.dataset([str(path) for path in files], format="parquet")
         return dataset.to_table(columns=columns, filter=filter_expression)
 
+    def read_measurements(
+        self,
+        *,
+        canonical: bool = True,
+        filter_expression: Any = None,
+    ) -> pa.Table:
+        """Read measurements, using vocabulary v2 unless raw access is requested.
+
+        ``read_table("measurements")`` and ``canonical=False`` preserve the
+        exact strings stored in historical Parquet shards.
+        """
+
+        table = self.read_table(
+            "measurements", filter_expression=filter_expression
+        )
+        return canonicalize_measurement_table(table) if canonical else table
+
     def object_row(
         self,
         identifier: str,
@@ -1206,11 +1387,25 @@ def load_model_by_key(
     store = open_run(run) if isinstance(run, str) else run
     row = store.object_row_by_key("models", object_key)
     object_row = store.object_row_by_key("objects", object_key)
-    measurement_rows = store.read_object_table(
-        "measurements", object_key
+    measurement_rows = canonicalize_measurement_table(
+        store.read_object_table("measurements", object_key)
     ).to_pylist()
     warning_rows = store.read_object_table("warnings", object_key).to_pylist()
     workflow_metadata = _from_key_values(row["workflow_metadata"])
+    raw_host_fit_samples = workflow_metadata.get("host_fit_samples", {})
+    if isinstance(raw_host_fit_samples, Mapping):
+        canonical_samples, legacy_mappings = canonicalize_host_fit_samples(
+            raw_host_fit_samples
+        )
+        workflow_metadata["host_fit_samples"] = canonical_samples
+        if legacy_mappings:
+            workflow_metadata[
+                "host_fit_sample_legacy_name_mappings"
+            ] = legacy_mappings
+    workflow_metadata.setdefault(
+        "measurement_vocabulary_version",
+        str(store.manifest.get("measurement_vocabulary_version", "1")),
+    )
     host_reconstruction_state = workflow_metadata.pop(
         "host_reconstruction_state", None
     )
@@ -1549,13 +1744,24 @@ def build_science_catalog(
     objects = store.read_table("objects").to_pandas()
     if not specification:
         return objects
-    measurements = store.read_table("measurements").to_pandas()
+    measurements = store.read_measurements(canonical=True).to_pandas()
     catalog = objects.copy()
     for output_name, selector in specification.items():
         selected = measurements.copy()
         for key in ("section", "recipe_id", "feature_id", "role", "quantity"):
             if selector.get(key) is not None:
                 selected = selected[selected[key] == selector[key]]
+        duplicated = selected["object_key"].duplicated(keep=False)
+        if bool(duplicated.any()):
+            collisions = selected.loc[
+                duplicated,
+                ["object_key", "section", "recipe_id", "quantity", "value"],
+            ].to_dict("records")
+            raise ValueError(
+                f"Catalog selector {output_name!r} is not unique per object; "
+                "add explicit section/recipe/source constraints. Sample: "
+                f"{collisions[:5]}"
+            )
         values = selected.set_index("object_key")["value"]
         errors = selected.set_index("object_key")["error"]
         catalog[output_name] = catalog["object_key"].map(values)

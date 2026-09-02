@@ -81,8 +81,11 @@ the same components.
 ``ppxf_agn_fraction_flux_global`` is the wavelength-integrated AGN
 pseudo-continuum fraction over valid, non-emission-line pPXF pixels. Its
 wavelength support is recorded with the fit. Values above 0.8 produce a
-warning, not an automatic reliability veto. In contrast, ``fAGN_5100`` is a
-flux-density sample and is not a fraction.
+warning, not an automatic reliability veto. Direct local pPXF samples use
+names such as ``fAGN_pPXF_5100`` and ``fracHost_pPXF_5100``. In contrast,
+``fAGN_5100`` is the final qsospec AGN-continuum flux density, not a fraction,
+and ``fracHost_5100`` is the final fraction using that continuum with the pPXF
+stellar host. See :ref:`host-fraction-vocabulary`.
 
 Coverage and model closure
 --------------------------

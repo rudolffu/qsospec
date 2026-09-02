@@ -31,6 +31,7 @@ from ..global_result import (
     HbetaComplexResult,
     WorkflowResult,
 )
+from ..measurement_vocabulary import MEASUREMENT_VOCABULARY_VERSION
 from ..spectrum import Spectrum, require_rest_frame_flux
 from ..templates import (
     evaluate_balmer_pseudocontinuum,
@@ -3501,6 +3502,7 @@ def fit_global_lines(
             resolved_global_cfg.balmer_width_sync_tolerance_kms
         ),
         "continuum_samples": samples,
+        "measurement_vocabulary_version": MEASUREMENT_VOCABULARY_VERSION,
         "continuum_sample_flux_density_unit": spectrum.flux_density_unit,
         "flux_frame": spectrum.flux_frame,
         "rest_frame_conversion": dict(

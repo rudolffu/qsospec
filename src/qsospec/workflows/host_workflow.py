@@ -23,6 +23,7 @@ from ..extinction import correct_spectrum_data
 from ..fitting.global_fit import fit_global_lines
 from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
+from ..measurement_vocabulary import MEASUREMENT_VOCABULARY_VERSION
 from ..result import LocalFitResult
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
@@ -988,6 +989,9 @@ def _run_global_fit_with_optional_host(
             "dec": spectrum_data.dec,
             "redshift": fit_spectrum.z,
             "fit_kind": "global",
+            "measurement_vocabulary_version": (
+                MEASUREMENT_VOCABULARY_VERSION
+            ),
             "flux_frame": fit_spectrum.flux_frame,
             "rest_frame_conversion": dict(
                 fit_spectrum.metadata.rest_frame_conversion

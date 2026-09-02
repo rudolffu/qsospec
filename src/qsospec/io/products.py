@@ -740,7 +740,7 @@ def _host_fraction_annotation(result: WorkflowResult) -> str:
         fraction = samples.get(f"fracHost_{wavelength}")
         if fraction is not None and np.isfinite(fraction):
             entries.append(
-                rf"$f_{{\rm host}}({wavelength}\,\mathrm{{\AA}})="
+                rf"$f_{{\rm host,final}}({wavelength}\,\mathrm{{\AA}})="
                 f"{100.0 * float(fraction):.1f}\\%$"
             )
     return "\n".join(entries)

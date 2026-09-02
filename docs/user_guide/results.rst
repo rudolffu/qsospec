@@ -50,3 +50,9 @@ Archived results
 Use :func:`qsospec.open_run`, :func:`qsospec.load_model`, and
 :func:`qsospec.build_science_catalog` to inspect run bundles without
 refitting. See :doc:`../reference/run_bundles`.
+
+For host-decomposed spectra, keep the final ``fracHost_<wave>`` quantity
+separate from the direct ``fracHost_pPXF_<wave>`` measurement. The former uses
+the final qsospec AGN continuum; the latter divides the pPXF stellar component
+by the direct pPXF total. Their complete definitions are listed in
+:ref:`host-fraction-vocabulary`.
