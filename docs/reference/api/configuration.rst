@@ -23,3 +23,7 @@ Configuration API
    ComponentRecipe
    ComplexRecipe
    GlobalQAPlotConfig
+   HostDecompConfig
+   HostBroadLinePrefitConfig
+   HostAgnPseudoContinuumConfig
+   HostCoverageConfig

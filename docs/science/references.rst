@@ -190,6 +190,12 @@ Emission-line fitting, catalogues, and automated pipelines
 AGN-host decomposition and stellar-continuum fitting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+- `Aydar et al. (2026), 2026A&A...710A.141A <https://ui.adsabs.harvard.edu/abs/2026A%26A...710A.141A/abstract>`__
+  — pPXF decomposition of type-1 AGN with stellar, power-law, Fe II, Balmer,
+  and emission-line templates; the optional qsospec masked pseudo-continuum
+  host strategy is explicitly inspired by, but does not exactly reproduce,
+  this method.
+
 - `Yip et al. (2004), 2004AJ....128.2603Y <https://ui.adsabs.harvard.edu/abs/2004AJ....128.2603Y/abstract>`__
   — SDSS quasar eigenspectra and PCA decomposition.
 

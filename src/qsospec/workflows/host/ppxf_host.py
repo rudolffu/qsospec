@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import json
@@ -13,7 +14,14 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_dilation, binary_propagation, gaussian_filter1d
 
-from .config import DEFAULT_LINE_CENTERS, DEFAULT_OBSERVED_ARTIFACT_WINDOWS
+from .agn_templates import HostAgnTemplateBundle, build_host_agn_template_bundle
+from .config import (
+    DEFAULT_LINE_CENTERS,
+    DEFAULT_OBSERVED_ARTIFACT_WINDOWS,
+    HostAgnPseudoContinuumConfig,
+    HostCoverageConfig,
+)
+from .coverage import HostCoverageResult, classify_host_coverage
 from .io import SpectrumData
 from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
 from ...resolution import additional_template_sigma
@@ -80,6 +88,18 @@ class PPXFHostFitResult:
     host_fit_reliable: bool = True
     host_fit_reliability_reasons: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    strategy_requested: str = "masked_simple"
+    strategy_used: str = "masked_simple"
+    strategy_fallback: bool = False
+    strategy_fallback_reason: Optional[str] = None
+    component_models_log: Dict[str, np.ndarray] = field(default_factory=dict)
+    component_models: Dict[str, np.ndarray] = field(default_factory=dict)
+    component_weights: Dict[str, float] = field(default_factory=dict)
+    component_metadata: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    coverage: Optional[HostCoverageResult] = None
+    ppxf_agn_fraction_flux_global: float = np.nan
+    ppxf_high_agn_fraction_warning: bool = False
+    closure_metrics: Dict[str, Any] = field(default_factory=dict)
     ppxf_result: Any = None
 
 
@@ -414,6 +434,94 @@ def _resample_stellar_templates(prep: PreprocessedSpectrum, templates: PPXFTempl
     return matrix / scales, scales, in_range
 
 
+def _interpolate_component(
+    preprocessed: PreprocessedSpectrum,
+    values_log: np.ndarray,
+) -> np.ndarray:
+    values = np.interp(
+        preprocessed.wave_rest,
+        preprocessed.wave_log,
+        np.asarray(values_log, dtype=float),
+        left=np.nan,
+        right=np.nan,
+    )
+    return values * preprocessed.normalization
+
+
+def _closure_diagnostics(
+    bestfit: np.ndarray,
+    physical_total: np.ndarray,
+    normalization: float,
+    *,
+    explained_by_legacy_polynomial: bool,
+) -> Dict[str, Any]:
+    residual = np.asarray(bestfit, dtype=float) - np.asarray(physical_total, dtype=float)
+    finite = residual[np.isfinite(residual)]
+    if finite.size == 0:
+        return {
+            "closure_rms": np.nan,
+            "closure_median_absolute": np.nan,
+            "closure_p95_absolute": np.nan,
+            "closure_max_absolute": np.nan,
+            "closure_relative_to_normalization": np.nan,
+            "closure_status": "unavailable",
+        }
+    absolute = np.abs(finite)
+    rms = float(np.sqrt(np.mean(finite**2)))
+    relative = rms / max(abs(float(normalization)), np.finfo(float).eps)
+    if relative <= 1.0e-6:
+        status = "numerical"
+    elif explained_by_legacy_polynomial:
+        status = "legacy_polynomial_not_decomposed"
+    else:
+        status = "mismatch"
+    return {
+        "closure_rms": rms,
+        "closure_median_absolute": float(np.median(absolute)),
+        "closure_p95_absolute": float(np.percentile(absolute, 95.0)),
+        "closure_max_absolute": float(np.max(absolute)),
+        "closure_relative_to_normalization": float(relative),
+        "closure_status": status,
+    }
+
+
+def _global_agn_fraction(
+    wave: np.ndarray,
+    stellar: np.ndarray,
+    agn: np.ndarray,
+    good_mask: np.ndarray,
+) -> Tuple[float, Dict[str, Any]]:
+    mask = (
+        np.asarray(good_mask, dtype=bool)
+        & np.isfinite(wave)
+        & np.isfinite(stellar)
+        & np.isfinite(agn)
+    )
+    count = int(np.count_nonzero(mask))
+    available = int(np.count_nonzero(np.isfinite(wave)))
+    metadata = {
+        "ppxf_agn_fraction_wave_min": float(np.nanmin(wave[mask])) if count else np.nan,
+        "ppxf_agn_fraction_wave_max": float(np.nanmax(wave[mask])) if count else np.nan,
+        "ppxf_agn_fraction_valid_pixel_count": count,
+        "ppxf_agn_fraction_valid_fraction": float(count / available) if available else 0.0,
+        "ppxf_agn_fraction_definition_version": "flux_integral_v1",
+    }
+    if count < 2:
+        metadata["ppxf_agn_fraction_status"] = "insufficient_pixels"
+        return np.nan, metadata
+    order = np.argsort(wave[mask])
+    selected_wave = wave[mask][order]
+    agn_integral = float(np.trapezoid(agn[mask][order], selected_wave))
+    denominator = float(
+        np.trapezoid((agn[mask] + stellar[mask])[order], selected_wave)
+    )
+    if not np.isfinite(denominator) or denominator <= 0:
+        metadata["ppxf_agn_fraction_status"] = "invalid_denominator"
+        return np.nan, metadata
+    metadata["ppxf_agn_fraction_status"] = "available"
+    return float(agn_integral / denominator), metadata
+
+
 def run_ppxf_host_fit(
     preprocessed: PreprocessedSpectrum,
     templates: PPXFTemplateLibrary,
@@ -430,14 +538,58 @@ def run_ppxf_host_fit(
     minimum_clean_pixels: int = 200,
     minimum_continuum_snr: float = 2.0,
     maximum_clipped_fraction: float = 0.25,
+    strategy: str = "masked_simple",
+    strategy_requested: Optional[str] = None,
+    strategy_fallback: bool = False,
+    strategy_fallback_reason: Optional[str] = None,
+    agn_pseudocontinuum_config: Optional[HostAgnPseudoContinuumConfig] = None,
+    selected_pseudocontinuum_fwhm_kms: Optional[float] = None,
+    coverage_config: Optional[HostCoverageConfig] = None,
     quiet: bool = True,
 ) -> PPXFHostFitResult:
     """Run a staged, robust pPXF stellar-host fit."""
 
     ppxf = _require_ppxf()
+    try:
+        from importlib.metadata import version as package_version
+
+        ppxf_version = package_version("ppxf")
+    except Exception:  # noqa: BLE001 - provenance is best effort
+        ppxf_version = "unknown"
     warnings_out = list(preprocessed.warnings) + list(templates.warnings)
+    if strategy not in {"masked_simple", "agn_pseudocontinuum_masked"}:
+        raise ValueError(f"Unknown host strategy: {strategy!r}")
+    stellar_template_start = perf_counter()
     stellar_matrix, stellar_scales, in_template_range = _resample_stellar_templates(preprocessed, templates)
-    agn_matrix = _build_agn_basis(preprocessed.wave_log, agn_powerlaw_slopes)
+    stellar_template_seconds = perf_counter() - stellar_template_start
+    agn_bundle: Optional[HostAgnTemplateBundle] = None
+    agn_template_seconds = 0.0
+    if strategy == "agn_pseudocontinuum_masked":
+        if selected_pseudocontinuum_fwhm_kms is None:
+            raise ValueError(
+                "agn_pseudocontinuum_masked requires a selected broad-line width."
+            )
+        agn_cfg = agn_pseudocontinuum_config or HostAgnPseudoContinuumConfig()
+        agn_template_start = perf_counter()
+        agn_bundle = build_host_agn_template_bundle(
+            preprocessed.wave_log,
+            selected_fwhm_kms=float(selected_pseudocontinuum_fwhm_kms),
+            valid_mask=preprocessed.validity_mask_log & in_template_range,
+            config=agn_cfg,
+            redshift=preprocessed.redshift,
+            spectral_resolution=preprocessed.metadata.get("spectral_resolution"),
+        )
+        agn_template_seconds = perf_counter() - agn_template_start
+        agn_matrix = agn_bundle.matrix
+        in_template_range &= agn_bundle.support_mask
+        polynomial_degree = int(agn_cfg.additive_polynomial_degree)
+        multiplicative_polynomial_degree = int(
+            agn_cfg.multiplicative_polynomial_degree
+        )
+        active_slopes = np.asarray(agn_cfg.powerlaw_slopes, dtype=float)
+    else:
+        agn_matrix = _build_agn_basis(preprocessed.wave_log, agn_powerlaw_slopes)
+        active_slopes = np.asarray(agn_powerlaw_slopes, dtype=float)
     fit_templates = np.column_stack([stellar_matrix, agn_matrix])
 
     base_good = (
@@ -462,21 +614,38 @@ def run_ppxf_host_fit(
             raise ValueError(
                 f"Too few pPXF good pixels after masking: {goodpixels.size}"
             )
+        fit_kwargs = {
+            "goodpixels": goodpixels,
+            "degree": int(polynomial_degree),
+            "mdegree": int(multiplicative_polynomial_degree),
+            "quiet": quiet,
+        }
+        start: Any = [0.0, 150.0]
+        if strategy == "agn_pseudocontinuum_masked" and agn_matrix.shape[1]:
+            fit_kwargs.update(
+                {
+                    "component": np.r_[
+                        np.zeros(stellar_matrix.shape[1], dtype=int),
+                        np.ones(agn_matrix.shape[1], dtype=int),
+                    ],
+                    "moments": [2, -2],
+                    "linear_method": "lsq_box",
+                }
+            )
+            start = [[0.0, 150.0], [0.0, 0.01]]
         fitted = ppxf(
             fit_templates,
             preprocessed.flux_log,
             noise,
             preprocessed.velscale,
-            start=[0.0, 150.0],
-            goodpixels=goodpixels,
-            degree=int(polynomial_degree),
-            mdegree=int(multiplicative_polynomial_degree),
-            quiet=quiet,
+            start=start,
+            **fit_kwargs,
         )
         return fitted, good
 
     empty_clip = np.zeros_like(base_good)
     noise_work = np.asarray(preprocessed.noise_log, dtype=float).copy()
+    ppxf_fit_start = perf_counter()
     result, _ = fit_once(initial_emission, empty_clip, noise_work)
 
     standardized = (
@@ -602,6 +771,11 @@ def run_ppxf_host_fit(
             / noise_work[final_good]
         )
     ) if clean_count else 0.0
+    coverage = classify_host_coverage(
+        preprocessed.wave_log,
+        base_good,
+        coverage_config,
+    )
     reliability_reasons: List[str] = []
     resolution_status = str(preprocessed.metadata.get("host_fit_resolution_status", "missing"))
     if resolution_status != "valid":
@@ -614,6 +788,11 @@ def run_ppxf_host_fit(
         reliability_reasons.append("continuum_snr_below_threshold")
     if clipped_fraction > float(maximum_clipped_fraction):
         reliability_reasons.append("clipped_fraction_above_threshold")
+    if coverage.coverage_class == "blue_optical":
+        reliability_reasons.append("limited_wavelength_leverage")
+    elif coverage.coverage_class == "insufficient":
+        reliability_reasons.append("insufficient_host_wavelength_coverage")
+    ppxf_fit_seconds = perf_counter() - ppxf_fit_start
     quality_metrics: Dict[str, Any] = {
         "available_pixel_count": available_count,
         "clean_pixel_count": clean_count,
@@ -630,24 +809,187 @@ def run_ppxf_host_fit(
         "final_goodpixel_count": clean_count,
         "resolution_status": resolution_status,
         "template_coverage_fraction": float(np.count_nonzero(in_template_range) / len(in_template_range)),
+        "host_coverage_class": coverage.coverage_class,
+        "host_feature_coverage": dict(coverage.feature_coverage),
+        "host_coverage_reasons": list(coverage.reasons),
+        "ppxf_version": ppxf_version,
+        "stellar_template_source": templates.source_path,
+        "stellar_template_sha256": templates.metadata.get("source_sha256"),
+        "stellar_template_prepare_seconds": float(
+            stellar_template_seconds
+        ),
+        "agn_template_build_seconds": float(agn_template_seconds),
+        "ppxf_fit_seconds": float(ppxf_fit_seconds),
     }
 
     weights = np.asarray(getattr(result, "weights", np.zeros(fit_templates.shape[1])), dtype=float)
     n_stellar = stellar_matrix.shape[1]
     stellar_weights = weights[:n_stellar]
     agn_weights = weights[n_stellar:]
-    host_log_norm = stellar_matrix @ stellar_weights
-    agn_log_norm = agn_matrix @ agn_weights if agn_matrix.size else np.zeros_like(host_log_norm)
-    total_log_norm = np.asarray(getattr(result, "bestfit", host_log_norm + agn_log_norm), dtype=float)
+    ppxf_matrix = np.asarray(getattr(result, "matrix", fit_templates), dtype=float)
+    transformed_templates = ppxf_matrix[:, -len(weights):]
+    transformed_stellar = transformed_templates[:, :n_stellar]
+    transformed_agn = transformed_templates[:, n_stellar:]
+    host_log_norm = transformed_stellar @ stellar_weights
+    agn_log_norm = (
+        transformed_agn @ agn_weights
+        if transformed_agn.size
+        else np.zeros_like(host_log_norm)
+    )
+    total_log_norm = np.asarray(
+        getattr(result, "bestfit", host_log_norm + agn_log_norm),
+        dtype=float,
+    )
     residual_log_norm = preprocessed.flux_log - total_log_norm
 
-    host_model = np.interp(preprocessed.wave_rest, preprocessed.wave_log, host_log_norm, left=np.nan, right=np.nan)
-    agn_model = np.interp(preprocessed.wave_rest, preprocessed.wave_log, agn_log_norm, left=np.nan, right=np.nan)
-    total_model = np.interp(preprocessed.wave_rest, preprocessed.wave_log, total_log_norm, left=np.nan, right=np.nan)
+    component_models_log_norm: Dict[str, np.ndarray] = {
+        "stellar": host_log_norm,
+    }
+    component_weights: Dict[str, float] = {}
+    component_metadata: Dict[str, Dict[str, Any]] = {}
+    if agn_bundle is None:
+        component_models_log_norm["powerlaw"] = agn_log_norm
+        component_weights.update(
+            {
+                f"powerlaw_slope_{slope:+.1f}": float(weight)
+                for slope, weight in zip(active_slopes, agn_weights)
+            }
+        )
+    else:
+        aggregates: Dict[str, np.ndarray] = {}
+        category_names = {
+            "agn_powerlaw": "powerlaw",
+            "agn_feii_optical": "feii_optical",
+            "agn_feii_uv": "feii_uv",
+            "agn_balmer_continuum": "balmer_continuum",
+            "agn_balmer_high_order": "balmer_high_order",
+        }
+        grouped_components: Dict[str, list] = {}
+        for component_item in agn_bundle.components:
+            grouped_components.setdefault(
+                component_item.linear_group, []
+            ).append(component_item)
+        for group, items in grouped_components.items():
+            column = agn_bundle.group_column_indices[group]
+            weight = float(agn_weights[column])
+            group_model = transformed_agn[:, column] * weight
+            raw_group = np.sum([item.values for item in items], axis=0)
+            for component_item in items:
+                fraction = np.divide(
+                    component_item.values,
+                    raw_group,
+                    out=np.zeros_like(raw_group),
+                    where=np.abs(raw_group) > np.finfo(float).eps,
+                )
+                model = group_model * fraction
+                key = category_names[component_item.category]
+                aggregates[key] = aggregates.get(key, np.zeros_like(model)) + model
+                component_weights[component_item.name] = weight
+                component_metadata[component_item.name] = {
+                    **component_item.metadata,
+                    "category": component_item.category,
+                    "source_id": component_item.source_id,
+                    "source_reference": component_item.source_reference,
+                    "selected_fwhm_kms": component_item.selected_fwhm_kms,
+                    "normalization": component_item.normalization,
+                    "wavelength_coverage": list(component_item.wavelength_coverage),
+                }
+        component_models_log_norm.update(aggregates)
+        component_metadata["bundle"] = dict(agn_bundle.metadata)
+    component_models_log_norm["agn_total"] = agn_log_norm
 
-    host_model *= preprocessed.normalization
-    agn_model *= preprocessed.normalization
-    total_model *= preprocessed.normalization
+    additive = np.zeros_like(total_log_norm)
+    multiplicative_effect = np.zeros_like(total_log_norm)
+    if strategy == "agn_pseudocontinuum_masked":
+        if int(polynomial_degree) >= 0:
+            candidate = np.asarray(
+                getattr(result, "apoly", np.zeros_like(total_log_norm)),
+                dtype=float,
+            )
+            if candidate.shape == additive.shape:
+                additive = candidate
+        if int(multiplicative_polynomial_degree) > 0:
+            multiplicative_effect = total_log_norm - (
+                host_log_norm + agn_log_norm + additive
+            )
+    physical_total = (
+        host_log_norm + agn_log_norm + additive + multiplicative_effect
+    )
+    closure_residual = total_log_norm - physical_total
+    component_models_log_norm.update(
+        {
+            "polynomial_additive": additive,
+            "polynomial_multiplicative_effect": multiplicative_effect,
+            "physical_component_total": physical_total,
+            "ppxf_bestfit": total_log_norm,
+            "closure_residual": closure_residual,
+        }
+    )
+    closure_metrics = _closure_diagnostics(
+        total_log_norm,
+        physical_total,
+        1.0,
+        explained_by_legacy_polynomial=(
+            strategy == "masked_simple" and int(polynomial_degree) >= 0
+        ),
+    )
+    if closure_metrics["closure_status"] == "mismatch":
+        reliability_reasons.append("unexplained_component_closure_mismatch")
+    if np.any(agn_weights < -1.0e-10):
+        reliability_reasons.append("negative_agn_template_weight")
+
+    agn_fraction, agn_fraction_metadata = _global_agn_fraction(
+        preprocessed.wave_log,
+        host_log_norm,
+        agn_log_norm,
+        final_good,
+    )
+    threshold = (
+        (agn_pseudocontinuum_config or HostAgnPseudoContinuumConfig())
+        .global_fagn_warning_threshold
+        if strategy == "agn_pseudocontinuum_masked"
+        else 0.8
+    )
+    high_agn_fraction = bool(
+        np.isfinite(agn_fraction) and agn_fraction > float(threshold)
+    )
+    quality_metrics.update(
+        {
+            **closure_metrics,
+            **agn_fraction_metadata,
+            "ppxf_agn_fraction_flux_global": float(agn_fraction),
+            "ppxf_agn_fraction_components": [
+                key
+                for key in component_models_log_norm
+                if key
+                in {
+                    "powerlaw",
+                    "feii_optical",
+                    "feii_uv",
+                    "balmer_continuum",
+                    "balmer_high_order",
+                }
+            ],
+            "ppxf_agn_fraction_weight_aydar": np.nan,
+            "ppxf_agn_fraction_weight_aydar_status": (
+                "exact_definition_not_reproduced"
+            ),
+            "ppxf_high_agn_fraction_warning": high_agn_fraction,
+            "ppxf_high_agn_fraction_warning_threshold": float(threshold),
+        }
+    )
+
+    host_model = _interpolate_component(preprocessed, host_log_norm)
+    agn_model = _interpolate_component(preprocessed, agn_log_norm)
+    total_model = _interpolate_component(preprocessed, total_log_norm)
+    component_models_log = {
+        key: value * preprocessed.normalization
+        for key, value in component_models_log_norm.items()
+    }
+    component_models = {
+        key: _interpolate_component(preprocessed, value)
+        for key, value in component_models_log_norm.items()
+    }
     residual = preprocessed.flux - total_model
 
     sol = np.ravel(np.asarray(getattr(result, "sol", [np.nan, np.nan]), dtype=float))
@@ -665,7 +1007,7 @@ def run_ppxf_host_fit(
         stellar_weights=stellar_weights,
         agn_weights=agn_weights,
         stellar_template_scales=stellar_scales,
-        agn_slopes=np.asarray(agn_powerlaw_slopes, dtype=float),
+        agn_slopes=active_slopes,
         stellar_velocity=float(sol[0]) if sol.size else np.nan,
         stellar_sigma=float(sol[1]) if sol.size > 1 else np.nan,
         chi2=float(getattr(result, "chi2", np.nan)),
@@ -680,6 +1022,18 @@ def run_ppxf_host_fit(
         host_fit_reliable=not reliability_reasons,
         host_fit_reliability_reasons=reliability_reasons,
         warnings=warnings_out,
+        strategy_requested=strategy_requested or strategy,
+        strategy_used=strategy,
+        strategy_fallback=bool(strategy_fallback),
+        strategy_fallback_reason=strategy_fallback_reason,
+        component_models_log=component_models_log,
+        component_models=component_models,
+        component_weights=component_weights,
+        component_metadata=component_metadata,
+        coverage=coverage,
+        ppxf_agn_fraction_flux_global=float(agn_fraction),
+        ppxf_high_agn_fraction_warning=high_agn_fraction,
+        closure_metrics=closure_metrics,
         ppxf_result=result,
     )
 
@@ -795,6 +1149,31 @@ def _summary_dict(
         "host_fit_range_min": float(np.nanmin(fit.preprocessed.wave_log)),
         "host_fit_range_max": float(np.nanmax(fit.preprocessed.wave_log)),
         "ppxf_status": fit.status,
+        "host_strategy_requested": fit.strategy_requested,
+        "host_strategy_used": fit.strategy_used,
+        "host_strategy_fallback": fit.strategy_fallback,
+        "host_strategy_fallback_reason": fit.strategy_fallback_reason,
+        "host_method_reference": (
+            "Aydar et al. 2026, A&A, 710, A141"
+            if fit.strategy_requested == "agn_pseudocontinuum_masked"
+            else None
+        ),
+        "host_exact_replication": False,
+        "host_coverage_class": (
+            fit.coverage.coverage_class if fit.coverage is not None else None
+        ),
+        "host_feature_coverage": (
+            dict(fit.coverage.feature_coverage)
+            if fit.coverage is not None
+            else {}
+        ),
+        "ppxf_agn_fraction_flux_global": fit.ppxf_agn_fraction_flux_global,
+        "ppxf_high_agn_fraction_warning": (
+            fit.ppxf_high_agn_fraction_warning
+        ),
+        "host_component_weights": dict(fit.component_weights),
+        "host_component_metadata": dict(fit.component_metadata),
+        "host_closure": dict(fit.closure_metrics),
         "qsospec_status": qsospec_status,
         "qsospec_result_path": qsospec_result_path,
         "stellar_velocity": fit.stellar_velocity,
@@ -857,6 +1236,16 @@ def write_host_decomp_outputs(
         out / "ppxf_agn_continuum_model.csv",
         {"wave_rest": fit.preprocessed.wave_rest, "agn_flux": fit.agn_model},
     )
+    component_columns = {"wave_rest": fit.preprocessed.wave_rest}
+    component_columns.update(
+        {
+            f"ppxf_{name}": values
+            for name, values in fit.component_models.items()
+        }
+    )
+    files["ppxf_component_models"] = _write_csv(
+        out / "ppxf_component_models.csv", component_columns
+    )
     files["host_subtracted_spectrum"] = _write_csv(
         out / "host_subtracted_spectrum.csv",
         {"wave_obs": fit.preprocessed.wave_obs, "wave_rest": fit.preprocessed.wave_rest, "flux": host_subtracted_flux, "error": fit.preprocessed.error},
@@ -883,6 +1272,10 @@ def write_host_decomp_outputs(
         {"wave_rest": sed.wave_rest, "host_flux": sed.host_flux},
     )
     npz_path = out / "host_decomp_result.npz"
+    component_npz = {
+        f"ppxf_component_{name}": values
+        for name, values in fit.component_models.items()
+    }
     np.savez(
         npz_path,
         wave_obs=fit.preprocessed.wave_obs,
@@ -901,6 +1294,7 @@ def write_host_decomp_outputs(
         host_expanded_emission_mask_log=fit.expanded_emission_mask_log,
         host_residual_clip_mask_log=fit.residual_clip_mask_log,
         host_final_goodpixels_mask_log=fit.final_goodpixels_mask_log,
+        **component_npz,
     )
     files["host_decomp_result"] = str(npz_path)
     summary = _summary_dict(

@@ -42,6 +42,8 @@ intersphinx_mapping = {
     "matplotlib": ("https://matplotlib.org/stable/", None),
     "astropy": ("https://docs.astropy.org/en/stable/", None),
 }
+if os.environ.get("QSOSPEC_DOCS_OFFLINE") == "1":
+    intersphinx_mapping = {}
 
 myst_enable_extensions = [
     "colon_fence",

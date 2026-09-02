@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -120,6 +122,24 @@ def _coverage_warnings(wave_min: float, wave_max: float) -> List[str]:
     return warnings
 
 
+@lru_cache(maxsize=16)
+def _cached_file_sha256(
+    path_string: str, size: int, modified_ns: int
+) -> str:
+    digest = sha256()
+    with Path(path_string).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    stat = path.stat()
+    return _cached_file_sha256(
+        str(path.resolve()), int(stat.st_size), int(stat.st_mtime_ns)
+    )
+
+
 def _write_reports(report_dir: Path, report_name: str, payload: Dict[str, Any]) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
     json_path = report_dir / f"{report_name}.json"
@@ -174,6 +194,7 @@ def load_ppxf_npz_templates(
         payload = {
             "template_family": template_family,
             "source_path": str(source),
+            "source_sha256": _file_sha256(source),
             "keys": list(npz.files),
             "wavelength_key": wave_key,
             "template_key": template_key,
@@ -194,7 +215,7 @@ def load_ppxf_npz_templates(
         family=template_family,
         source_path=str(source),
         wavelength_coverage=(float(np.nanmin(wave)), float(np.nanmax(wave))),
-        metadata=metadata,
+        metadata={**metadata, "source_sha256": payload["source_sha256"]},
         original_shape=original_shape,
         warnings=list(payload["warnings"]),
     )

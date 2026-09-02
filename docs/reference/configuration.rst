@@ -77,6 +77,10 @@ package:
 - :class:`qsospec.LocalFitConfig`
 - :class:`qsospec.LineComplexConfig`
 - :class:`qsospec.GlobalQAPlotConfig`
+- :class:`qsospec.HostDecompConfig`
+- :class:`qsospec.HostBroadLinePrefitConfig`
+- :class:`qsospec.HostAgnPseudoContinuumConfig`
+- :class:`qsospec.HostCoverageConfig`
 
 The generated pages are grouped in :doc:`api/configuration`.
 
@@ -91,3 +95,21 @@ Selection precedence
 - Host decomposition and Galactic extinction are controlled independently.
 
 See :doc:`../user_guide/preprocessing` for workflow order.
+
+Host strategy preset
+--------------------
+
+The backward-compatible default is ``strategy="masked_simple"``. Enable the
+AGN-aware masked pseudo-continuum basis explicitly:
+
+.. code-block:: python
+
+   host_config = qsospec.HostDecompConfig(
+       strategy="agn_pseudocontinuum_masked"
+   )
+
+The nested prefit, pseudo-continuum, and coverage configurations are included
+in run hashing. ``use_regularization=True`` and historical
+``n_iterations != 1`` are rejected because they otherwise represented silent
+no-op settings. See
+:doc:`../how_to/agn_aware_ppxf_host_decomposition`.

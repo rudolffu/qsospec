@@ -2115,6 +2115,22 @@ def write_global_line_products(
         grid["flux_total_before_host"] = result.total_spectrum.flux
     if result.host_model_on_quasar_grid is not None:
         grid["ppxf_host_model"] = result.host_model_on_quasar_grid
+    host_product_names = {
+        "stellar": "ppxf_stellar_model",
+        "powerlaw": "ppxf_powerlaw_model",
+        "feii_optical": "ppxf_feii_optical_model",
+        "feii_uv": "ppxf_feii_uv_model",
+        "balmer_continuum": "ppxf_balmer_continuum_model",
+        "balmer_high_order": "ppxf_balmer_high_order_model",
+        "agn_total": "ppxf_agn_total_model",
+        "physical_component_total": "ppxf_physical_component_total",
+        "ppxf_bestfit": "ppxf_bestfit",
+        "closure_residual": "ppxf_closure_residual",
+        "host_subtracted_flux": "host_subtracted_flux",
+    }
+    for name, component in result.host_component_models.items():
+        column = host_product_names.get(name, f"ppxf_component_{name}")
+        grid[column] = component
     for name, component in result.continuum.component_models.items():
         grid[f"continuum_{name}"] = component
     for complex_name, fit in result.line_complexes.items():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from time import perf_counter
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -191,6 +192,7 @@ def _host_subtracted_spectrum(
     fit_range: Tuple[float, float],
     host_config: Optional[Any],
     source: str,
+    pseudocontinuum_width_override_kms: Optional[float] = None,
 ) -> Tuple[
     Spectrum,
     Spectrum,
@@ -203,6 +205,7 @@ def _host_subtracted_spectrum(
     list,
 ]:
     from .host.config import default_config
+    from .host.broad_line_prefit import run_host_broad_line_prefit
     from .host.ppxf_host import (
         prepare_spectrum_for_host_decomp,
         predict_host_sed,
@@ -212,11 +215,35 @@ def _host_subtracted_spectrum(
     from .host.templates import load_ppxf_npz_templates
 
     cfg = host_config or default_config()
-    templates = load_ppxf_npz_templates(template_root=template_root, template_file=template_file)
+    total_start = perf_counter()
+    default_root = "~/tools/ppxf_data"
+    default_file = "spectra_emiles_9.0.npz"
+    default_range = (3600.0, 7000.0)
+    effective_template_root = (
+        cfg.template_root
+        if template_root == default_root and cfg.template_root != default_root
+        else template_root
+    )
+    effective_template_file = (
+        cfg.template_file
+        if template_file == default_file and cfg.template_file != default_file
+        else template_file
+    )
+    effective_fit_range = (
+        cfg.fit_range
+        if tuple(fit_range) == default_range and tuple(cfg.fit_range) != default_range
+        else fit_range
+    )
+    templates = load_ppxf_npz_templates(
+        template_root=effective_template_root,
+        template_file=effective_template_file,
+        report_dir=cfg.output_dir,
+        template_family=cfg.template_family,
+    )
     prep = prepare_spectrum_for_host_decomp(
         spectrum_data,
         redshift=redshift,
-        fit_range=fit_range,
+        fit_range=effective_fit_range,
         line_mask_widths=cfg.line_mask_widths,
         broad_line_mask_widths=cfg.broad_line_mask_widths,
         observed_artifact_windows=cfg.observed_artifact_windows,
@@ -224,6 +251,45 @@ def _host_subtracted_spectrum(
         systematic_error_floor_fraction=cfg.systematic_error_floor_fraction,
     )
     prep.metadata["spectral_resolution"] = getattr(spectrum_data, "resolution", None)
+    strategy_requested = cfg.strategy
+    strategy_used = strategy_requested
+    strategy_fallback = False
+    strategy_fallback_reason = None
+    broad_prefit = None
+    selected_width = pseudocontinuum_width_override_kms
+    broad_prefit_seconds = 0.0
+    if strategy_requested == "agn_pseudocontinuum_masked":
+        if not cfg.agn_pseudocontinuum.enabled:
+            strategy_used = "masked_simple"
+            strategy_fallback = True
+            strategy_fallback_reason = "agn_pseudocontinuum_disabled"
+        if selected_width is None:
+            if strategy_used != "agn_pseudocontinuum_masked":
+                selected_width = None
+            else:
+                prefit_start = perf_counter()
+                broad_prefit = run_host_broad_line_prefit(
+                    _spectrum_from_spectrum_data(spectrum_data, source=source),
+                    config=cfg.broad_line_prefit,
+                    width_grid_kms=cfg.agn_pseudocontinuum.width_grid_kms,
+                )
+                broad_prefit_seconds = perf_counter() - prefit_start
+                selected_width = broad_prefit.selected_width_grid_kms
+                if broad_prefit.fallback_used:
+                    strategy_fallback = True
+                    strategy_fallback_reason = broad_prefit.fallback_reason
+        if (
+            strategy_used == "agn_pseudocontinuum_masked"
+            and selected_width is None
+        ):
+            strategy_used = "masked_simple"
+            strategy_fallback = True
+            strategy_fallback_reason = (
+                broad_prefit.fallback_reason
+                if broad_prefit is not None
+                else "missing_selected_width"
+            )
+    ppxf_start = perf_counter()
     host_fit = run_ppxf_host_fit(
         prep,
         templates,
@@ -240,8 +306,69 @@ def _host_subtracted_spectrum(
         minimum_clean_pixels=cfg.minimum_clean_pixels,
         minimum_continuum_snr=cfg.minimum_continuum_snr,
         maximum_clipped_fraction=cfg.maximum_clipped_fraction,
+        strategy=strategy_used,
+        strategy_requested=strategy_requested,
+        strategy_fallback=strategy_fallback,
+        strategy_fallback_reason=strategy_fallback_reason,
+        agn_pseudocontinuum_config=cfg.agn_pseudocontinuum,
+        selected_pseudocontinuum_fwhm_kms=selected_width,
+        coverage_config=cfg.coverage,
     )
+    ppxf_seconds = perf_counter() - ppxf_start
+    if broad_prefit is not None:
+        host_fit.quality_metrics.update(
+            {
+                "broad_prefit_status": broad_prefit.status,
+                "broad_prefit_line": broad_prefit.selected_line,
+                "broad_prefit_fwhm_kms": broad_prefit.fwhm_kms,
+                "broad_prefit_fwhm_error_kms": broad_prefit.fwhm_error_kms,
+                "broad_prefit_flux_snr": broad_prefit.flux_snr,
+                "broad_prefit_fwhm_snr": broad_prefit.fwhm_snr,
+                "broad_prefit_velocity_kms": broad_prefit.velocity_kms,
+                "broad_prefit_diagnostics": broad_prefit.diagnostics,
+            }
+        )
+    host_fit.quality_metrics.update(
+        {
+            "pseudocontinuum_width_initial_kms": selected_width,
+            "pseudocontinuum_width_final_kms": selected_width,
+            "pseudocontinuum_width_iterations": (
+                1 if strategy_used == "agn_pseudocontinuum_masked" else 0
+            ),
+            "pseudocontinuum_width_converged": None,
+            "pseudocontinuum_width_change_kms": 0.0,
+            "pseudocontinuum_width_status": (
+                "initial_selection"
+                if strategy_used == "agn_pseudocontinuum_masked"
+                else "not_used"
+            ),
+            "broad_line_prefit_seconds": float(broad_prefit_seconds),
+            "host_ppxf_total_seconds": float(ppxf_seconds),
+        }
+    )
+    host_fit.preprocessed.metadata.update(
+        {
+            "host_strategy_requested": strategy_requested,
+            "host_strategy_used": strategy_used,
+            "host_strategy_fallback": strategy_fallback,
+            "host_strategy_fallback_reason": strategy_fallback_reason,
+            "host_method_reference": (
+                "Aydar et al. 2026, A&A, 710, A141"
+                if strategy_requested == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_exact_replication": (
+                False
+                if strategy_requested == "agn_pseudocontinuum_masked"
+                else None
+            ),
+        }
+    )
+    sed_start = perf_counter()
     host_sed = predict_host_sed(host_fit)
+    host_fit.quality_metrics["host_sed_prediction_seconds"] = float(
+        perf_counter() - sed_start
+    )
     full_wave_obs = np.asarray(spectrum_data.wave_obs, dtype=float)
     full_wave_rest = full_wave_obs / (1.0 + float(redshift))
     full_flux = np.asarray(spectrum_data.flux, dtype=float)
@@ -250,13 +377,32 @@ def _host_subtracted_spectrum(
     host_on_grid, grid_warnings = predict_host_sed_on_grid(
         host_sed, full_wave_rest
     )
+    fitted_host_finite = np.isfinite(host_fit.host_model)
+    if np.count_nonzero(fitted_host_finite) >= 2:
+        fitted_wave = host_fit.preprocessed.wave_rest[fitted_host_finite]
+        fitted_values = host_fit.host_model[fitted_host_finite]
+        order = np.argsort(fitted_wave)
+        fitted_host_on_grid = np.interp(
+            full_wave_rest,
+            fitted_wave[order],
+            fitted_values[order],
+            left=np.nan,
+            right=np.nan,
+        )
+        constrained = np.isfinite(fitted_host_on_grid)
+        host_on_grid[constrained] = fitted_host_on_grid[constrained]
+        host_fit.preprocessed.metadata[
+            "host_model_grid_policy"
+        ] = "ppxf_convolved_within_fit_range_stellar_sed_elsewhere"
     host_warnings = list(host_fit.warnings) + list(host_sed.warnings) + list(grid_warnings)
+    if host_fit.ppxf_high_agn_fraction_warning:
+        host_warnings.append("ppxf_high_agn_fraction_above_0.8")
     finite_host = np.isfinite(host_on_grid)
     host_subtracted_flux = full_flux - np.where(finite_host, host_on_grid, 0.0)
     host_fit_mask, host_emission_mask = _full_host_grid_masks(
         spectrum_data,
         redshift=float(redshift),
-        fit_range=fit_range,
+        fit_range=effective_fit_range,
         host_config=cfg,
         finite_host=finite_host,
     )
@@ -278,6 +424,9 @@ def _host_subtracted_spectrum(
         full_good & np.isfinite(host_subtracted_flux) & finite_host,
         source=f"{source}; host_subtracted=ppxf_sed_grid",
         spectrum_data=spectrum_data,
+    )
+    host_fit.quality_metrics["host_decomposition_seconds"] = float(
+        perf_counter() - total_start
     )
     return (
         total_spectrum,
@@ -360,7 +509,17 @@ def fit_with_optional_host_decomp(
         run_host_decomp, spectrum_data.redshift
     )
     if host_decomp_enabled:
-        total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, host_subtracted_flux, host_warnings = (
+        (
+            total_spectrum,
+            fit_spectrum,
+            host_fit,
+            host_sed,
+            host_on_grid,
+            host_subtracted_flux,
+            _,
+            _,
+            host_warnings,
+        ) = (
             _host_subtracted_spectrum(
                 spectrum_data,
                 redshift=float(spectrum_data.redshift),
@@ -394,6 +553,18 @@ def fit_with_optional_host_decomp(
         "host_decomp_enabled": host_decomp_enabled,
         "host_decomp_skip_reason": host_skip_reason,
         "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
+        "host_strategy_requested": (
+            host_fit.strategy_requested if host_fit is not None else None
+        ),
+        "host_strategy_used": (
+            host_fit.strategy_used if host_fit is not None else None
+        ),
+        "host_strategy_fallback": (
+            bool(host_fit.strategy_fallback) if host_fit is not None else False
+        ),
+        "host_strategy_fallback_reason": (
+            host_fit.strategy_fallback_reason if host_fit is not None else None
+        ),
         "galactic_extinction": dict(
             spectrum_data.metadata.get("galactic_extinction", {})
         ),
@@ -431,6 +602,64 @@ def _summarize_mc_results(
         "complex_success_counts": dict(complex_success_counts),
         "percentiles": percentiles,
     }
+
+
+def _final_broad_width_selection(workflow: WorkflowResult, host_config: Any):
+    """Select a reliable final broad width for one bounded host refit."""
+
+    from .host.broad_line_prefit import nearest_width_grid_value
+
+    cfg = host_config.broad_line_prefit
+    for line in cfg.preferred_lines:
+        recipe = "halpha_nii_sii" if line == "halpha" else "hbeta_oiii"
+        prefix = "Ha" if line == "halpha" else "Hb"
+        result = workflow.line_complexes.get(recipe)
+        if result is None or not result.success:
+            continue
+        flux = float(result.metrics.get(f"{prefix}_broad_flux_input", np.nan))
+        flux_error = float(
+            result.metric_errors.get(f"{prefix}_broad_flux_input", np.nan)
+        )
+        width = float(result.metrics.get(f"{prefix}_broad_fwhm_kms", np.nan))
+        width_error = float(
+            result.metric_errors.get(f"{prefix}_broad_fwhm_kms", np.nan)
+        )
+        flux_snr = flux / flux_error if np.isfinite(flux_error) and flux_error > 0 else np.nan
+        width_snr = width / width_error if np.isfinite(width_error) and width_error > 0 else np.nan
+        at_bound = any(
+            warning.code == "parameter_at_bound"
+            and "broad" in str(warning.context.get("parameter", "")).lower()
+            and any(
+                token in str(warning.context.get("parameter", "")).lower()
+                for token in ("fwhm", "velocity")
+            )
+            for warning in result.warnings
+        )
+        if (
+            np.isfinite(flux)
+            and flux > 0
+            and np.isfinite(width)
+            and width > 0
+            and np.isfinite(flux_snr)
+            and flux_snr >= cfg.minimum_flux_snr
+            and np.isfinite(width_snr)
+            and width_snr >= cfg.minimum_fwhm_snr
+            and (not cfg.reject_parameter_bounds or not at_bound)
+        ):
+            selected = nearest_width_grid_value(
+                width,
+                host_config.agn_pseudocontinuum.width_grid_kms,
+            )
+            return {
+                "status": "reliable",
+                "line": line,
+                "fwhm_kms": width,
+                "fwhm_error_kms": width_error,
+                "flux_snr": float(flux_snr),
+                "fwhm_snr": float(width_snr),
+                "selected_width_grid_kms": float(selected),
+            }
+    return {"status": "no_reliable_final_broad_width"}
 
 
 def _run_host_refit_mc(
@@ -523,8 +752,11 @@ def fit_global_lines_workflow(
     """Read one spectrum and run optional pPXF plus global multi-line qsospec."""
 
     from .host.io import read_sparcli_spectrum
+    from .host.config import default_config
 
+    workflow_start = perf_counter()
     uncertainty = uncertainty_config or UncertaintyConfig()
+    resolved_host_config = host_config or default_config()
     spectrum_data = read_sparcli_spectrum(
         input_path, row_index=row_index, redshift=redshift, object_id=object_id
     )
@@ -553,7 +785,7 @@ def fit_global_lines_workflow(
                 template_root=template_root,
                 template_file=template_file,
                 fit_range=host_fit_range,
-                host_config=host_config,
+                host_config=resolved_host_config,
                 source=source,
             )
         )
@@ -571,6 +803,7 @@ def fit_global_lines_workflow(
         host_warnings = []
         primary_uncertainty = uncertainty
 
+    final_fit_start = perf_counter()
     workflow = fit_global_lines(
         fit_spectrum,
         global_config,
@@ -582,11 +815,145 @@ def fit_global_lines_workflow(
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
+    final_qsospec_seconds = perf_counter() - final_fit_start
+    if (
+        host_fit is not None
+        and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+        and resolved_host_config.agn_pseudocontinuum.maximum_width_iterations > 1
+    ):
+        final_width = _final_broad_width_selection(
+            workflow,
+            resolved_host_config,
+        )
+        initial_width = host_fit.quality_metrics.get(
+            "pseudocontinuum_width_initial_kms"
+        )
+        candidate_width = final_width.get("selected_width_grid_kms")
+        if candidate_width is None:
+            host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": None,
+                    "pseudocontinuum_width_status": final_width["status"],
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+        elif (
+            abs(float(candidate_width) - float(initial_width))
+            <= resolved_host_config.agn_pseudocontinuum.width_convergence_tolerance_kms
+        ):
+            host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": True,
+                    "pseudocontinuum_width_status": "stable_after_final_fit",
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+        else:
+            refit_start = perf_counter()
+            (
+                total_spectrum,
+                fit_spectrum,
+                updated_host_fit,
+                host_sed,
+                host_on_grid,
+                _,
+                host_fit_mask,
+                host_emission_mask,
+                host_warnings,
+            ) = _host_subtracted_spectrum(
+                spectrum_data,
+                redshift=float(spectrum_data.redshift),
+                template_root=template_root,
+                template_file=template_file,
+                fit_range=host_fit_range,
+                host_config=resolved_host_config,
+                source=source,
+                pseudocontinuum_width_override_kms=float(candidate_width),
+            )
+            updated_host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_initial_kms": initial_width,
+                    "pseudocontinuum_width_final_kms": float(candidate_width),
+                    "pseudocontinuum_width_iterations": 2,
+                    "pseudocontinuum_width_change_kms": float(candidate_width)
+                    - float(initial_width),
+                    "pseudowidth_refit_seconds": float(
+                        perf_counter() - refit_start
+                    ),
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+            for key, value in host_fit.quality_metrics.items():
+                if key.startswith("broad_prefit"):
+                    updated_host_fit.quality_metrics.setdefault(key, value)
+            second_fit_start = perf_counter()
+            workflow = fit_global_lines(
+                fit_spectrum,
+                global_config,
+                hbeta_config,
+                mgii_config,
+                halpha_config,
+                primary_uncertainty,
+                lya_nv_config=lya_nv_config,
+                host_model_on_grid=host_on_grid,
+                complexes=complexes,
+            )
+            final_qsospec_seconds += perf_counter() - second_fit_start
+            confirmation = _final_broad_width_selection(
+                workflow,
+                resolved_host_config,
+            )
+            updated_host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": bool(
+                        confirmation.get("selected_width_grid_kms")
+                        == float(candidate_width)
+                    ),
+                    "pseudocontinuum_width_status": (
+                        "converged_after_one_update"
+                        if confirmation.get("selected_width_grid_kms")
+                        == float(candidate_width)
+                        else "maximum_iterations_reached"
+                    ),
+                    "final_broad_width_confirmation": confirmation,
+                }
+            )
+            host_fit = updated_host_fit
+    if host_fit is not None:
+        host_fit.quality_metrics["final_qsospec_seconds"] = float(
+            final_qsospec_seconds
+        )
+        host_fit.quality_metrics["total_host_workflow_seconds"] = float(
+            perf_counter() - workflow_start
+        )
     workflow.host_decomp_enabled = host_decomp_enabled
     workflow.total_spectrum = total_spectrum
     workflow.host_fit = host_fit
     workflow.host_sed = host_sed
     workflow.host_model_on_quasar_grid = host_on_grid
+    if host_fit is not None:
+        host_component_models = {}
+        host_wave = np.asarray(host_fit.preprocessed.wave_rest, dtype=float)
+        target_wave = np.asarray(fit_spectrum.wave_rest, dtype=float)
+        for name, values in host_fit.component_models.items():
+            component = np.asarray(values, dtype=float)
+            finite = np.isfinite(host_wave) & np.isfinite(component)
+            if np.count_nonzero(finite) < 2:
+                aligned = np.full_like(target_wave, np.nan, dtype=float)
+            else:
+                order = np.argsort(host_wave[finite])
+                aligned = np.interp(
+                    target_wave,
+                    host_wave[finite][order],
+                    component[finite][order],
+                    left=np.nan,
+                    right=np.nan,
+                )
+            host_component_models[name] = aligned
+        host_component_models["host_subtracted_flux"] = np.asarray(
+            fit_spectrum.flux, dtype=float
+        ).copy()
+        workflow.host_component_models = host_component_models
     workflow.host_fit_mask = (
         np.asarray(host_fit_mask, dtype=bool).copy()
         if host_fit is not None else None
@@ -663,6 +1030,64 @@ def fit_global_lines_workflow(
                 list(host_fit.templates.wavelength_coverage)
                 if host_fit is not None else None
             ),
+            "host_strategy_requested": (
+                host_fit.strategy_requested if host_fit is not None else None
+            ),
+            "host_strategy_used": (
+                host_fit.strategy_used if host_fit is not None else None
+            ),
+            "host_strategy_fallback": (
+                bool(host_fit.strategy_fallback)
+                if host_fit is not None else False
+            ),
+            "host_strategy_fallback_reason": (
+                host_fit.strategy_fallback_reason
+                if host_fit is not None else None
+            ),
+            "host_method_reference": (
+                "Aydar et al. 2026, A&A, 710, A141"
+                if host_fit is not None
+                and host_fit.strategy_requested
+                == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_exact_replication": (
+                False
+                if host_fit is not None
+                and host_fit.strategy_requested
+                == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_coverage_class": (
+                host_fit.coverage.coverage_class
+                if host_fit is not None and host_fit.coverage is not None
+                else None
+            ),
+            "host_feature_coverage": (
+                dict(host_fit.coverage.feature_coverage)
+                if host_fit is not None and host_fit.coverage is not None
+                else {}
+            ),
+            "ppxf_agn_fraction_flux_global": (
+                float(host_fit.ppxf_agn_fraction_flux_global)
+                if host_fit is not None else np.nan
+            ),
+            "ppxf_high_agn_fraction_warning": (
+                bool(host_fit.ppxf_high_agn_fraction_warning)
+                if host_fit is not None else False
+            ),
+            "host_component_weights": (
+                dict(host_fit.component_weights)
+                if host_fit is not None else {}
+            ),
+            "host_component_metadata": (
+                dict(host_fit.component_metadata)
+                if host_fit is not None else {}
+            ),
+            "host_closure": (
+                dict(host_fit.closure_metrics)
+                if host_fit is not None else {}
+            ),
             "galactic_extinction": dict(
                 spectrum_data.metadata.get("galactic_extinction", {})
             ),
@@ -690,7 +1115,7 @@ def fit_global_lines_workflow(
             template_root=template_root,
             template_file=template_file,
             host_fit_range=host_fit_range,
-            host_config=host_config,
+            host_config=resolved_host_config,
             source=source,
             global_config=global_config,
             hbeta_config=hbeta_config,

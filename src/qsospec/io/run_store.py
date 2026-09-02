@@ -370,6 +370,44 @@ def _measurement_rows(
         )
     for quantity, value in result.metadata.get("continuum_samples", {}).items():
         add("continuum_sample", None, {quantity: value}, {}, "interpolation")
+    host_quality = result.metadata.get("host_fit_quality", {})
+    host_scalars = {
+        "ppxf_agn_fraction_flux_global": result.metadata.get(
+            "ppxf_agn_fraction_flux_global"
+        ),
+        "ppxf_high_agn_fraction_warning": result.metadata.get(
+            "ppxf_high_agn_fraction_warning"
+        ),
+        "host_fit_reliable": result.metadata.get("host_fit_reliable"),
+    }
+    for quantity in (
+        "broad_prefit_fwhm_kms",
+        "broad_prefit_fwhm_error_kms",
+        "broad_prefit_flux_snr",
+        "broad_prefit_fwhm_snr",
+        "pseudocontinuum_width_initial_kms",
+        "pseudocontinuum_width_final_kms",
+        "pseudocontinuum_width_iterations",
+        "pseudocontinuum_width_change_kms",
+        "closure_rms",
+        "closure_median_absolute",
+        "closure_p95_absolute",
+        "closure_max_absolute",
+        "closure_relative_to_normalization",
+        "broad_line_prefit_seconds",
+        "agn_template_build_seconds",
+        "stellar_template_prepare_seconds",
+        "ppxf_fit_seconds",
+        "host_ppxf_total_seconds",
+        "host_decomposition_seconds",
+        "pseudowidth_refit_seconds",
+        "host_sed_prediction_seconds",
+        "final_qsospec_seconds",
+        "total_host_workflow_seconds",
+    ):
+        if quantity in host_quality:
+            host_scalars[quantity] = host_quality[quantity]
+    add("host_metric", None, host_scalars, {}, "host_decomposition")
     return rows
 
 
@@ -442,6 +480,16 @@ def _model_row(
         }
         for name, values in result.continuum.component_models.items()
     ]
+    components.extend(
+        {
+            "section": "host",
+            "recipe_id": "ppxf_host",
+            "name": name,
+            "role": "host" if name == "stellar" else "agn",
+            "values": np.asarray(values, dtype=float).tolist(),
+        }
+        for name, values in result.host_component_models.items()
+    )
     complexes = []
     for recipe_id, fit in result.line_complexes.items():
         components.extend(
@@ -1146,6 +1194,11 @@ def load_model_by_key(
         for item in row["components"]
         if item["section"] == "continuum"
     }
+    host_components = {
+        item["name"]: np.asarray(item["values"], dtype=float)
+        for item in row["components"]
+        if item["section"] == "host"
+    }
     continuum_model = sum(
         continuum_components.values(),
         np.zeros_like(spectrum.flux, dtype=float),
@@ -1265,6 +1318,7 @@ def load_model_by_key(
             np.asarray(row["host_model"], dtype=float)
             if row["host_model"] is not None else None
         ),
+        host_component_models=host_components,
         host_fit_mask=host_fit_mask,
         host_emission_mask=host_emission_mask,
         host_warnings=host_warnings,

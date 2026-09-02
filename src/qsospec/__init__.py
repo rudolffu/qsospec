@@ -98,6 +98,10 @@ from .workflows.host_workflow import (
     fit_with_optional_host_decomp,
 )
 from .workflows.host import (
+    HostAgnPseudoContinuumConfig,
+    HostBroadLinePrefitConfig,
+    HostCoverageConfig,
+    HostDecompConfig,
     EuclidHostScaleConfig,
     EuclidHostScaleFit,
     euclid_nir_line_mask,
@@ -178,6 +182,10 @@ __all__ = [
     "GlobalContinuumConfig",
     "GlobalContinuumResult",
     "GlobalQAPlotConfig",
+    "HostAgnPseudoContinuumConfig",
+    "HostBroadLinePrefitConfig",
+    "HostCoverageConfig",
+    "HostDecompConfig",
     "HalphaComplexConfig",
     "HalphaModelGridResult",
     "HalphaModelSelectionConfig",

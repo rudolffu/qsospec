@@ -154,6 +154,14 @@ Model rows store the corrected, rest-frame-normalized arrays actually fitted
 plus Galactic-extinction and frame-conversion provenance. Raw uncorrected
 flux arrays are not duplicated.
 
+For AGN-aware pPXF host fits, the nested model components also retain aligned
+stellar, power-law, Fe II, Balmer-continuum, high-order Balmer, aggregate AGN,
+pPXF best-fit, physical-total, closure-residual, and host-subtracted arrays.
+The long-form ``host_metric`` measurements include the selected width, global
+AGN fraction, closure diagnostics, and stage timings. Strategy, fallback,
+coverage, template provenance, weights, and reliability remain in workflow
+metadata.
+
 Notebook display
 ----------------
 

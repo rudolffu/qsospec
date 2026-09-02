@@ -1,7 +1,8 @@
 Host decomposition
 ==================
 
-Install ``qsospec[host]`` and provide a local pPXF E-MILES template bundle:
+Install ``qsospec[host]`` and provide a local pPXF E-MILES template bundle
+from `micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__:
 
 .. code-block:: python
 
@@ -39,3 +40,14 @@ Host fractions are shown only where the rest-frame data constrain the
 requested wavelength. Host-refit Monte Carlo is available through
 ``UncertaintyConfig(refit_host_in_mc=True)`` and runs only when host
 decomposition was enabled.
+
+Host strategies
+---------------
+
+``HostDecompConfig(strategy="masked_simple")`` preserves the historical
+masked pPXF model and is the default. The explicit
+``agn_pseudocontinuum_masked`` strategy adds width-matched Fe II and Balmer
+pseudo-continuum templates while determining the stellar weights, then
+subtracts only the stellar model. See
+:doc:`../how_to/agn_aware_ppxf_host_decomposition` for configuration,
+provenance, coverage classes, fractions, and limitations.

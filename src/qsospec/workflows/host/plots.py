@@ -70,6 +70,7 @@ def plot_ppxf_host_fit(
     fit: PPXFHostFitResult,
     output_path: str,
     host_sed: Optional[HostSED] = None,
+    workflow_result=None,
 ) -> str:
     plt = _setup_matplotlib()
     path = Path(output_path)
@@ -77,31 +78,134 @@ def plot_ppxf_host_fit(
     fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True, constrained_layout=True)
     wave = fit.preprocessed.wave_rest
     axes[0].plot(wave, fit.preprocessed.flux, color="0.2", lw=0.8, label="input spectrum")
-    axes[0].plot(wave, fit.host_model, color="tab:green", lw=1.0, label="pPXF host")
+    axes[0].plot(wave, fit.host_model, color="tab:green", lw=1.2, label="stellar host")
     predicted_host = _host_sed_prediction_on_input_grid(fit, host_sed)
     if predicted_host is not None and np.any(np.isfinite(predicted_host)):
         axes[0].plot(wave, predicted_host, color="tab:green", lw=1.0, ls="--", label="host SED prediction")
-    axes[0].plot(wave, fit.agn_model, color="tab:orange", lw=1.0, label="AGN continuum")
-    axes[0].plot(wave, fit.total_model, color="tab:blue", lw=1.0, label="total continuum")
+    axes[0].plot(
+        wave,
+        fit.agn_model,
+        color="tab:orange",
+        lw=1.2,
+        label="AGN pseudo-continuum",
+    )
+    component_styles = {
+        "powerlaw": ("tab:red", "--", "power law"),
+        "feii_optical": ("tab:purple", ":", "optical Fe II"),
+        "feii_uv": ("mediumpurple", ":", "UV Fe II"),
+        "balmer_continuum": ("goldenrod", "-.", "Balmer continuum"),
+        "balmer_high_order": ("darkgoldenrod", ":", "high-order Balmer"),
+    }
+    for name, (color, linestyle, label) in component_styles.items():
+        values = fit.component_models.get(name)
+        if values is None or not np.any(np.isfinite(values) & (values != 0)):
+            continue
+        axes[0].plot(
+            wave,
+            values,
+            color=color,
+            ls=linestyle,
+            lw=0.9,
+            label=label,
+        )
+    axes[0].plot(
+        wave,
+        fit.total_model,
+        color="tab:blue",
+        lw=1.2,
+        label="pPXF best fit",
+    )
+    if workflow_result is not None:
+        final_model = np.asarray(workflow_result.continuum.model, dtype=float).copy()
+        for complex_result in workflow_result.line_complexes.values():
+            if complex_result.success:
+                final_model += np.asarray(complex_result.model, dtype=float)
+        final_wave = np.asarray(workflow_result.spectrum.wave_rest, dtype=float)
+        final_model = np.interp(
+            wave,
+            final_wave,
+            final_model,
+            left=np.nan,
+            right=np.nan,
+        )
+        axes[0].plot(
+            wave,
+            final_model,
+            color="0.05",
+            lw=1.0,
+            ls="--",
+            label="final host-subtracted qsospec model",
+        )
     masked = fit.preprocessed.emission_mask
     if np.any(masked):
         ymin, ymax = np.nanpercentile(fit.preprocessed.flux, [2, 98])
         axes[0].fill_between(wave, ymin, ymax, where=masked, color="tab:red", alpha=0.12, label="masked lines")
+    final_good = fit.final_goodpixels_mask_log
+    if final_good is not None:
+        final_good_native = np.interp(
+            wave,
+            fit.preprocessed.wave_log,
+            np.asarray(final_good, dtype=float),
+            left=0.0,
+            right=0.0,
+        ) > 0.5
+        axes[0].scatter(
+            wave[final_good_native],
+            fit.preprocessed.flux[final_good_native],
+            s=2,
+            color="0.15",
+            alpha=0.15,
+            label="final pPXF good pixels",
+        )
     flux_limits = _finite_percentile_limits(
         [fit.preprocessed.flux, fit.host_model, predicted_host, fit.agn_model, fit.total_model],
         percentiles=(1.0, 99.0),
     )
     if flux_limits is not None:
         axes[0].set_ylim(*flux_limits)
-    axes[0].legend(loc="best", fontsize=8)
+    quality = fit.quality_metrics
+    width = quality.get("pseudocontinuum_width_final_kms")
+    prefit_line = quality.get("broad_prefit_line")
+    coverage = fit.coverage.coverage_class if fit.coverage is not None else "unavailable"
+    fagn = fit.ppxf_agn_fraction_flux_global
+    closure = fit.closure_metrics.get("closure_relative_to_normalization")
+    text_lines = [
+        f"strategy: {fit.strategy_used}",
+        f"coverage: {coverage}",
+        f"broad prefit: {prefit_line or 'unavailable'}; width={width or 'n/a'} km/s",
+        f"global AGN fraction: {fagn:.3f}" if np.isfinite(fagn) else "global AGN fraction: unavailable",
+        f"closure/norm: {closure:.2e}" if closure is not None and np.isfinite(closure) else "closure/norm: unavailable",
+        f"LSF: {quality.get('resolution_status', 'unavailable')}",
+        f"reliable: {fit.host_fit_reliable}",
+    ]
+    axes[0].text(
+        0.01,
+        0.98,
+        "\n".join(text_lines),
+        transform=axes[0].transAxes,
+        va="top",
+        fontsize=7.5,
+        bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "0.8"},
+    )
+    axes[0].legend(loc="upper center", bbox_to_anchor=(0.5, 1.20), ncol=4, fontsize=7)
     axes[0].set_ylabel("Flux density [input units]")
-    axes[1].plot(wave, fit.residual, color="0.25", lw=0.8)
+    standardized = np.divide(
+        fit.residual,
+        fit.preprocessed.error,
+        out=np.full_like(fit.residual, np.nan),
+        where=np.isfinite(fit.preprocessed.error) & (fit.preprocessed.error > 0),
+    )
+    if final_good is not None:
+        standardized[~final_good_native] = np.nan
+    axes[1].plot(wave, standardized, color="0.25", lw=0.8)
     axes[1].axhline(0.0, color="0.7", lw=0.8)
-    residual_limits = _finite_percentile_limits([fit.residual], percentiles=(1.0, 99.0))
+    axes[1].axhline(3.0, color="0.7", lw=0.7, ls=":")
+    axes[1].axhline(-3.0, color="0.7", lw=0.7, ls=":")
+    residual_limits = _finite_percentile_limits([standardized], percentiles=(1.0, 99.0))
     if residual_limits is not None:
         axes[1].set_ylim(*residual_limits)
     axes[1].set_xlabel("Rest wavelength [Angstrom]")
-    axes[1].set_ylabel("Residual")
+    axes[1].set_ylabel(r"$(data-model)/\sigma$")
     fig.savefig(path, dpi=160)
     plt.close(fig)
     return str(path)

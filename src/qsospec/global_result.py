@@ -125,6 +125,7 @@ class WorkflowResult:
     host_fit: Optional[Any] = None
     host_sed: Optional[Any] = None
     host_model_on_quasar_grid: Optional[np.ndarray] = None
+    host_component_models: Dict[str, np.ndarray] = field(default_factory=dict)
     host_fit_mask: Optional[np.ndarray] = None
     host_emission_mask: Optional[np.ndarray] = None
     host_warnings: List[str] = field(default_factory=list)
@@ -240,6 +241,23 @@ class WorkflowResult:
                     "host_ppxf_reduced_chi2"
                 ),
                 "template_file": self.metadata.get("host_template_file"),
+                "strategy_requested": self.metadata.get(
+                    "host_strategy_requested"
+                ),
+                "strategy_used": self.metadata.get("host_strategy_used"),
+                "strategy_fallback": self.metadata.get(
+                    "host_strategy_fallback"
+                ),
+                "coverage_class": self.metadata.get(
+                    "host_coverage_class"
+                ),
+                "agn_fraction_flux_global": self.metadata.get(
+                    "ppxf_agn_fraction_flux_global"
+                ),
+                "pseudocontinuum_width_kms": self.metadata.get(
+                    "host_fit_quality", {}
+                ).get("pseudocontinuum_width_final_kms"),
+                "closure": self.metadata.get("host_closure", {}),
                 "fractions": {
                     name: value
                     for name, value in continuum_samples.items()

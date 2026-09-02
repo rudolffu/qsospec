@@ -281,6 +281,14 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     result.host_decomp_enabled = True
     result.total_spectrum = result.spectrum
     result.host_model_on_quasar_grid = np.zeros_like(wave)
+    result.host_component_models = {
+        "stellar": np.full_like(wave, 0.4),
+        "powerlaw": np.full_like(wave, 0.6),
+        "agn_total": np.full_like(wave, 0.6),
+        "ppxf_bestfit": np.ones_like(wave),
+        "closure_residual": np.zeros_like(wave),
+        "host_subtracted_flux": result.spectrum.flux.copy(),
+    }
     result.host_fit_mask = (wave >= 3600.0) & (wave <= 4200.0)
     result.host_emission_mask = (wave >= 3710.0) & (wave <= 3745.0)
     result.metadata.update(
@@ -316,6 +324,11 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     loaded = qsospec.load_model(store, "host-mask-object")
     np.testing.assert_array_equal(loaded.host_fit_mask, result.host_fit_mask)
     np.testing.assert_array_equal(loaded.host_emission_mask, result.host_emission_mask)
+    assert set(loaded.host_component_models) == set(
+        result.host_component_models
+    )
+    for name, values in result.host_component_models.items():
+        np.testing.assert_allclose(loaded.host_component_models[name], values)
     assert loaded.metadata["host_mask_provenance"] == "exact"
     assert store.manifest["schema_version"] == "5"
 
