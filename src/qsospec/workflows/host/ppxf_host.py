@@ -16,6 +16,7 @@ from scipy.ndimage import binary_dilation, binary_propagation, gaussian_filter1d
 from .config import DEFAULT_LINE_CENTERS, DEFAULT_OBSERVED_ARTIFACT_WINDOWS
 from .io import SpectrumData
 from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
+from ...resolution import additional_template_sigma
 
 
 _C_KMS = 299792.458
@@ -379,6 +380,35 @@ def _resample_stellar_templates(prep: PreprocessedSpectrum, templates: PPXFTempl
     matrix = np.empty((len(wave), templates.n_templates), dtype=float)
     for j in range(templates.n_templates):
         matrix[:, j] = np.interp(wave, templates.wave, templates.flux[:, j], left=0.0, right=0.0)
+    resolution = prep.metadata.get("spectral_resolution")
+    if resolution is None:
+        prep.metadata["host_fit_resolution_status"] = "missing"
+    else:
+        prep.metadata.update(resolution.metadata())
+        prep.metadata["host_fit_resolution_status"] = resolution.status
+        if resolution.status == "valid" and resolution.mode == "banded_matrix":
+            prep.metadata["host_fit_resolution_status"] = "unsupported_banded_resolution_matrix"
+        elif resolution.status == "valid":
+            observed = wave * (1.0 + prep.redshift)
+            data_sigma = resolution.sigma_lambda(observed) / (1.0 + prep.redshift)
+            template_fwhm = templates.metadata.get("fwhm")
+            if template_fwhm is None:
+                prep.metadata["host_fit_resolution_status"] = "invalid_template_resolution_missing"
+            else:
+                template_sigma = np.interp(wave, templates.wave, np.asarray(template_fwhm, float)) / 2.354820045
+                broadening, invalid_resolution = additional_template_sigma(data_sigma, template_sigma)
+                in_range &= ~invalid_resolution
+                pixel_width = np.gradient(wave)
+                sigma_pixels = np.divide(broadening, pixel_width, out=np.zeros_like(broadening), where=np.isfinite(broadening) & (pixel_width > 0))
+                try:
+                    from ppxf.ppxf_util import gaussian_filter1d as variable_gaussian_filter1d
+                    for j in range(matrix.shape[1]):
+                        matrix[:, j] = variable_gaussian_filter1d(matrix[:, j], sigma_pixels)
+                except Exception:
+                    prep.metadata["host_fit_resolution_status"] = "invalid_variable_broadening_unavailable"
+                prep.metadata["effective_data_sigma_lambda"] = data_sigma.tolist()
+                prep.metadata["effective_template_sigma_lambda"] = template_sigma.tolist()
+                prep.metadata["additional_template_sigma_lambda"] = broadening.tolist()
     scales = np.nanmedian(np.abs(matrix), axis=0)
     scales[~np.isfinite(scales) | (scales <= 0)] = 1.0
     return matrix / scales, scales, in_range
@@ -573,6 +603,9 @@ def run_ppxf_host_fit(
         )
     ) if clean_count else 0.0
     reliability_reasons: List[str] = []
+    resolution_status = str(preprocessed.metadata.get("host_fit_resolution_status", "missing"))
+    if resolution_status != "valid":
+        reliability_reasons.append("resolution_approximate_or_missing")
     if clean_fraction < float(minimum_clean_fraction):
         reliability_reasons.append("clean_fraction_below_threshold")
     if clean_count < int(minimum_clean_pixels):
@@ -595,6 +628,8 @@ def run_ppxf_host_fit(
             np.count_nonzero(expanded_emission)
         ),
         "final_goodpixel_count": clean_count,
+        "resolution_status": resolution_status,
+        "template_coverage_fraction": float(np.count_nonzero(in_template_range) / len(in_template_range)),
     }
 
     weights = np.asarray(getattr(result, "weights", np.zeros(fit_templates.shape[1])), dtype=float)

@@ -125,6 +125,11 @@ from .io.run_store import (
     open_run,
 )
 from .spectrum import Spectrum
+from .resolution import (
+    SpectralResolution,
+    additional_template_sigma,
+    smooth_constant_resolving_power,
+)
 from .signed_lines import (
     LocalLinePatternResult,
     SignedLineAmplitudeResult,
@@ -198,6 +203,7 @@ __all__ = [
     "PowerLawConfig",
     "RunStore",
     "Spectrum",
+    "SpectralResolution",
     "SignedLineAmplitudeResult",
     "SignedLineComponent",
     "LocalLinePatternResult",
@@ -207,6 +213,8 @@ __all__ = [
     "balmer_bound_free_shape",
     "build_science_catalog",
     "bolometric_luminosity",
+    "additional_template_sigma",
+    "smooth_constant_resolving_power",
     "compute_derived_quantities",
     "correct_spectrum",
     "correct_spectrum_data",

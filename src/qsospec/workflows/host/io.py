@@ -13,14 +13,25 @@ import pandas as pd
 from astropy.io import fits
 from astropy.table import Table
 
+from ...resolution import SpectralResolution
+
 
 WAVE_ALIASES = ("wavelength", "wave", "lambda", "lam", "obs_wave")
 FLUX_ALIASES = ("flux", "flam", "flux_lambda")
 IVAR_ALIASES = ("ivar", "inverse_variance", "inverse_var")
 ERR_ALIASES = ("error", "err", "sigma", "flux_error")
 MASK_ALIASES = ("mask", "and_mask", "or_mask")
+RESOLVING_POWER_ALIASES = ("resolving_power", "resolution_r", "spectral_resolution_r")
+SIGMA_LAMBDA_ALIASES = (
+    "sigma_lambda",
+    "resolution_sigma_lambda",
+    "lsf_sigma_angstrom",
+)
+FWHM_LAMBDA_ALIASES = ("fwhm_lambda", "resolution_fwhm_lambda")
+SIGMA_KMS_ALIASES = ("sigma_kms", "resolution_sigma_kms")
+RESOLUTION_MODE_ALIASES = ("resolution_mode",)
 REDSHIFT_ALIASES = ("redshift", "z", "z_desi", "z_vi")
-OBJECT_ID_ALIASES = ("targetid", "target_id", "object_id", "sparcl_id", "specid")
+OBJECT_ID_ALIASES = ("object_id", "targetid", "target_id", "sparcl_id", "specid")
 RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
 DEFAULT_FLUX_SCALE = 1e-17
@@ -41,6 +52,7 @@ class SpectrumData:
     ra: Optional[float] = None
     dec: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    resolution: Optional[SpectralResolution] = None
 
     def uncertainty(self) -> np.ndarray:
         """Return 1-sigma uncertainty, deriving it from ivar when possible."""
@@ -169,6 +181,13 @@ def read_sparcli_spectrum(
     ra_col = _find_column(columns, RA_ALIASES)
     dec_col = _find_column(columns, DEC_ALIASES)
     targetid_col = _find_column(columns, ("targetid", "target_id"))
+    resolution_mode_col = _find_column(columns, RESOLUTION_MODE_ALIASES)
+    resolution_columns = {
+        "sigma_lambda": _find_column(columns, SIGMA_LAMBDA_ALIASES),
+        "fwhm_lambda": _find_column(columns, FWHM_LAMBDA_ALIASES),
+        "resolving_power": _find_column(columns, RESOLVING_POWER_ALIASES),
+        "sigma_kms": _find_column(columns, SIGMA_KMS_ALIASES),
+    }
 
     z_value = redshift if redshift is not None else _extract_scalar(table, z_col, row_index=row_index)
     obj_value = object_id if object_id is not None else _extract_scalar(table, obj_col, row_index=row_index)
@@ -197,6 +216,24 @@ def read_sparcli_spectrum(
     ivar = _extract_vector(table, ivar_col, row_index=row_index) if ivar_col else None
     error = _extract_vector(table, err_col, row_index=row_index) if err_col else None
     mask = _extract_vector(table, mask_col, row_index=row_index) if mask_col else None
+    resolution = None
+    declared_mode = _extract_scalar(table, resolution_mode_col, row_index=row_index)
+    for mode, column in resolution_columns.items():
+        if column is not None:
+            resolution = SpectralResolution(
+                mode=mode,
+                values=_extract_vector(table, column, row_index=row_index),
+                wavelength=_extract_vector(table, wave_col, row_index=row_index),
+                source="input_spectrum_column",
+                is_object_specific=True,
+            )
+            break
+    if resolution is None:
+        resolution = SpectralResolution(
+            mode="missing",
+            source=f"input_manifest_declared_{declared_mode or 'missing'}_without_values",
+            is_approximate=True,
+        )
 
     return SpectrumData(
         wave_obs=_extract_vector(table, wave_col, row_index=row_index),
@@ -210,6 +247,7 @@ def read_sparcli_spectrum(
         ra=float(_extract_scalar(table, ra_col, row_index=row_index)) if ra_col else None,
         dec=float(_extract_scalar(table, dec_col, row_index=row_index)) if dec_col else None,
         metadata=metadata,
+        resolution=resolution,
     )
 
 

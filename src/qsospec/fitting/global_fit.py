@@ -3420,7 +3420,7 @@ def fit_global_lines(
     halpha = line_complexes.get("halpha_nii_sii")
 
     samples = {}
-    for wavelength in (3000.0, 5100.0):
+    for wavelength in (1350.0, 3000.0, 5100.0):
         samples.update(_continuum_sample(spectrum, continuum, wavelength, host_model_on_grid))
     final_width = continuum.metadata.get(
         "balmer_pseudocontinuum_fwhm_kms", np.nan

@@ -125,6 +125,8 @@ class EuclidHostScaleFit:
     warnings: list[str] = field(default_factory=list)
     parameters: Dict[str, float] = field(default_factory=dict)
     parameter_errors: Dict[str, float] = field(default_factory=dict)
+    host_scale_uncertainty_flux: Optional[np.ndarray] = None
+    host_subtracted_error_with_scale: Optional[np.ndarray] = None
 
 
 def _continuum_mask(wave_rest: np.ndarray, windows: Sequence[Tuple[float, float]]) -> np.ndarray:
@@ -605,6 +607,14 @@ def fit_euclid_host_aperture_scale(
             else np.nan
         ),
     }
+    host_scale_uncertainty_flux = (
+        np.abs(host) * host_scale_error
+        if np.isfinite(host_scale_error)
+        else np.full_like(host, np.nan)
+    )
+    host_subtracted_error_with_scale = np.sqrt(
+        error**2 + host_scale_uncertainty_flux**2
+    )
     return EuclidHostScaleFit(
         status="success",
         success=True,
@@ -655,6 +665,8 @@ def fit_euclid_host_aperture_scale(
             ),
         },
         parameter_errors=parameter_errors,
+        host_scale_uncertainty_flux=host_scale_uncertainty_flux,
+        host_subtracted_error_with_scale=host_subtracted_error_with_scale,
     )
 
 

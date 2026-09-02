@@ -223,6 +223,7 @@ def _host_subtracted_spectrum(
         max_native_gap_pixels=cfg.max_native_gap_pixels,
         systematic_error_floor_fraction=cfg.systematic_error_floor_fraction,
     )
+    prep.metadata["spectral_resolution"] = getattr(spectrum_data, "resolution", None)
     host_fit = run_ppxf_host_fit(
         prep,
         templates,

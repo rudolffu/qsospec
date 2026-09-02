@@ -23,10 +23,16 @@ from ..workflows.host.io import (
     OBJECT_ID_ALIASES,
     RA_ALIASES,
     REDSHIFT_ALIASES,
+    RESOLUTION_MODE_ALIASES,
+    RESOLVING_POWER_ALIASES,
+    SIGMA_LAMBDA_ALIASES,
+    FWHM_LAMBDA_ALIASES,
+    SIGMA_KMS_ALIASES,
     WAVE_ALIASES,
     SpectrumData,
     read_sparcli_spectrum,
 )
+from ..resolution import SpectralResolution
 
 
 @dataclass(frozen=True)
@@ -105,11 +111,37 @@ def spectrum_data_from_mapping(
     redshift_col = _lookup(columns, REDSHIFT_ALIASES)
     object_col = _lookup(columns, OBJECT_ID_ALIASES)
     target_col = _lookup(columns, ("targetid", "target_id"))
+    resolution_mode_col = _lookup(columns, RESOLUTION_MODE_ALIASES)
     ra_col = _lookup(columns, RA_ALIASES)
     dec_col = _lookup(columns, DEC_ALIASES)
     redshift = overrides.get("redshift", _value(row, redshift_col))
     object_id = overrides.get("object_id", _value(row, object_col))
     targetid = _value(row, target_col)
+    resolution = None
+    for mode, aliases in (
+        ("sigma_lambda", SIGMA_LAMBDA_ALIASES),
+        ("fwhm_lambda", FWHM_LAMBDA_ALIASES),
+        ("resolving_power", RESOLVING_POWER_ALIASES),
+        ("sigma_kms", SIGMA_KMS_ALIASES),
+    ):
+        column = _lookup(columns, aliases)
+        if column is not None:
+            values = _array(row, column)
+            resolution = SpectralResolution(
+                mode=mode,
+                values=np.asarray(values, float),
+                wavelength=np.asarray(_array(row, wave_col), float),
+                source="input_spectrum_column",
+                is_object_specific=True,
+            )
+            break
+    if resolution is None:
+        declared = _value(row, resolution_mode_col)
+        resolution = SpectralResolution(
+            mode="missing",
+            source=f"input_manifest_declared_{declared or 'missing'}_without_values",
+            is_approximate=True,
+        )
     return SpectrumData(
         wave_obs=np.asarray(_array(row, wave_col), dtype=float),
         flux=np.asarray(_array(row, flux_col), dtype=float),
@@ -154,6 +186,7 @@ def spectrum_data_from_mapping(
                 "dec": dec_col,
             },
         },
+        resolution=resolution,
     )
 
 
@@ -185,6 +218,11 @@ def scan_parquet_spectra(
                 DEC_ALIASES,
                 ("targetid", "target_id"),
                 OBJECT_KEY_ALIASES,
+                RESOLUTION_MODE_ALIASES,
+                RESOLVING_POWER_ALIASES,
+                SIGMA_LAMBDA_ALIASES,
+                FWHM_LAMBDA_ALIASES,
+                SIGMA_KMS_ALIASES,
             )
             if (column := _lookup(columns, aliases)) is not None
         }
