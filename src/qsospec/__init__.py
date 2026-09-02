@@ -98,14 +98,19 @@ from .workflows.host_workflow import (
     fit_with_optional_host_decomp,
 )
 from .workflows.host import (
+    HOST_RECONSTRUCTION_STATE_VERSION,
     HostAgnPseudoContinuumConfig,
     HostBroadLinePrefitConfig,
     HostCoverageConfig,
     HostDecompConfig,
+    HostReconstructionState,
+    HostSED,
+    HostSEDReconstructionError,
     EuclidHostScaleConfig,
     EuclidHostScaleFit,
     euclid_nir_line_mask,
     fit_euclid_host_aperture_scale,
+    reconstruct_host_sed_from_state,
 )
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
 from .io.qa import render_qa
@@ -126,7 +131,10 @@ from .io.run_store import (
     finalize_run,
     load_model,
     load_model_by_key,
+    load_host_reconstruction_state,
     open_run,
+    reconstruct_host_sed_from_model_row,
+    reconstruct_host_sed_from_run,
 )
 from .spectrum import Spectrum
 from .resolution import (
@@ -186,6 +194,10 @@ __all__ = [
     "HostBroadLinePrefitConfig",
     "HostCoverageConfig",
     "HostDecompConfig",
+    "HOST_RECONSTRUCTION_STATE_VERSION",
+    "HostReconstructionState",
+    "HostSED",
+    "HostSEDReconstructionError",
     "HalphaComplexConfig",
     "HalphaModelGridResult",
     "HalphaModelSelectionConfig",
@@ -260,12 +272,16 @@ __all__ = [
     "load_iron_template",
     "load_model",
     "load_model_by_key",
+    "load_host_reconstruction_state",
     "luminosity_distance",
     "intrinsic_fwhm_kms",
     "monochromatic_luminosity",
     "measure_signed_line_amplitude",
     "measure_signed_line_grid",
     "open_run",
+    "reconstruct_host_sed_from_model_row",
+    "reconstruct_host_sed_from_run",
+    "reconstruct_host_sed_from_state",
     "observed_fwhm_kms",
     "observed_halpha_width_bounds",
     "narrow_line_calibration_selection_mask",

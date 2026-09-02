@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import json
 import warnings
@@ -23,11 +23,19 @@ from .config import (
 )
 from .coverage import HostCoverageResult, classify_host_coverage
 from .io import SpectrumData
-from .templates import PPXFTemplateLibrary, SAMPLE_WAVELENGTHS
+from .templates import (
+    PPXF_NPZ_LOADER_VERSION,
+    SAMPLE_WAVELENGTHS,
+    TEMPLATE_FLATTENING_CONVENTION,
+    PPXFTemplateLibrary,
+)
 from ...resolution import additional_template_sigma
 
 
 _C_KMS = 299792.458
+HOST_RECONSTRUCTION_STATE_VERSION = "1"
+HOST_SED_METHOD = "stellar_template_weighted_sed"
+HOST_SED_METHOD_VERSION = "1"
 
 
 @dataclass
@@ -100,6 +108,7 @@ class PPXFHostFitResult:
     ppxf_agn_fraction_flux_global: float = np.nan
     ppxf_high_agn_fraction_warning: bool = False
     closure_metrics: Dict[str, Any] = field(default_factory=dict)
+    host_reconstruction_state: Dict[str, Any] = field(default_factory=dict)
     ppxf_result: Any = None
 
 
@@ -112,6 +121,46 @@ class HostSED:
     samples: Dict[str, float]
     flags: Dict[str, bool]
     warnings: List[str]
+    provenance: Dict[str, Any] = field(default_factory=dict)
+
+
+class HostSEDReconstructionError(RuntimeError):
+    """Structured failure to restore a stellar HostSED from compact state."""
+
+    def __init__(self, code: str, message: str):
+        self.code = str(code)
+        super().__init__(f"{self.code}: {message}")
+
+
+@dataclass(frozen=True)
+class HostReconstructionState:
+    """Compact, versioned state required to reproduce a stellar HostSED."""
+
+    host_reconstruction_state_version: str
+    stellar_weights: List[float]
+    stellar_template_scales: List[float]
+    preprocessing_normalization: float
+    template_family: str
+    template_file_name: str
+    template_file_sha256: str
+    template_grid_id: str
+    template_wave_sha256: str
+    template_matrix_sha256: str
+    template_loader_version: str
+    template_original_shape: List[int]
+    template_flattening_order_convention: str
+    selected_template_indices: Optional[List[int]]
+    host_sed_method: str
+    host_sed_method_version: str
+    host_sed_wavelength_min: float
+    host_sed_wavelength_max: float
+    strategy_used: str
+    fit_redshift: float
+    fit_normalization_convention: str
+    fit_warnings: List[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -1038,18 +1087,79 @@ def run_ppxf_host_fit(
     )
 
 
-def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
-    """Evaluate the fitted host model on the full template wavelength grid."""
+def build_host_reconstruction_state(
+    fit: PPXFHostFitResult,
+) -> HostReconstructionState:
+    """Build the path-neutral compact state for the stellar template mixture."""
 
     templates = fit.templates
-    scaled_templates = templates.flux / fit.stellar_template_scales[np.newaxis, :]
-    host_flux = scaled_templates @ fit.stellar_weights * fit.preprocessed.normalization
-    wave_min, wave_max = templates.wavelength_coverage
+    metadata = templates.metadata
+    required = (
+        "source_sha256",
+        "template_wave_sha256",
+        "template_matrix_sha256",
+    )
+    missing = [name for name in required if not metadata.get(name)]
+    if missing:
+        raise HostSEDReconstructionError(
+            "template_identity_unavailable",
+            f"template loader did not provide {missing}",
+        )
+    return HostReconstructionState(
+        host_reconstruction_state_version=HOST_RECONSTRUCTION_STATE_VERSION,
+        stellar_weights=np.asarray(fit.stellar_weights, dtype=float).tolist(),
+        stellar_template_scales=np.asarray(
+            fit.stellar_template_scales, dtype=float
+        ).tolist(),
+        preprocessing_normalization=float(fit.preprocessed.normalization),
+        template_family=str(templates.family),
+        template_file_name=str(
+            metadata.get("source_file_name") or Path(templates.source_path).name
+        ),
+        template_file_sha256=str(metadata["source_sha256"]),
+        template_grid_id=f"sha256:{metadata['template_wave_sha256']}",
+        template_wave_sha256=str(metadata["template_wave_sha256"]),
+        template_matrix_sha256=str(metadata["template_matrix_sha256"]),
+        template_loader_version=str(
+            metadata.get("loader_version", PPXF_NPZ_LOADER_VERSION)
+        ),
+        template_original_shape=list(templates.original_shape),
+        template_flattening_order_convention=str(
+            metadata.get(
+                "flattening_convention", TEMPLATE_FLATTENING_CONVENTION
+            )
+        ),
+        selected_template_indices=None,
+        host_sed_method=HOST_SED_METHOD,
+        host_sed_method_version=HOST_SED_METHOD_VERSION,
+        host_sed_wavelength_min=float(templates.wavelength_coverage[0]),
+        host_sed_wavelength_max=float(templates.wavelength_coverage[1]),
+        strategy_used=str(fit.strategy_used),
+        fit_redshift=float(fit.preprocessed.redshift),
+        fit_normalization_convention=(
+            "templates_divided_by_stellar_template_scales_then_weighted_"
+            "and_multiplied_by_preprocessing_normalization"
+        ),
+        fit_warnings=[str(value) for value in fit.warnings],
+    )
+
+
+def _host_sed_from_arrays(
+    wave: np.ndarray,
+    host_flux: np.ndarray,
+    *,
+    warnings_in: Sequence[str],
+    provenance: Mapping[str, Any],
+) -> HostSED:
+    wave = np.asarray(wave, dtype=float)
+    host_flux = np.asarray(host_flux, dtype=float)
+    wave_min = float(np.nanmin(wave))
+    wave_max = float(np.nanmax(wave))
     samples: Dict[str, float] = {}
-    warnings_out = list(fit.warnings)
+    warnings_out = [str(value) for value in warnings_in]
     for name, wave in SAMPLE_WAVELENGTHS.items():
         if wave_min <= wave <= wave_max:
-            samples[name] = float(np.interp(wave, templates.wave, host_flux))
+            samples[name] = float(np.interp(wave, provenance["template_wave"], host_flux))
         else:
             samples[name] = float("nan")
             warnings_out.append(f"{name}_outside_template_coverage")
@@ -1063,11 +1173,181 @@ def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
     if flags["nir_extrapolation_not_available"]:
         warnings_out.append("nir_extrapolation_not_available")
     return HostSED(
-        wave_rest=templates.wave.copy(),
+        wave_rest=np.asarray(provenance["template_wave"], dtype=float).copy(),
         host_flux=host_flux,
         samples=samples,
         flags=flags,
         warnings=warnings_out,
+        provenance={
+            key: value
+            for key, value in provenance.items()
+            if key != "template_wave"
+        },
+    )
+
+
+def predict_host_sed(fit: PPXFHostFitResult) -> HostSED:
+    """Evaluate the fitted host model on the full template wavelength grid."""
+
+    templates = fit.templates
+    scaled_templates = templates.flux / fit.stellar_template_scales[np.newaxis, :]
+    host_flux = scaled_templates @ fit.stellar_weights * fit.preprocessed.normalization
+    try:
+        state = build_host_reconstruction_state(fit)
+    except HostSEDReconstructionError:
+        state = None
+    if state is not None:
+        fit.host_reconstruction_state = state.to_dict()
+    return _host_sed_from_arrays(
+        templates.wave,
+        host_flux,
+        warnings_in=fit.warnings,
+        provenance={
+            "template_wave": templates.wave,
+            "host_sed_method": HOST_SED_METHOD,
+            "host_sed_method_version": HOST_SED_METHOD_VERSION,
+            "host_reconstruction_state_version": (
+                HOST_RECONSTRUCTION_STATE_VERSION if state is not None else None
+            ),
+            "template_file_name": (
+                state.template_file_name if state is not None else None
+            ),
+            "template_file_sha256": (
+                state.template_file_sha256 if state is not None else None
+            ),
+            "template_wave_sha256": (
+                state.template_wave_sha256 if state is not None else None
+            ),
+            "template_matrix_sha256": (
+                state.template_matrix_sha256 if state is not None else None
+            ),
+            "strategy_used": getattr(fit, "strategy_used", None),
+        },
+    )
+
+
+def _state_mapping(
+    state: Mapping[str, Any] | HostReconstructionState,
+) -> Dict[str, Any]:
+    if isinstance(state, HostReconstructionState):
+        return state.to_dict()
+    if not isinstance(state, Mapping):
+        raise HostSEDReconstructionError(
+            "invalid_reconstruction_state", "state must be a mapping"
+        )
+    return dict(state)
+
+
+def reconstruct_host_sed_from_state(
+    state: Mapping[str, Any] | HostReconstructionState,
+    *,
+    template_root: str,
+    template_file: Optional[str] = None,
+    verify_hash: bool = True,
+) -> HostSED:
+    """Reconstruct a stellar-only HostSED without rerunning pPXF."""
+
+    from .templates import load_ppxf_npz_templates
+
+    value = _state_mapping(state)
+    if value.get("host_reconstruction_state_version") != (
+        HOST_RECONSTRUCTION_STATE_VERSION
+    ):
+        raise HostSEDReconstructionError(
+            "unsupported_reconstruction_state_version",
+            f"expected {HOST_RECONSTRUCTION_STATE_VERSION!r}",
+        )
+    if value.get("host_sed_method") != HOST_SED_METHOD or value.get(
+        "host_sed_method_version"
+    ) != HOST_SED_METHOD_VERSION:
+        raise HostSEDReconstructionError(
+            "incompatible_host_sed_method",
+            "HostSED method/version does not match the installed implementation",
+        )
+    if value.get("template_loader_version") != PPXF_NPZ_LOADER_VERSION:
+        raise HostSEDReconstructionError(
+            "incompatible_template_loader",
+            "template loader/order contract differs from the fitted state",
+        )
+    if value.get("template_flattening_order_convention") != (
+        TEMPLATE_FLATTENING_CONVENTION
+    ):
+        raise HostSEDReconstructionError(
+            "incompatible_template_order",
+            "template flattening convention differs from the fitted state",
+        )
+    selected = value.get("selected_template_indices")
+    if selected not in (None, []):
+        raise HostSEDReconstructionError(
+            "unsupported_template_subset",
+            "this state requires an unsupported selected-template subset",
+        )
+    filename = str(template_file or value.get("template_file_name") or "")
+    if not filename:
+        raise HostSEDReconstructionError(
+            "template_file_unavailable", "state does not name its template file"
+        )
+    templates = load_ppxf_npz_templates(
+        template_root=template_root,
+        template_file=filename,
+        template_family=str(value.get("template_family", "emiles")),
+        write_report=False,
+    )
+    identities = {
+        "template_file_sha256": templates.metadata.get("source_sha256"),
+        "template_wave_sha256": templates.metadata.get("template_wave_sha256"),
+        "template_matrix_sha256": templates.metadata.get(
+            "template_matrix_sha256"
+        ),
+    }
+    if verify_hash:
+        for name, actual in identities.items():
+            expected = value.get(name)
+            if not expected or str(actual) != str(expected):
+                raise HostSEDReconstructionError(
+                    "template_hash_mismatch",
+                    f"{name}: expected {expected!r}, found {actual!r}",
+                )
+    if list(templates.original_shape) != list(
+        value.get("template_original_shape", [])
+    ):
+        raise HostSEDReconstructionError(
+            "template_shape_mismatch",
+            "template original shape differs from the fitted state",
+        )
+    weights = np.asarray(value.get("stellar_weights", []), dtype=float)
+    scales = np.asarray(value.get("stellar_template_scales", []), dtype=float)
+    if weights.shape != (templates.n_templates,) or scales.shape != (
+        templates.n_templates,
+    ):
+        raise HostSEDReconstructionError(
+            "template_weight_shape_mismatch",
+            "stellar weights/scales do not match the verified template matrix",
+        )
+    normalization = float(value.get("preprocessing_normalization", np.nan))
+    if not np.isfinite(normalization) or normalization <= 0:
+        raise HostSEDReconstructionError(
+            "invalid_preprocessing_normalization",
+            "normalization must be finite and positive",
+        )
+    host_flux = (templates.flux / scales[np.newaxis, :]) @ weights
+    host_flux *= normalization
+    return _host_sed_from_arrays(
+        templates.wave,
+        host_flux,
+        warnings_in=value.get("fit_warnings", []),
+        provenance={
+            "template_wave": templates.wave,
+            "host_sed_method": HOST_SED_METHOD,
+            "host_sed_method_version": HOST_SED_METHOD_VERSION,
+            "host_reconstruction_state_version": (
+                HOST_RECONSTRUCTION_STATE_VERSION
+            ),
+            **identities,
+            "template_file_name": filename,
+            "strategy_used": value.get("strategy_used"),
+            "reconstructed_without_ppxf": True,
+        },
     )
 
 
@@ -1108,7 +1388,7 @@ def _interp_no_extrapolate(wave: float, grid: np.ndarray, values: np.ndarray) ->
     return float(np.interp(wave, finite_grid, finite_values))
 
 
-def _fitted_host_fraction_samples(fit: PPXFHostFitResult) -> Dict[str, float]:
+def fitted_host_fraction_samples(fit: PPXFHostFitResult) -> Dict[str, float]:
     samples: Dict[str, float] = {}
     for host_name, wave in SAMPLE_WAVELENGTHS.items():
         suffix = host_name.removeprefix("fHost_")
@@ -1203,7 +1483,7 @@ def _summary_dict(
         "warnings": ";".join(sorted(set(fit.warnings + sed.warnings))),
     }
     summary.update(sed.samples)
-    summary.update(_fitted_host_fraction_samples(fit))
+    summary.update(fitted_host_fraction_samples(fit))
     summary.update(sed.flags)
     return summary
 

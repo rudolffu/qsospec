@@ -124,6 +124,7 @@ class WorkflowResult:
     total_spectrum: Optional[Spectrum] = None
     host_fit: Optional[Any] = None
     host_sed: Optional[Any] = None
+    host_reconstruction_state: Optional[Dict[str, Any]] = None
     host_model_on_quasar_grid: Optional[np.ndarray] = None
     host_component_models: Dict[str, np.ndarray] = field(default_factory=dict)
     host_fit_mask: Optional[np.ndarray] = None

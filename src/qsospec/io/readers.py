@@ -21,6 +21,7 @@ from ..workflows.host.io import (
     IVAR_ALIASES,
     MASK_ALIASES,
     OBJECT_ID_ALIASES,
+    PROVENANCE_SCALAR_COLUMNS,
     RA_ALIASES,
     REDSHIFT_ALIASES,
     RESOLUTION_MODE_ALIASES,
@@ -114,6 +115,11 @@ def spectrum_data_from_mapping(
     resolution_mode_col = _lookup(columns, RESOLUTION_MODE_ALIASES)
     ra_col = _lookup(columns, RA_ALIASES)
     dec_col = _lookup(columns, DEC_ALIASES)
+    provenance = {
+        name: _value(row, _lookup(columns, (name,)))
+        for name in PROVENANCE_SCALAR_COLUMNS
+        if _lookup(columns, (name,)) is not None
+    }
     redshift = overrides.get("redshift", _value(row, redshift_col))
     object_id = overrides.get("object_id", _value(row, object_col))
     targetid = _value(row, target_col)
@@ -131,8 +137,13 @@ def spectrum_data_from_mapping(
                 mode=mode,
                 values=np.asarray(values, float),
                 wavelength=np.asarray(_array(row, wave_col), float),
-                source="input_spectrum_column",
-                is_object_specific=True,
+                source=str(
+                    provenance.get("resolution_source")
+                    or "input_spectrum_column"
+                ),
+                is_object_specific=bool(
+                    provenance.get("resolution_is_object_specific", True)
+                ),
             )
             break
     if resolution is None:
@@ -172,7 +183,7 @@ def spectrum_data_from_mapping(
             "input_file": str(source),
             "file_type": "parquet",
             "flux_unit": "cgs",
-            "flux_scale": 1e-17,
+            "flux_scale": float(provenance.get("flux_scale") or 1e-17),
             "row_index": row_index,
             "selected_columns": {
                 "wavelength": wave_col,
@@ -185,6 +196,7 @@ def spectrum_data_from_mapping(
                 "ra": ra_col,
                 "dec": dec_col,
             },
+            **provenance,
         },
         resolution=resolution,
     )
@@ -223,6 +235,7 @@ def scan_parquet_spectra(
                 SIGMA_LAMBDA_ALIASES,
                 FWHM_LAMBDA_ALIASES,
                 SIGMA_KMS_ALIASES,
+                *((name,) for name in PROVENANCE_SCALAR_COLUMNS),
             )
             if (column := _lookup(columns, aliases)) is not None
         }

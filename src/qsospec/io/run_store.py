@@ -302,6 +302,7 @@ def _measurement_rows(
         values: Mapping[str, Any],
         errors: Mapping[str, Any],
         method: str,
+        units: Optional[Mapping[str, str]] = None,
     ) -> None:
         for quantity, value in values.items():
             numeric = _float(value)
@@ -320,7 +321,7 @@ def _measurement_rows(
                     "quantity": str(quantity),
                     "value": numeric,
                     "error": _float(errors.get(quantity)),
-                    "unit": None,
+                    "unit": (units or {}).get(str(quantity)),
                     "method": method,
                     "metadata": [],
                 }
@@ -370,15 +371,23 @@ def _measurement_rows(
         )
     for quantity, value in result.metadata.get("continuum_samples", {}).items():
         add("continuum_sample", None, {quantity: value}, {}, "interpolation")
+    for quantity, value in result.metadata.get("host_fit_samples", {}).items():
+        add(
+            "host_sample",
+            None,
+            {quantity: value},
+            {},
+            "ppxf_component_interpolation",
+            units={quantity: (
+                "dimensionless" if str(quantity).startswith("fracHost_")
+                else "input_flux_density"
+            )},
+        )
     host_quality = result.metadata.get("host_fit_quality", {})
     host_scalars = {
         "ppxf_agn_fraction_flux_global": result.metadata.get(
             "ppxf_agn_fraction_flux_global"
         ),
-        "ppxf_high_agn_fraction_warning": result.metadata.get(
-            "ppxf_high_agn_fraction_warning"
-        ),
-        "host_fit_reliable": result.metadata.get("host_fit_reliable"),
     }
     for quantity in (
         "broad_prefit_fwhm_kms",
@@ -407,7 +416,31 @@ def _measurement_rows(
     ):
         if quantity in host_quality:
             host_scalars[quantity] = host_quality[quantity]
-    add("host_metric", None, host_scalars, {}, "host_decomposition")
+    width_metrics = {
+        "broad_prefit_fwhm_kms",
+        "broad_prefit_fwhm_error_kms",
+        "pseudocontinuum_width_initial_kms",
+        "pseudocontinuum_width_final_kms",
+        "pseudocontinuum_width_change_kms",
+    }
+    timing_metrics = {
+        name for name in host_scalars
+        if name.endswith("_seconds")
+    }
+    host_units = {
+        **{name: "km/s" for name in width_metrics},
+        **{name: "s" for name in timing_metrics},
+        "ppxf_agn_fraction_flux_global": "dimensionless",
+        "closure_relative_to_normalization": "dimensionless",
+    }
+    add(
+        "host_metric",
+        None,
+        host_scalars,
+        {},
+        "host_decomposition",
+        units=host_units,
+    )
     return rows
 
 
@@ -470,6 +503,11 @@ def _model_row(
     object_key: str,
     object_id: str,
 ) -> dict[str, Any]:
+    workflow_metadata = dict(result.metadata)
+    if result.host_reconstruction_state is not None:
+        workflow_metadata["host_reconstruction_state"] = dict(
+            result.host_reconstruction_state
+        )
     components = [
         {
             "section": "continuum",
@@ -561,7 +599,7 @@ def _model_row(
         "components": components,
         "complexes": complexes,
         "spectrum_metadata": _key_values(result.spectrum.metadata.to_dict()),
-        "workflow_metadata": _key_values(result.metadata),
+        "workflow_metadata": _key_values(workflow_metadata),
     }
 
 
@@ -1142,6 +1180,9 @@ def load_model_by_key(
     ).to_pylist()
     warning_rows = store.read_object_table("warnings", object_key).to_pylist()
     workflow_metadata = _from_key_values(row["workflow_metadata"])
+    host_reconstruction_state = workflow_metadata.pop(
+        "host_reconstruction_state", None
+    )
     spectrum_metadata_values = _from_key_values(row["spectrum_metadata"])
     extinction = dict(
         spectrum_metadata_values.get("galactic_extinction")
@@ -1221,6 +1262,10 @@ def load_model_by_key(
         ]
 
     host_enabled = bool(object_row["host_decomp_enabled"])
+    if host_reconstruction_state is None and host_enabled:
+        workflow_metadata["host_sed_reconstruction_status"] = (
+            "unavailable_legacy_run"
+        )
     host_fit_mask, host_emission_mask, host_mask_provenance = (
         _archived_host_masks(row, spectrum.wave_rest)
     )
@@ -1314,6 +1359,7 @@ def load_model_by_key(
         },
         host_decomp_enabled=host_enabled,
         total_spectrum=total_spectrum,
+        host_reconstruction_state=host_reconstruction_state,
         host_model_on_quasar_grid=(
             np.asarray(row["host_model"], dtype=float)
             if row["host_model"] is not None else None
@@ -1341,6 +1387,79 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         except KeyError as error:
             raise KeyError(f"Object not found: {identifier!r}") from error
     return load_model_by_key(store, object_key)
+
+
+def load_host_reconstruction_state(
+    run: Union[str, RunStore], object_key: str
+) -> Dict[str, Any]:
+    """Load compact HostSED state through one direct model-shard lookup."""
+
+    from ..workflows.host.ppxf_host import HostSEDReconstructionError
+
+    store = open_run(run) if isinstance(run, str) else run
+    row = store.object_row_by_key("models", str(object_key))
+    metadata = _from_key_values(row.get("workflow_metadata"))
+    state = metadata.get("host_reconstruction_state")
+    if not isinstance(state, Mapping):
+        raise HostSEDReconstructionError(
+            "unavailable_legacy_run",
+            "the model row has no compact HostSED reconstruction state",
+        )
+    return dict(state)
+
+
+def reconstruct_host_sed_from_model_row(
+    model_row: Mapping[str, Any],
+    *,
+    template_root: str,
+    template_file: Optional[str] = None,
+    verify_hash: bool = True,
+):
+    """Reconstruct a HostSED from one already loaded model row."""
+
+    from ..workflows.host.ppxf_host import (
+        HostSEDReconstructionError,
+        reconstruct_host_sed_from_state,
+    )
+
+    raw_metadata = model_row.get("workflow_metadata")
+    metadata = (
+        _from_key_values(raw_metadata)
+        if not isinstance(raw_metadata, Mapping)
+        else dict(raw_metadata)
+    )
+    state = metadata.get("host_reconstruction_state")
+    if not isinstance(state, Mapping):
+        raise HostSEDReconstructionError(
+            "unavailable_legacy_run",
+            "the model row has no compact HostSED reconstruction state",
+        )
+    return reconstruct_host_sed_from_state(
+        state,
+        template_root=template_root,
+        template_file=template_file,
+        verify_hash=verify_hash,
+    )
+
+
+def reconstruct_host_sed_from_run(
+    run: Union[str, RunStore],
+    object_key: str,
+    *,
+    template_root: str,
+    template_file: Optional[str] = None,
+    verify_hash: bool = True,
+):
+    """Directly load compact state and reconstruct one stellar HostSED."""
+
+    from ..workflows.host.ppxf_host import reconstruct_host_sed_from_state
+
+    return reconstruct_host_sed_from_state(
+        load_host_reconstruction_state(run, object_key),
+        template_root=template_root,
+        template_file=template_file,
+        verify_hash=verify_hash,
+    )
 
 
 def finalize_run(

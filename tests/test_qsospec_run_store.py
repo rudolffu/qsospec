@@ -289,6 +289,11 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
         "closure_residual": np.zeros_like(wave),
         "host_subtracted_flux": result.spectrum.flux.copy(),
     }
+    result.host_reconstruction_state = {
+        "host_reconstruction_state_version": "1",
+        "template_file_name": "tiny_emiles.npz",
+        "stellar_weights": [1.0],
+    }
     result.host_fit_mask = (wave >= 3600.0) & (wave <= 4200.0)
     result.host_emission_mask = (wave >= 3710.0) & (wave <= 3745.0)
     result.metadata.update(
@@ -330,6 +335,16 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     for name, values in result.host_component_models.items():
         np.testing.assert_allclose(loaded.host_component_models[name], values)
     assert loaded.metadata["host_mask_provenance"] == "exact"
+    assert loaded.host_reconstruction_state == result.host_reconstruction_state
+    assert qsospec.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
+    store.read_table = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("host-state accessor must not scan a full table")
+    )
+    assert qsospec.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
     assert store.manifest["schema_version"] == "5"
 
     manifest_path = run_path / "manifest.json"

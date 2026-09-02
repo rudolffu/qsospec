@@ -26,12 +26,7 @@ from ..config import (
     MgIIComplexConfig,
     UncertaintyConfig,
 )
-from ..extinction import (
-    correct_spectrum_data,
-    prepare_spectrum,
-    preflight_galactic_extinction,
-)
-from ..fitting.global_fit import fit_global_lines
+from ..extinction import prepare_spectrum, preflight_galactic_extinction
 from ..io.products import (
     GlobalQAPlotConfig,
     resolve_qa_plot_config,
@@ -39,9 +34,7 @@ from ..io.products import (
 )
 from ..global_result import WorkflowResult
 from .host_workflow import (
-    _host_decomp_decision,
-    _host_subtracted_spectrum,
-    _spectrum_from_spectrum_data,
+    _run_global_fit_with_optional_host,
 )
 from ..io.readers import (
     SpectrumInput,
@@ -52,7 +45,6 @@ from ..io.readers import (
 )
 from ..io.run_store import RunStore, finalize_run, workflow_payload
 from ..spectrum import Spectrum
-from ..warnings import FitWarning
 
 
 @dataclass
@@ -143,162 +135,36 @@ def _fit_spectrum_data(
     uncertainty_config,
     complexes,
 ):
-    spectrum_data = correct_spectrum_data(
-        spectrum_data, galactic_extinction_config
-    )
     source = (
         f"{descriptor.source}:row_index={descriptor.row_index}"
         if descriptor.row_index is not None else descriptor.source
     )
-    host_decomp_enabled, host_skip_reason = _host_decomp_decision(
-        run_host_decomp, spectrum_data.redshift
-    )
-    if host_decomp_enabled:
-        (
-            total_spectrum,
-            fit_spectrum,
-            host_fit,
-            host_sed,
-            host_on_grid,
-            _,
-            host_fit_mask,
-            host_emission_mask,
-            host_warnings,
-        ) = _host_subtracted_spectrum(
-            spectrum_data,
-            redshift=float(spectrum_data.redshift),
-            template_root=template_root,
-            template_file=template_file,
-            fit_range=host_fit_range,
-            host_config=host_config,
-            source=source,
-        )
-    else:
-        total_spectrum = _spectrum_from_spectrum_data(
-            spectrum_data, source=source
-        )
-        fit_spectrum = total_spectrum
-        host_fit = None
-        host_sed = None
-        host_on_grid = None
-        host_warnings = []
-    result = fit_global_lines(
-        fit_spectrum,
-        global_config,
-        hbeta_config,
-        mgii_config,
-        halpha_config,
-        uncertainty_config,
-        lya_nv_config=lya_nv_config,
-        host_model_on_grid=host_on_grid,
-        complexes=complexes,
-    )
-    result.host_decomp_enabled = host_decomp_enabled
-    result.total_spectrum = total_spectrum
-    result.host_fit = host_fit
-    result.host_sed = host_sed
-    result.host_model_on_quasar_grid = host_on_grid
-    result.host_fit_mask = (
-        np.asarray(host_fit_mask, dtype=bool).copy()
-        if host_fit is not None else None
-    )
-    result.host_emission_mask = (
-        np.asarray(host_emission_mask, dtype=bool).copy()
-        if host_fit is not None else None
-    )
-    result.host_warnings = [str(item) for item in host_warnings]
     object_id = (
         descriptor.object_id
         or spectrum_data.object_id
         or spectrum_data.targetid
         or Path(descriptor.source).stem
     )
-    result.metadata.update(
-        {
-            "input_path": descriptor.source,
-            "row_index": descriptor.row_index,
-            "object_id": str(object_id),
-            "targetid": spectrum_data.targetid,
-            "ra": spectrum_data.ra,
-            "dec": spectrum_data.dec,
-            "redshift": fit_spectrum.z,
-            "fit_kind": "global",
-            "host_decomp_requested": bool(run_host_decomp),
-            "host_decomp_enabled": host_decomp_enabled,
-            "host_decomp_skip_reason": host_skip_reason,
-            "host_model_source": (
-                "template_weighted_sed_on_quasar_grid"
-                if host_decomp_enabled else None
-            ),
-            "host_fit_range": list(host_fit_range),
-            "host_mask_provenance": (
-                "exact" if host_decomp_enabled else "unavailable"
-            ),
-            "host_ppxf_status": (
-                host_fit.status if host_fit is not None else None
-            ),
-            "host_ppxf_reduced_chi2": (
-                float(host_fit.reduced_chi2)
-                if host_fit is not None else None
-            ),
-            "host_fit_reliable": (
-                bool(host_fit.host_fit_reliable)
-                if host_fit is not None else None
-            ),
-            "host_fit_reliability_reasons": (
-                list(host_fit.host_fit_reliability_reasons)
-                if host_fit is not None else []
-            ),
-            "host_fit_quality": (
-                dict(host_fit.quality_metrics)
-                if host_fit is not None else {}
-            ),
-            "host_noise_rescale_factors": (
-                dict(host_fit.noise_rescale_factors)
-                if host_fit is not None else {}
-            ),
-            "host_mask_components_log": (
-                {
-                    key: np.asarray(value, dtype=bool).tolist()
-                    for key, value in host_fit.preprocessed.mask_provenance.items()
-                    if str(key).endswith("_log")
-                    or str(key) == "log_grid_valid"
-                }
-                if host_fit is not None else {}
-            ),
-            "host_mask_component_counts": (
-                {
-                    key: int(np.count_nonzero(value))
-                    for key, value in host_fit.preprocessed.mask_provenance.items()
-                }
-                if host_fit is not None else {}
-            ),
-            "host_template_file": (
-                host_fit.templates.source_path
-                if host_fit is not None else None
-            ),
-            "host_template_wavelength_coverage": (
-                list(host_fit.templates.wavelength_coverage)
-                if host_fit is not None else None
-            ),
-            "galactic_extinction": dict(
-                spectrum_data.metadata.get("galactic_extinction", {})
-            ),
-        }
+    result = _run_global_fit_with_optional_host(
+        spectrum_data,
+        source=source,
+        input_path=descriptor.source,
+        row_index=descriptor.row_index,
+        object_id=str(object_id),
+        run_host_decomp=run_host_decomp,
+        template_root=template_root,
+        template_file=template_file,
+        host_fit_range=host_fit_range,
+        host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
+        global_config=global_config,
+        hbeta_config=hbeta_config,
+        mgii_config=mgii_config,
+        halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
+        uncertainty_config=uncertainty_config,
+        complexes=complexes,
     )
-    if run_host_decomp and not host_decomp_enabled:
-        result.warnings.append(
-            FitWarning(
-                code="host_decomp_skipped_redshift",
-                message="Host decomposition was requested but skipped by the redshift gate.",
-                severity="info",
-                context={
-                    "redshift": spectrum_data.redshift,
-                    "threshold": 1.2,
-                    "reason": host_skip_reason,
-                },
-            )
-        )
     return result, str(object_id)
 
 

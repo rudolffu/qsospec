@@ -729,11 +729,12 @@ def _run_host_refit_mc(
     )
 
 
-def fit_global_lines_workflow(
-    input_path: str,
+def _run_global_fit_with_optional_host(
+    spectrum_data: Any,
     *,
+    source: str,
+    input_path: str,
     row_index: Optional[int] = None,
-    redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
     template_root: str = "~/tools/ppxf_data",
@@ -749,21 +750,16 @@ def fit_global_lines_workflow(
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> WorkflowResult:
-    """Read one spectrum and run optional pPXF plus global multi-line qsospec."""
+    """Authoritative SpectrumData-based host plus global-fit orchestration."""
 
-    from .host.io import read_sparcli_spectrum
     from .host.config import default_config
 
     workflow_start = perf_counter()
     uncertainty = uncertainty_config or UncertaintyConfig()
     resolved_host_config = host_config or default_config()
-    spectrum_data = read_sparcli_spectrum(
-        input_path, row_index=row_index, redshift=redshift, object_id=object_id
-    )
     spectrum_data = correct_spectrum_data(
         spectrum_data, galactic_extinction_config
     )
-    source = f"{input_path}:row_index={row_index}"
     host_decomp_enabled, host_skip_reason = _host_decomp_decision(
         run_host_decomp, spectrum_data.redshift
     )
@@ -930,6 +926,11 @@ def fit_global_lines_workflow(
     workflow.total_spectrum = total_spectrum
     workflow.host_fit = host_fit
     workflow.host_sed = host_sed
+    workflow.host_reconstruction_state = (
+        dict(host_fit.host_reconstruction_state)
+        if host_fit is not None and host_fit.host_reconstruction_state
+        else None
+    )
     workflow.host_model_on_quasar_grid = host_on_grid
     if host_fit is not None:
         host_component_models = {}
@@ -963,6 +964,12 @@ def fit_global_lines_workflow(
         if host_fit is not None else None
     )
     workflow.host_warnings = [str(item) for item in host_warnings]
+    if host_fit is not None:
+        from .host.ppxf_host import fitted_host_fraction_samples
+
+        host_fit_samples = fitted_host_fraction_samples(host_fit)
+    else:
+        host_fit_samples = {}
     workflow.metadata.update(
         {
             "input_path": input_path,
@@ -1030,6 +1037,22 @@ def fit_global_lines_workflow(
                 list(host_fit.templates.wavelength_coverage)
                 if host_fit is not None else None
             ),
+            "host_template_file_sha256": (
+                host_fit.templates.metadata.get("source_sha256")
+                if host_fit is not None else None
+            ),
+            "host_template_wave_sha256": (
+                host_fit.templates.metadata.get("template_wave_sha256")
+                if host_fit is not None else None
+            ),
+            "host_template_matrix_sha256": (
+                host_fit.templates.metadata.get("template_matrix_sha256")
+                if host_fit is not None else None
+            ),
+            "host_fit_normalization": (
+                float(host_fit.preprocessed.normalization)
+                if host_fit is not None else None
+            ),
             "host_strategy_requested": (
                 host_fit.strategy_requested if host_fit is not None else None
             ),
@@ -1072,6 +1095,17 @@ def fit_global_lines_workflow(
                 float(host_fit.ppxf_agn_fraction_flux_global)
                 if host_fit is not None else np.nan
             ),
+            "ppxf_agn_fraction_definition": (
+                "integrated_positive_model_flux_agn_over_agn_plus_stellar"
+                if host_fit is not None else None
+            ),
+            "ppxf_agn_fraction_wavelength_support": (
+                [
+                    float(np.nanmin(host_fit.preprocessed.wave_rest)),
+                    float(np.nanmax(host_fit.preprocessed.wave_rest)),
+                ]
+                if host_fit is not None else None
+            ),
             "ppxf_high_agn_fraction_warning": (
                 bool(host_fit.ppxf_high_agn_fraction_warning)
                 if host_fit is not None else False
@@ -1084,9 +1118,51 @@ def fit_global_lines_workflow(
                 dict(host_fit.component_metadata)
                 if host_fit is not None else {}
             ),
+            "host_fit_samples": host_fit_samples,
             "host_closure": (
                 dict(host_fit.closure_metrics)
                 if host_fit is not None else {}
+            ),
+            "host_sed_reconstruction_status": (
+                "available"
+                if workflow.host_reconstruction_state is not None
+                else (
+                    "not_available_host_not_fit"
+                    if run_host_decomp else "not_requested"
+                )
+            ),
+            "host_reconstruction_state_version": (
+                workflow.host_reconstruction_state.get(
+                    "host_reconstruction_state_version"
+                )
+                if workflow.host_reconstruction_state is not None else None
+            ),
+            "resolution_status": spectrum_data.metadata.get(
+                "resolution_status",
+                (
+                    spectrum_data.resolution.status
+                    if spectrum_data.resolution is not None else "missing"
+                ),
+            ),
+            "resolution_source": spectrum_data.metadata.get(
+                "resolution_source",
+                (
+                    spectrum_data.resolution.source
+                    if spectrum_data.resolution is not None else None
+                ),
+            ),
+            "resolution_is_object_specific": bool(
+                spectrum_data.metadata.get(
+                    "resolution_is_object_specific",
+                    (
+                        spectrum_data.resolution.is_object_specific
+                        if spectrum_data.resolution is not None else False
+                    ),
+                )
+            ),
+            "source_backend": spectrum_data.metadata.get("source_backend"),
+            "source_backend_version": spectrum_data.metadata.get(
+                "source_backend_version"
             ),
             "galactic_extinction": dict(
                 spectrum_data.metadata.get("galactic_extinction", {})
@@ -1111,7 +1187,7 @@ def fit_global_lines_workflow(
             spectrum_data,
             n_trials=uncertainty.monte_carlo_trials,
             seed=uncertainty.random_seed,
-            redshift=redshift,
+            redshift=spectrum_data.redshift,
             template_root=template_root,
             template_file=template_file,
             host_fit_range=host_fit_range,
@@ -1126,6 +1202,58 @@ def fit_global_lines_workflow(
         )
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo_host_refit"
     return workflow
+
+
+def fit_global_lines_workflow(
+    input_path: str,
+    *,
+    row_index: Optional[int] = None,
+    redshift: Optional[float] = None,
+    object_id: Optional[str] = None,
+    run_host_decomp: bool = False,
+    template_root: str = "~/tools/ppxf_data",
+    template_file: str = "spectra_emiles_9.0.npz",
+    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    host_config: Optional[Any] = None,
+    galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
+    global_config: Optional[GlobalContinuumConfig] = None,
+    hbeta_config: Optional[HbetaComplexConfig] = None,
+    mgii_config: Optional[MgIIComplexConfig] = None,
+    halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
+    uncertainty_config: Optional[UncertaintyConfig] = None,
+    complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
+) -> WorkflowResult:
+    """Read one spectrum and use the shared host/global-fit orchestration."""
+
+    from .host.io import read_sparcli_spectrum
+
+    spectrum_data = read_sparcli_spectrum(
+        input_path,
+        row_index=row_index,
+        redshift=redshift,
+        object_id=object_id,
+    )
+    return _run_global_fit_with_optional_host(
+        spectrum_data,
+        source=f"{input_path}:row_index={row_index}",
+        input_path=input_path,
+        row_index=row_index,
+        object_id=object_id,
+        run_host_decomp=run_host_decomp,
+        template_root=template_root,
+        template_file=template_file,
+        host_fit_range=host_fit_range,
+        host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
+        global_config=global_config,
+        hbeta_config=hbeta_config,
+        mgii_config=mgii_config,
+        halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
+        uncertainty_config=uncertainty_config,
+        complexes=complexes,
+    )
 
 
 def fit_global_hbeta_workflow(

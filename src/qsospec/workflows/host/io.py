@@ -35,6 +35,25 @@ OBJECT_ID_ALIASES = ("object_id", "targetid", "target_id", "sparcl_id", "specid"
 RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
 DEFAULT_FLUX_SCALE = 1e-17
+PROVENANCE_SCALAR_COLUMNS = (
+    "source_backend",
+    "source_backend_version",
+    "resolution_status",
+    "resolution_source",
+    "resolution_is_object_specific",
+    "resolution_reason",
+    "pixel_cleaning",
+    "merge_algorithm",
+    "merge_version",
+    "wavelength_unit",
+    "wavelength_frame",
+    "flux_density_unit",
+    "flux_scale",
+    "flux_frame",
+    "galactic_extinction_corrected",
+    "qsospec_shard_id",
+    "input_row_index",
+)
 
 
 @dataclass
@@ -192,12 +211,19 @@ def read_sparcli_spectrum(
     z_value = redshift if redshift is not None else _extract_scalar(table, z_col, row_index=row_index)
     obj_value = object_id if object_id is not None else _extract_scalar(table, obj_col, row_index=row_index)
     targetid_value = _extract_scalar(table, targetid_col, row_index=row_index)
+    provenance = {
+        name: _extract_scalar(
+            table, _find_column(columns, (name,)), row_index=row_index
+        )
+        for name in PROVENANCE_SCALAR_COLUMNS
+        if _find_column(columns, (name,)) is not None
+    }
 
     metadata = {
         "input_file": str(input_path),
         "file_type": file_type,
         "flux_unit": "cgs",
-        "flux_scale": DEFAULT_FLUX_SCALE,
+        "flux_scale": float(provenance.get("flux_scale") or DEFAULT_FLUX_SCALE),
         "columns": list(map(str, columns)),
         "selected_columns": {
             "wavelength": wave_col,
@@ -211,6 +237,7 @@ def read_sparcli_spectrum(
             "dec": dec_col,
         },
         "row_index": row_index,
+        **provenance,
     }
 
     ivar = _extract_vector(table, ivar_col, row_index=row_index) if ivar_col else None
@@ -224,8 +251,13 @@ def read_sparcli_spectrum(
                 mode=mode,
                 values=_extract_vector(table, column, row_index=row_index),
                 wavelength=_extract_vector(table, wave_col, row_index=row_index),
-                source="input_spectrum_column",
-                is_object_specific=True,
+                source=str(
+                    provenance.get("resolution_source")
+                    or "input_spectrum_column"
+                ),
+                is_object_specific=bool(
+                    provenance.get("resolution_is_object_specific", True)
+                ),
             )
             break
     if resolution is None:

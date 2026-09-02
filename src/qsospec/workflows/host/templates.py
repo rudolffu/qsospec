@@ -22,6 +22,11 @@ SAMPLE_WAVELENGTHS = {
     "fHost_2p2um": 22000.0,
 }
 
+PPXF_NPZ_LOADER_VERSION = "qsospec_ppxf_npz_v1"
+TEMPLATE_FLATTENING_CONVENTION = (
+    "move_wavelength_axis_to_front_then_c_order_flatten"
+)
+
 
 @dataclass
 class PPXFTemplateLibrary:
@@ -140,6 +145,19 @@ def _file_sha256(path: Path) -> str:
     )
 
 
+def array_sha256(array: np.ndarray) -> str:
+    """Return a stable identity for one numeric template array."""
+
+    value = np.ascontiguousarray(np.asarray(array))
+    digest = sha256()
+    digest.update(str(value.dtype).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(json.dumps(list(value.shape), separators=(",", ":")).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(value.tobytes(order="C"))
+    return digest.hexdigest()
+
+
 def _write_reports(report_dir: Path, report_name: str, payload: Dict[str, Any]) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
     json_path = report_dir / f"{report_name}.json"
@@ -198,6 +216,10 @@ def load_ppxf_npz_templates(
             "keys": list(npz.files),
             "wavelength_key": wave_key,
             "template_key": template_key,
+            "loader_version": PPXF_NPZ_LOADER_VERSION,
+            "flattening_convention": TEMPLATE_FLATTENING_CONVENTION,
+            "template_wave_sha256": array_sha256(wave),
+            "template_matrix_sha256": array_sha256(flux),
             "wavelength_coverage": [float(np.nanmin(wave)), float(np.nanmax(wave))],
             "template_shape": list(original_shape),
             "n_templates": int(flux.shape[1]),
@@ -215,7 +237,17 @@ def load_ppxf_npz_templates(
         family=template_family,
         source_path=str(source),
         wavelength_coverage=(float(np.nanmin(wave)), float(np.nanmax(wave))),
-        metadata={**metadata, "source_sha256": payload["source_sha256"]},
+        metadata={
+            **metadata,
+            "source_sha256": payload["source_sha256"],
+            "source_file_name": source.name,
+            "wavelength_key": wave_key,
+            "template_key": template_key,
+            "loader_version": PPXF_NPZ_LOADER_VERSION,
+            "flattening_convention": TEMPLATE_FLATTENING_CONVENTION,
+            "template_wave_sha256": payload["template_wave_sha256"],
+            "template_matrix_sha256": payload["template_matrix_sha256"],
+        },
         original_shape=original_shape,
         warnings=list(payload["warnings"]),
     )
