@@ -17,7 +17,7 @@ Audit date: 2026-09-03. Cleanup branch: `codex/cleanup-repository-hygiene`.
 - No empty implementation stubs or dummy tests were found.
 - `qsospec.io.run_store` is the canonical owner of run schemas, fingerprints, immutable staged payloads, reconciliation, and atomic finalization. `qsospec.workflows.batch` is the canonical owner of scalar resume planning and process execution. Existing invariant suites cover complete, partial, failed, duplicate-key, mismatch, deterministic-order, and schema behavior; these contracts were retained unchanged.
 - `build_euclid_dr1_gold_rgs_input.py` implements the fixed identified-gold membership policy. `build_euclid_dr1_qsospec_input.py` is a generic external-survey bridge. They overlap in output shape but not sample policy, so neither is deprecated or merged.
-- Host internals are already separated across `workflows/host/io.py`, `preprocess.py`, `templates.py`, `ppxf_host.py`, `results.py`, `serialization.py`, `plots.py`, and `euclid.py`. Moving namespaces again without numerical fixtures would add compatibility risk.
+- Host internals are already partly separated across `workflows/host/io.py`, `templates.py`, `ppxf_host.py`, `plots.py`, `euclid.py`, configuration, coverage, and preconvolution modules. Result/serialization responsibilities remain in existing workflow modules; moving them without numerical fixtures would add compatibility risk.
 - The top-level API contains specialist re-exports, but documented callers and compatibility tests exist. No export was removed merely to reduce surface area.
 - Legacy host vocabulary aliases have explicit deprecation tests; their behavior remains unchanged.
 - Workload benchmarks moved to `benchmarks/` and `docs/benchmarks/`; they are not collected by the default test suite.
