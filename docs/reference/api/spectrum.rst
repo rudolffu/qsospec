@@ -16,3 +16,5 @@ Spectrum and metadata API
 .. autofunction:: discover_fits_inputs
 .. autofunction:: read_input_manifest
 .. autofunction:: scan_parquet_spectra
+.. autofunction:: scan_parquet_spectrum_inputs
+.. autofunction:: plan_batch_resume

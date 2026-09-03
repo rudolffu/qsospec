@@ -58,8 +58,8 @@ tables. FITS tasks are dynamically scheduled one file at a time; Parquet
 spectra use small worker microbatches.
 
 ``n_workers="auto"`` selects at most eight spawned processes and leaves one CPU
-available. Each worker limits BLAS/OpenMP to one thread. ``n_workers=1`` selects
-serial execution. A restricted platform without process semaphore support
+available. Worker processes inherit numerical-library thread settings.
+``n_workers=1`` selects serial execution. A restricted platform without process semaphore support
 falls back to serial execution.
 
 For independent cluster jobs, use the same run directory and configuration:
@@ -94,6 +94,19 @@ Resume and inspection
 Reusing a run directory with the same configuration skips completed objects
 and retries failures by default. A changed scientific configuration is
 rejected; use a new run directory or run ID.
+
+Schema-v5 object and failure filenames are deterministic hashes of
+``object_key``. Fast resume therefore combines a scalar-only Parquet identity
+scan with direct existence checks for those authoritative shards. Completed
+rows never reach the spectrum-vector decoder. Use
+``qsospec.plan_batch_resume(...)`` to inspect expected, completed,
+failed-terminal, retry-failed, and unfinished counts without fitting.
+
+``fit_batch`` accepts ``resume_planning="auto"`` (default), ``"lightweight"``,
+or ``"legacy"``. Forced lightweight mode rejects unsupported filtered scans;
+automatic mode safely falls back. Telemetry records identity and manifest
+planning time, worker startup, spectral loading, fitting, serialization, and
+the vector rows loaded/avoided.
 
 .. code-block:: python
 

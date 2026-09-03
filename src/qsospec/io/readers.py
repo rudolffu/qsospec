@@ -10,6 +10,7 @@ from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, 
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as pads
+import pyarrow.parquet as pq
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 import astropy.units as u
@@ -63,6 +64,8 @@ class SpectrumInput:
 
 
 OBJECT_KEY_ALIASES = ("qsospec_object_key", "object_key", "spectrum_key")
+INPUT_ROW_INDEX_ALIASES = ("input_row_index",)
+SHARD_ID_ALIASES = ("qsospec_shard_id", "shard_id")
 
 
 def _lookup(columns: Iterable[str], aliases: Iterable[str]) -> Optional[str]:
@@ -212,6 +215,7 @@ def scan_parquet_spectra(
     """Scan Parquet sources once with projected columns and bounded batches."""
 
     source_paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+    explicit_keys_seen: set[str] = set()
     for source in source_paths:
         source_path = str(Path(source).expanduser())
         dataset = pads.dataset(source_path, format="parquet")
@@ -246,18 +250,55 @@ def scan_parquet_spectra(
                 requested.update(map(int, row_indices.get(source_path, ())))
             else:
                 requested = set(map(int, row_indices))
-        scanner = dataset.scanner(
-            columns=sorted(selected),
-            filter=filter_expression,
-            batch_size=int(batch_size),
-        )
-        absolute_index = 0
-        explicit_keys_seen: set[str] = set()
+        # A resume plan normally supplies a small set of physical row offsets.
+        # For a plain Parquet file, avoid decoding vector columns from unrelated
+        # row groups and take only the requested rows inside matching groups.
+        selected_batches: Iterable[tuple[int, Any]]
+        if (
+            requested is not None
+            and filter_expression is None
+            and Path(source_path).is_file()
+        ):
+            parquet = pq.ParquetFile(source_path)
+            requested = {
+                index for index in requested
+                if 0 <= index < parquet.metadata.num_rows
+            }
+            def selected_row_groups():
+                row_group_start = 0
+                for row_group in range(parquet.metadata.num_row_groups):
+                    row_group_rows = parquet.metadata.row_group(row_group).num_rows
+                    local = sorted(
+                        index - row_group_start
+                        for index in requested
+                        if row_group_start <= index < row_group_start + row_group_rows
+                    )
+                    if local:
+                        table = parquet.read_row_group(
+                            row_group, columns=sorted(selected)
+                        ).take(local)
+                        yield row_group_start, (local, table.to_pylist())
+                    row_group_start += row_group_rows
+
+            selected_batches = selected_row_groups()
+        else:
+            scanner = dataset.scanner(
+                columns=sorted(selected),
+                filter=filter_expression,
+                batch_size=int(batch_size),
+            )
+            selected_batches = (
+                (absolute, (None, record_batch.to_pylist()))
+                for absolute, record_batch in _batches_with_offsets(scanner.to_batches())
+            )
         object_key_col = _lookup(columns, OBJECT_KEY_ALIASES)
-        for record_batch in scanner.to_batches():
-            rows = record_batch.to_pylist()
+        for batch_start, (local_indices, rows) in selected_batches:
             for offset, row in enumerate(rows):
-                row_index = absolute_index + offset
+                row_index = (
+                    batch_start + local_indices[offset]
+                    if local_indices is not None
+                    else batch_start + offset
+                )
                 if requested is not None and row_index not in requested:
                     continue
                 spectrum = spectrum_data_from_mapping(
@@ -290,7 +331,125 @@ def scan_parquet_spectra(
                         )
                     explicit_keys_seen.add(descriptor.object_key)
                 yield descriptor, spectrum
-            absolute_index += len(rows)
+
+
+def _batches_with_offsets(batches: Iterable[Any]) -> Iterator[tuple[int, Any]]:
+    """Yield Arrow batches with offsets in the unfiltered scanned sequence."""
+
+    offset = 0
+    for batch in batches:
+        yield offset, batch
+        offset += batch.num_rows
+
+
+def scan_parquet_spectrum_inputs(
+    paths: Union[Sequence[str], str],
+    *,
+    row_indices: Optional[Union[Mapping[str, Sequence[int]], Sequence[int]]] = None,
+    filter_expression: Any = None,
+    batch_size: int = 4096,
+) -> Iterator[SpectrumInput]:
+    """Scan Parquet spectrum identities without reading spectral vectors.
+
+    Row indices are physical Parquet row offsets. Arbitrary dataset filters do
+    not preserve those offsets, so lightweight planning deliberately rejects
+    them instead of guessing; ``fit_batch(resume_planning="auto")`` falls back
+    to the legacy vector scan in that case.
+    """
+
+    if filter_expression is not None:
+        raise ValueError(
+            "lightweight Parquet resume planning does not support "
+            "filter_expression because physical row offsets are ambiguous"
+        )
+    source_paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+    explicit_keys_seen: set[str] = set()
+    for source in source_paths:
+        source_path = str(Path(source).expanduser())
+        dataset = pads.dataset(source_path, format="parquet")
+        columns = dataset.schema.names
+        identity_columns = {
+            column
+            for aliases in (
+                OBJECT_KEY_ALIASES,
+                OBJECT_ID_ALIASES,
+                ("targetid", "target_id"),
+                REDSHIFT_ALIASES,
+                INPUT_ROW_INDEX_ALIASES,
+                SHARD_ID_ALIASES,
+            )
+            if (column := _lookup(columns, aliases)) is not None
+        }
+        requested = None
+        if row_indices is not None:
+            if isinstance(row_indices, Mapping):
+                requested = set(map(int, row_indices.get(source, ())))
+                requested.update(map(int, row_indices.get(source_path, ())))
+            else:
+                requested = set(map(int, row_indices))
+        scanner = dataset.scanner(
+            columns=sorted(identity_columns), batch_size=int(batch_size)
+        )
+        object_key_col = _lookup(columns, OBJECT_KEY_ALIASES)
+        object_col = _lookup(columns, OBJECT_ID_ALIASES)
+        target_col = _lookup(columns, ("targetid", "target_id"))
+        redshift_col = _lookup(columns, REDSHIFT_ALIASES)
+        input_row_col = _lookup(columns, INPUT_ROW_INDEX_ALIASES)
+        explicit_input_rows: set[int] = set()
+        for batch_start, record_batch in _batches_with_offsets(scanner.to_batches()):
+            for offset, row in enumerate(record_batch.to_pylist()):
+                physical_row = batch_start + offset
+                if input_row_col is not None:
+                    raw_input_row = _value(row, input_row_col)
+                    if raw_input_row is None:
+                        raise ValueError(
+                            f"Missing input_row_index in {source_path} row {physical_row}"
+                        )
+                    input_row = int(raw_input_row)
+                    if input_row in explicit_input_rows:
+                        raise ValueError(
+                            f"Duplicate input_row_index in {source_path}: {input_row}"
+                        )
+                    explicit_input_rows.add(input_row)
+                if requested is not None and physical_row not in requested:
+                    continue
+                explicit_key = (
+                    str(_value(row, object_key_col)).strip()
+                    if object_key_col is not None
+                    and _value(row, object_key_col) is not None
+                    else None
+                )
+                descriptor = SpectrumInput(
+                    source=source_path,
+                    row_index=physical_row,
+                    object_id=(
+                        str(_value(row, object_col))
+                        if object_col is not None and _value(row, object_col) is not None
+                        else str(_value(row, target_col))
+                        if target_col is not None and _value(row, target_col) is not None
+                        else None
+                    ),
+                    redshift=(
+                        float(_value(row, redshift_col))
+                        if redshift_col is not None
+                        and _value(row, redshift_col) is not None
+                        else None
+                    ),
+                    reader="parquet",
+                    explicit_object_key=explicit_key,
+                )
+                if explicit_key is not None:
+                    if not descriptor.object_key:
+                        raise ValueError(
+                            f"Empty explicit object key in {source_path} row {physical_row}"
+                        )
+                    if descriptor.object_key in explicit_keys_seen:
+                        raise ValueError(
+                            "Duplicate explicit object key across Parquet inputs: "
+                            f"{descriptor.object_key!r}"
+                        )
+                    explicit_keys_seen.add(descriptor.object_key)
+                yield descriptor
 
 
 def _header_float(header, *names) -> Optional[float]:

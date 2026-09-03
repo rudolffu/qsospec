@@ -10,7 +10,7 @@ import traceback
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
@@ -41,6 +41,7 @@ from ..io.readers import (
     discover_fits_inputs,
     read_input_manifest,
     read_spectrum,
+    scan_parquet_spectrum_inputs,
     scan_parquet_spectra,
 )
 from ..io.run_store import RunStore, finalize_run, workflow_payload
@@ -62,6 +63,29 @@ class BatchResult:
     timings: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class BatchResumePlan:
+    """Scalar-only classification of the inputs for a resumable batch."""
+
+    expected_count: int
+    completed_count: int
+    failed_terminal_count: int
+    retry_failed_count: int
+    unfinished_count: int
+    skipped_count: int
+    unfinished_row_indices: Mapping[str, tuple[int, ...]]
+    unfinished_object_keys: tuple[str, ...]
+    completed_object_keys: tuple[str, ...]
+    failed_object_keys: tuple[str, ...]
+    input_identity_sha256: str
+    status: str
+    timings: Mapping[str, Any]
+
+
+class LightweightResumeUnavailable(ValueError):
+    """Raised when scalar-only planning cannot preserve input semantics."""
+
+
 @dataclass
 class _Task:
     descriptor: SpectrumInput
@@ -77,6 +101,217 @@ def _auto_workers(number_of_objects: Optional[int]) -> int:
     if number_of_objects is not None:
         available = min(available, max(number_of_objects, 1))
     return min(available, 8)
+
+
+def _is_spectral_parquet(path: Path) -> bool:
+    import pyarrow.parquet as pq
+
+    columns = {name.lower() for name in pq.read_schema(path).names}
+    return (
+        any(alias in columns for alias in ("wavelength", "wave", "lambda", "lam", "obs_wave"))
+        and any(alias in columns for alias in ("flux", "flam", "flux_lambda"))
+    )
+
+
+def _identity_iterator(
+    inputs,
+    *,
+    row_indices,
+    filter_expression,
+    parquet_identity_batch_size: int,
+) -> Iterator[SpectrumInput]:
+    """Yield input descriptors without materializing spectrum vectors."""
+
+    if filter_expression is not None:
+        raise LightweightResumeUnavailable(
+            "lightweight resume cannot preserve physical row offsets with "
+            "filter_expression"
+        )
+    items = [inputs] if isinstance(inputs, (str, Path, SpectrumInput)) else list(inputs)
+    parquet_spectra: list[str] = []
+    descriptors: list[SpectrumInput] = []
+    discoverable: list[str] = []
+    for item in items:
+        if isinstance(item, SpectrumInput):
+            descriptors.append(item)
+        elif isinstance(item, (str, Path)):
+            path = Path(item).expanduser()
+            if path.suffix.lower() == ".csv":
+                descriptors.extend(read_input_manifest(str(path)))
+            elif path.suffix.lower() == ".parquet":
+                if _is_spectral_parquet(path):
+                    parquet_spectra.append(str(path))
+                else:
+                    descriptors.extend(read_input_manifest(str(path)))
+            else:
+                discoverable.append(str(item))
+        else:
+            raise LightweightResumeUnavailable(
+                f"unsupported in-memory batch input for lightweight resume: {type(item)!r}"
+            )
+    if parquet_spectra:
+        try:
+            yield from scan_parquet_spectrum_inputs(
+                parquet_spectra,
+                row_indices=row_indices,
+                batch_size=parquet_identity_batch_size,
+            )
+        except ValueError:
+            raise
+        except Exception as error:
+            raise LightweightResumeUnavailable(str(error)) from error
+    yield from descriptors
+    if discoverable:
+        yield from discover_fits_inputs(discoverable)
+
+
+def _descriptor_identity(descriptor: SpectrumInput) -> dict[str, Any]:
+    return {
+        "source": descriptor.source,
+        "row_index": descriptor.row_index,
+        "object_id": descriptor.object_id,
+        "redshift": descriptor.redshift,
+        "reader": descriptor.reader,
+        "explicit_object_key": descriptor.explicit_object_key,
+        "object_key": descriptor.object_key,
+        "metadata": dict(descriptor.metadata),
+    }
+
+
+def _plan_batch_resume(
+    inputs,
+    store: Optional[RunStore],
+    *,
+    authoritative: Optional[Mapping[str, Any]] = None,
+    row_indices=None,
+    filter_expression=None,
+    retry_failures: bool = False,
+    num_shards: Optional[int] = None,
+    shard_index: Optional[int] = None,
+    parquet_identity_batch_size: int = 4096,
+) -> BatchResumePlan:
+    started = time.perf_counter()
+    actual_num_shards = 1 if num_shards is None else int(num_shards)
+    actual_shard_index = 0 if shard_index is None else int(shard_index)
+    if actual_num_shards < 1 or not 0 <= actual_shard_index < actual_num_shards:
+        raise ValueError("Require num_shards >= 1 and a valid shard_index")
+
+    identity_started = time.perf_counter()
+    descriptors: list[SpectrumInput] = []
+    seen: set[str] = set()
+    identity_hash = hashlib.sha256()
+    for descriptor in _identity_iterator(
+        inputs,
+        row_indices=row_indices,
+        filter_expression=filter_expression,
+        parquet_identity_batch_size=parquet_identity_batch_size,
+    ):
+        digest = int(hashlib.sha256(descriptor.object_key.encode("utf-8")).hexdigest(), 16)
+        if digest % actual_num_shards != actual_shard_index:
+            continue
+        if descriptor.object_key in seen:
+            raise ValueError(f"Duplicate spectrum object key: {descriptor.object_key!r}")
+        seen.add(descriptor.object_key)
+        descriptors.append(descriptor)
+        identity_hash.update(
+            json.dumps(
+                _descriptor_identity(descriptor),
+                sort_keys=True,
+                separators=(",", ":"),
+                default=repr,
+            ).encode("utf-8")
+        )
+        identity_hash.update(b"\n")
+    identity_seconds = time.perf_counter() - identity_started
+
+    manifest_started = time.perf_counter()
+    if authoritative is None:
+        authoritative = (
+            store.reconcile_expected_keys(item.object_key for item in descriptors)
+            if store is not None
+            else {"completed_keys": set(), "failed_keys": set()}
+        )
+    manifest_seconds = time.perf_counter() - manifest_started
+    completed = set(authoritative["completed_keys"])
+    failed = set(authoritative["failed_keys"])
+
+    unfinished: list[SpectrumInput] = []
+    completed_count = failed_terminal_count = retry_failed_count = 0
+    for descriptor in descriptors:
+        key = descriptor.object_key
+        if key in completed:
+            completed_count += 1
+        elif key in failed and not retry_failures:
+            failed_terminal_count += 1
+        else:
+            if key in failed:
+                retry_failed_count += 1
+            unfinished.append(descriptor)
+    rows: dict[str, list[int]] = {}
+    for descriptor in unfinished:
+        if descriptor.reader == "parquet" and descriptor.row_index is not None:
+            rows.setdefault(descriptor.source, []).append(int(descriptor.row_index))
+    expected_count = len(descriptors)
+    unfinished_count = len(unfinished)
+    status = (
+        "empty_input" if expected_count == 0
+        else "all_complete" if unfinished_count == 0
+        else "partial"
+    )
+    plan_seconds = time.perf_counter() - started
+    return BatchResumePlan(
+        expected_count=expected_count,
+        completed_count=completed_count,
+        failed_terminal_count=failed_terminal_count,
+        retry_failed_count=retry_failed_count,
+        unfinished_count=unfinished_count,
+        skipped_count=completed_count + failed_terminal_count,
+        unfinished_row_indices={key: tuple(value) for key, value in rows.items()},
+        unfinished_object_keys=tuple(item.object_key for item in unfinished),
+        completed_object_keys=tuple(
+            item.object_key for item in descriptors if item.object_key in completed
+        ),
+        failed_object_keys=tuple(
+            item.object_key for item in descriptors if item.object_key in failed
+        ),
+        input_identity_sha256=identity_hash.hexdigest(),
+        status=status,
+        timings={
+            "resume_manifest_seconds": manifest_seconds,
+            "resume_identity_scan_seconds": identity_seconds,
+            "resume_plan_seconds": plan_seconds,
+            "identity_columns_projected": (
+                "object_key,object_id,targetid,redshift,input_row_index,qsospec_shard_id"
+            ),
+        },
+    )
+
+
+def plan_batch_resume(
+    inputs,
+    run_directory: str,
+    *,
+    row_indices=None,
+    filter_expression=None,
+    retry_failures: bool = False,
+    num_shards: Optional[int] = None,
+    shard_index: Optional[int] = None,
+    parquet_identity_batch_size: int = 4096,
+) -> BatchResumePlan:
+    """Plan a resume using scalar identities and authoritative stored state."""
+
+    root = Path(run_directory).expanduser()
+    store = RunStore.open(str(root)) if (root / "manifest.json").exists() else None
+    return _plan_batch_resume(
+        inputs,
+        store,
+        row_indices=row_indices,
+        filter_expression=filter_expression,
+        retry_failures=retry_failures,
+        num_shards=num_shards,
+        shard_index=shard_index,
+        parquet_identity_batch_size=parquet_identity_batch_size,
+    )
 
 
 _WORKER_STORES: Dict[str, RunStore] = {}
@@ -624,6 +859,7 @@ def _iter_inputs(
     row_indices,
     filter_expression,
     parquet_batch_size,
+    object_keys: Optional[set[str]] = None,
 ) -> Iterator[tuple[SpectrumInput, Optional[SpectrumData]]]:
     items = [inputs] if isinstance(inputs, (str, Path)) else list(inputs)
     parquet_spectra = []
@@ -641,17 +877,7 @@ def _iter_inputs(
         if suffix == ".csv":
             manifest_descriptors.extend(read_input_manifest(str(path)))
         elif suffix == ".parquet":
-            import pyarrow.parquet as pq
-
-            columns = {name.lower() for name in pq.read_schema(path).names}
-            has_wave = any(
-                alias in columns
-                for alias in ("wavelength", "wave", "lambda", "lam", "obs_wave")
-            )
-            has_flux = any(
-                alias in columns for alias in ("flux", "flam", "flux_lambda")
-            )
-            if has_wave and has_flux:
+            if _is_spectral_parquet(path):
                 parquet_spectra.append(str(path))
             else:
                 manifest_descriptors.extend(read_input_manifest(str(path)))
@@ -665,7 +891,8 @@ def _iter_inputs(
             batch_size=parquet_batch_size,
         )
     for descriptor in manifest_descriptors:
-        yield descriptor, None
+        if object_keys is None or descriptor.object_key in object_keys:
+            yield descriptor, None
     discoverable = [
         str(item)
         for item in remaining
@@ -673,7 +900,8 @@ def _iter_inputs(
     ]
     if discoverable:
         for descriptor in discover_fits_inputs(discoverable):
-            yield descriptor, None
+            if object_keys is None or descriptor.object_key in object_keys:
+                yield descriptor, None
 
 
 def fit_batch(
@@ -711,13 +939,18 @@ def fit_batch(
     manifest_update_interval: int = 128,
     show_progress: bool = True,
     progress_total: Optional[int] = None,
+    resume_planning: str = "auto",
+    parquet_identity_batch_size: int = 4096,
 ) -> BatchResult:
     """Fit a Parquet or FITS sample with resumable process parallelism."""
 
+    batch_started = time.perf_counter()
     if num_shards < 1 or not 0 <= shard_index < num_shards:
         raise ValueError("Require num_shards >= 1 and 0 <= shard_index < num_shards.")
     if manifest_update_interval < 1:
         raise ValueError("manifest_update_interval must be positive.")
+    if resume_planning not in {"auto", "lightweight", "legacy"}:
+        raise ValueError("resume_planning must be 'auto', 'lightweight', or 'legacy'")
     if compact_models:
         raise ValueError(
             "compact_models is not implemented for schema-v5 per-object shards; "
@@ -731,7 +964,6 @@ def fit_batch(
     galactic_extinction_config = (
         galactic_extinction_config or GalacticExtinctionConfig()
     )
-    preflight_galactic_extinction(galactic_extinction_config)
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
@@ -756,11 +988,77 @@ def fit_batch(
         resume=resume,
     )
     startup_started = time.perf_counter()
-    authoritative = store.reconcile_manifest()
-    startup_reconcile_seconds = time.perf_counter() - startup_started
-    completed = set(authoritative["completed_keys"]) if resume else set()
-    all_failed = set(authoritative["failed_keys"]) if resume else set()
+    authoritative = None
+    startup_reconcile_seconds = 0.0
+    resume_plan: Optional[BatchResumePlan] = None
+    effective_resume_mode = "legacy"
+    if resume and resume_planning != "legacy":
+        try:
+            resume_plan = _plan_batch_resume(
+                inputs,
+                store,
+                row_indices=row_indices,
+                filter_expression=filter_expression,
+                retry_failures=retry_failures,
+                num_shards=num_shards,
+                shard_index=shard_index,
+                parquet_identity_batch_size=parquet_identity_batch_size,
+            )
+            effective_resume_mode = "lightweight"
+        except LightweightResumeUnavailable:
+            if resume_planning == "lightweight":
+                raise
+            resume_plan = None
+            effective_resume_mode = "legacy"
+    if resume_plan is None:
+        authoritative = store.reconcile_manifest()
+        startup_reconcile_seconds = time.perf_counter() - startup_started
+        completed = set(authoritative["completed_keys"]) if resume else set()
+        all_failed = set(authoritative["failed_keys"]) if resume else set()
+    else:
+        startup_reconcile_seconds = float(
+            resume_plan.timings["resume_manifest_seconds"]
+        )
+        completed = set(resume_plan.completed_object_keys)
+        all_failed = set(resume_plan.failed_object_keys)
     failed = set(all_failed) if resume and not retry_failures else set()
+
+    worker_count = _auto_workers(None) if n_workers == "auto" else int(n_workers)
+    worker_count = max(worker_count, 1)
+    if worker_count > 1 and not _process_pool_available():
+        worker_count = 1
+    if resume_plan is not None and resume_plan.unfinished_count == 0:
+        timings = {
+            **dict(resume_plan.timings),
+            "startup_manifest_reconciliation_seconds": startup_reconcile_seconds,
+            "resume_spectral_load_seconds": 0.0,
+            "worker_startup_seconds": 0.0,
+            "numerical_fit_seconds": 0.0,
+            "serialization_seconds": 0.0,
+            "total_seconds": time.perf_counter() - batch_started,
+            "resume_expected_count": resume_plan.expected_count,
+            "resume_terminal_count": resume_plan.skipped_count,
+            "resume_unfinished_count": 0,
+            "resume_vector_rows_loaded": 0,
+            "resume_vector_rows_avoided": resume_plan.skipped_count,
+            "resume_mode": effective_resume_mode,
+            "spectral_columns_projected": "none",
+        }
+        store.manifest["performance_timings_last_invocation"] = timings
+        store._write_manifest(reconcile=False)
+        return BatchResult(
+            run_directory=str(store.path),
+            run_id=store.run_id,
+            n_submitted=0,
+            n_completed=0,
+            n_failed=0,
+            n_skipped=resume_plan.skipped_count,
+            n_workers=worker_count,
+            datasets={},
+            timings=timings,
+        )
+
+    preflight_galactic_extinction(galactic_extinction_config)
     options = _fit_options(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
@@ -776,15 +1074,27 @@ def fit_batch(
         uncertainty_config=uncertainty_config,
         complexes=complexes,
     )
+    planned_object_keys = (
+        set(resume_plan.unfinished_object_keys) if resume_plan is not None else None
+    )
     iterator = _iter_inputs(
         inputs,
-        row_indices=row_indices,
+        row_indices=(
+            resume_plan.unfinished_row_indices
+            if resume_plan is not None and resume_plan.unfinished_row_indices
+            else row_indices
+        ),
         filter_expression=filter_expression,
         parquet_batch_size=parquet_batch_size,
+        object_keys=planned_object_keys,
     )
+    vector_rows_loaded = 0
 
     def selected():
+        nonlocal vector_rows_loaded
         for descriptor, spectrum_data in iterator:
+            if spectrum_data is not None:
+                vector_rows_loaded += 1
             digest = int(
                 hashlib.sha256(descriptor.object_key.encode("utf-8")).hexdigest(),
                 16,
@@ -794,6 +1104,8 @@ def fit_batch(
             if descriptor.object_key in completed or descriptor.object_key in failed:
                 yield None
                 continue
+            if spectrum_data is None:
+                vector_rows_loaded += 1
             yield _Task(
                 descriptor=descriptor,
                 spectrum_data=spectrum_data,
@@ -822,11 +1134,8 @@ def fit_batch(
             yield parquet_group
 
     task_iterator = iter(grouped_tasks())
-    worker_count = _auto_workers(None) if n_workers == "auto" else int(n_workers)
-    worker_count = max(worker_count, 1)
-    if worker_count > 1 and not _process_pool_available():
-        worker_count = 1
-    submitted = completed_count = failed_count = skipped_count = 0
+    submitted = completed_count = failed_count = 0
+    skipped_count = resume_plan.skipped_count if resume_plan is not None else 0
     promoted_since_manifest = 0
     promotion_seconds = 0.0
     lightweight_manifest_seconds = 0.0
@@ -835,6 +1144,7 @@ def fit_batch(
         "numerical_fit_seconds": [],
         "serialization_staging_seconds": [],
     }
+    worker_startup_seconds = 0.0
     progress = None
     if show_progress:
         from tqdm.auto import tqdm
@@ -898,11 +1208,13 @@ def fit_batch(
         _worker_initializer()
         import multiprocessing as mp
 
+        worker_startup_started = time.perf_counter()
         with ProcessPoolExecutor(
             max_workers=worker_count,
             mp_context=mp.get_context("spawn"),
             initializer=_worker_initializer,
         ) as executor:
+            worker_startup_seconds = time.perf_counter() - worker_startup_started
             pending = {}
             exhausted = False
             while pending or not exhausted:
@@ -968,6 +1280,7 @@ def fit_batch(
         }
 
     timings = {
+        **(dict(resume_plan.timings) if resume_plan is not None else {}),
         "startup_manifest_reconciliation_seconds": startup_reconcile_seconds,
         "parent_promotion_seconds": promotion_seconds,
         "lightweight_manifest_update_seconds": lightweight_manifest_seconds,
@@ -976,6 +1289,26 @@ def fit_batch(
             name: summarize(values) for name, values in worker_timings.items()
         },
         "manifest_update_interval": int(manifest_update_interval),
+        "resume_spectral_load_seconds": float(sum(worker_timings["input_load_seconds"])),
+        "worker_startup_seconds": worker_startup_seconds,
+        "numerical_fit_seconds": float(sum(worker_timings["numerical_fit_seconds"])),
+        "serialization_seconds": float(
+            sum(worker_timings["serialization_staging_seconds"]) + promotion_seconds
+        ),
+        "total_seconds": time.perf_counter() - batch_started,
+        "resume_expected_count": (
+            resume_plan.expected_count if resume_plan is not None else submitted + skipped_count
+        ),
+        "resume_terminal_count": skipped_count,
+        "resume_unfinished_count": (
+            resume_plan.unfinished_count if resume_plan is not None else submitted
+        ),
+        "resume_vector_rows_loaded": vector_rows_loaded,
+        "resume_vector_rows_avoided": (
+            skipped_count if effective_resume_mode == "lightweight" else 0
+        ),
+        "resume_mode": effective_resume_mode,
+        "spectral_columns_projected": "selected spectrum columns",
     }
     store.manifest["performance_timings_last_invocation"] = timings
     store._write_manifest(reconcile=False)

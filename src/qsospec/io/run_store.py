@@ -1042,10 +1042,17 @@ class RunStore:
             "shard_state": shard_state,
         }
 
-    def reconcile_manifest(self) -> Dict[str, Any]:
-        """Rebuild manifest counters from authoritative schema-v5 shards."""
+    def reconcile_manifest(self, *, persist: bool = True) -> Dict[str, Any]:
+        """Return authoritative state and optionally persist manifest counters.
+
+        ``persist=False`` is a read-only planning profile used when validating
+        an external completion marker; it scans the same authoritative shards
+        without changing the manifest hash.
+        """
 
         state = self._authoritative_state()
+        if not persist:
+            return state
         self.manifest["completed_objects"] = len(state["completed_keys"])
         self.manifest["failed_objects"] = len(state["failed_keys"])
         self.manifest["shard_state"] = state["shard_state"]
@@ -1053,6 +1060,34 @@ class RunStore:
         self.manifest["manifest_count_mode"] = "authoritative_reconciliation"
         self._write_manifest(reconcile=False)
         return state
+
+    def reconcile_expected_keys(self, object_keys: Sequence[str]) -> Dict[str, Any]:
+        """Classify expected keys from deterministic shard paths only.
+
+        Schema-v5 promotion atomically writes one content-addressed file per
+        object and table.  Existence of the deterministic ``objects`` or
+        ``failures`` shard is therefore the cheapest authoritative membership
+        test during resume planning.  Strict completion still uses
+        :meth:`reconcile_manifest` to inspect stored object-key columns.
+        """
+
+        expected = tuple(dict.fromkeys(map(str, object_keys)))
+        completed = {
+            key for key in expected
+            if self.object_shard_path("objects", key).is_file()
+        }
+        failed = {
+            key for key in expected
+            if self.object_shard_path("failures", key).is_file()
+        }
+        return {
+            "completed_keys": completed,
+            "failed_keys": failed,
+            "shard_state": {
+                "expected_objects_present": len(completed),
+                "expected_failures_present": len(failed),
+            },
+        }
 
     def update_manifest_counts(
         self,

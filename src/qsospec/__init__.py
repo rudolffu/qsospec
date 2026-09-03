@@ -11,7 +11,13 @@ from . import lines, recipes
 from .lines import LineDefinition
 from .complex_recipes import ComponentRecipe, ComplexRecipe
 from .fitting.local import fit_line_complex, fit_local
-from .workflows.batch import BatchResult, fit_batch, fit_object_to_store
+from .workflows.batch import (
+    BatchResult,
+    BatchResumePlan,
+    fit_batch,
+    fit_object_to_store,
+    plan_batch_resume,
+)
 from .config import (
     BalmerPseudoContinuumConfig,
     GalacticExtinctionConfig,
@@ -130,6 +136,7 @@ from .io.readers import (
     discover_fits_inputs,
     read_input_manifest,
     read_spectrum,
+    scan_parquet_spectrum_inputs,
     scan_parquet_spectra,
 )
 from .plotting import plot_line_result, plot_local_result, save_local_window_plots
@@ -190,6 +197,7 @@ __all__ = [
     "BROAD_NARROW_COMPLEX_ORDER",
     "BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION",
     "BatchResult",
+    "BatchResumePlan",
     "BroadNarrowMeasurementConfig",
     "ComponentRecipe",
     "ComplexRecipe",
@@ -276,6 +284,7 @@ __all__ = [
     "fit_local_line_pattern",
     "fit_local",
     "fit_object_to_store",
+    "plan_batch_resume",
     "fit_with_optional_host_decomp",
     "final_host_sample_name",
     "evaluate_balmer_pseudocontinuum",
@@ -323,6 +332,7 @@ __all__ = [
     "summarize_narrow_line_recovery",
     "save_local_window_plots",
     "scan_parquet_spectra",
+    "scan_parquet_spectrum_inputs",
     "write_global_hbeta_products",
     "write_global_line_products",
     "wang2019_extinction_mag",
