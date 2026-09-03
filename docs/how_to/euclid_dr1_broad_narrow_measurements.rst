@@ -132,7 +132,7 @@ Run-store benchmark
 
 .. code-block:: bash
 
-   python scripts/benchmark_qsospec_run_store.py \
+   python benchmarks/benchmark_qsospec_run_store.py \
      --run-directory "$GOLD_ROOT/runs/production_no_balmer_no_host_v1" \
      --sample-size 32 \
      --worker-counts 8 16 24 32 \

@@ -6,7 +6,7 @@ The pre-change production observation was approximately 5.5 minutes to scan
 and skip one completed shard. That path projected spectral vectors and built a
 `SpectrumData` object for every completed row before testing its object key.
 
-`scripts/benchmark_fast_resume.py` exercises a production-shaped synthetic
+`benchmarks/benchmark_fast_resume.py` exercises a production-shaped synthetic
 Parquet shard with 224 rows, 4,000 pixels per row, seven row groups, explicit
 object keys/input row indices/shard IDs, and deterministic schema-v5 product
 paths. It runs no numerical fit. Empty placeholder product files are used only
@@ -43,5 +43,5 @@ Reproduce the synthetic benchmark with:
 
 ```bash
 PYTHONPATH=src /Users/yuming/miniforge3/bin/python \
-  scripts/benchmark_fast_resume.py
+  benchmarks/benchmark_fast_resume.py
 ```
