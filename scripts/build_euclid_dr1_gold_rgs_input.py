@@ -14,9 +14,6 @@ import pyarrow.parquet as pq
 from qsospec.euclid_gold import build_gold_input, git_commit, sha256_file, utc_now
 
 
-COMPOSITE_ROOT = Path("/Users/yuming/astro/ml_projects/euclidqso_composite")
-
-
 def default_output_root() -> Path:
     data_root = os.environ.get("MLSPECZ_DATA_ROOT")
     if not data_root:
@@ -25,13 +22,18 @@ def default_output_root() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    source = COMPOSITE_ROOT / "data/mlspecz/dr1_identified_gold_v1"
+    composite_root = os.environ.get("EUCLID_COMPOSITE_ROOT")
+    source = (
+        Path(composite_root) / "data/mlspecz/dr1_identified_gold_v1"
+        if composite_root
+        else None
+    )
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold-stack", type=Path, default=source / "gold_stack_input.parquet")
-    parser.add_argument("--gold-membership", type=Path, default=source / "gold_membership.parquet")
+    parser.add_argument("--gold-stack", type=Path, default=source / "gold_stack_input.parquet" if source else None)
+    parser.add_argument("--gold-membership", type=Path, default=source / "gold_membership.parquet" if source else None)
     parser.add_argument(
         "--latest-vi", type=Path,
-        default=source / "vi_type2_candidates_unchecked_specbox_results.csv",
+        default=source / "vi_type2_candidates_unchecked_specbox_results.csv" if source else None,
     )
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--overwrite", action="store_true")
@@ -44,6 +46,17 @@ def schema_hash(path: Path) -> str:
 
 def main() -> None:
     args = parse_args()
+    composite_root = os.environ.get("EUCLID_COMPOSITE_ROOT")
+    missing = [
+        name
+        for name in ("gold_stack", "gold_membership", "latest_vi")
+        if getattr(args, name) is None
+    ]
+    if missing:
+        options = ", ".join("--" + name.replace("_", "-") for name in missing)
+        raise RuntimeError(
+            f"Pass {options}, or set EUCLID_COMPOSITE_ROOT to provide their defaults"
+        )
     output_root = args.output_root or default_output_root()
     input_dir = output_root / "input"
     output_path = input_dir / "spectra.parquet"
@@ -95,7 +108,7 @@ def main() -> None:
         },
         "repository_commits": {
             "qsospec": git_commit(Path(__file__).resolve().parents[1]),
-            "euclidqso_composite": git_commit(COMPOSITE_ROOT),
+            "euclidqso_composite": git_commit(Path(composite_root)) if composite_root else None,
         },
         **summary,
     }

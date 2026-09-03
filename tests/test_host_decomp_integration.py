@@ -16,6 +16,13 @@ from qsospec.workflows.host.ppxf_host import (
 from qsospec.workflows.host.templates import load_ppxf_npz_templates
 
 
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.external_data,
+    pytest.mark.slow,
+]
+
+
 def test_local_ppxf_template_fit_smoke():
     if importlib.util.find_spec("ppxf") is None:
         pytest.skip("pPXF is not installed")

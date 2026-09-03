@@ -1,8 +1,5 @@
 import os
-import sys
 from importlib.metadata import PackageNotFoundError, version
-
-sys.path.insert(0, os.path.abspath("../src"))
 
 project = "qsospec"
 copyright = "2026, Yuming Fu"

@@ -39,7 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=sorted(RUN_NAMES), required=True)
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--input", type=Path)
-    parser.add_argument("--dustmaps-data-dir", type=Path, default=Path("/Users/yuming/astro/cat_data/dustmaps"))
+    parser.add_argument(
+        "--dustmaps-data-dir",
+        type=Path,
+        default=Path(os.environ["DUSTMAPS_DATA_DIR"]) if os.environ.get("DUSTMAPS_DATA_DIR") else None,
+        help="Dustmaps data directory (or set DUSTMAPS_DATA_DIR).",
+    )
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--parquet-batch-size", type=int, default=128)
     parser.add_argument("--task-size", type=int, default=8)
@@ -146,6 +151,8 @@ def main() -> None:
     input_path = args.input or root / "input/spectra.parquet"
     if not input_path.exists():
         raise FileNotFoundError(input_path)
+    if args.dustmaps_data_dir is None:
+        raise RuntimeError("Pass --dustmaps-data-dir or set DUSTMAPS_DATA_DIR")
     if not args.dustmaps_data_dir.exists():
         raise FileNotFoundError(args.dustmaps_data_dir)
     if args.mode == "production":

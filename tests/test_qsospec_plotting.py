@@ -1,8 +1,12 @@
 """Plotting smoke tests for qsospec results."""
 
 import numpy as np
+import pytest
 
 import qsospec
+
+
+pytestmark = pytest.mark.plotting
 
 
 def test_plot_local_result_writes_png(tmp_path):
