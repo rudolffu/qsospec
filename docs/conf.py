@@ -76,7 +76,7 @@ html_context = {
 
 rst_prolog = """
 .. |project_name| replace:: qsospec
-.. |python_versions| replace:: 3.9–3.13
+.. |python_versions| replace:: 3.10-3.13
 .. |repository| replace:: https://github.com/rudolffu/qsospec
 .. |issues| replace:: https://github.com/rudolffu/qsospec/issues
 .. |pypi| replace:: https://pypi.org/project/qsospec/
