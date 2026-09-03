@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ from astropy.io import fits
 
 import qsospec
 from qsospec.io.run_store import RunStore, workflow_payload
+from qsospec.workflows import batch as batch_module
 from qsospec.workflows.host.io import SpectrumData
 
 
@@ -445,6 +447,26 @@ def test_duplicate_object_ids_get_row_safe_qa_names(tmp_path):
         "main_qa_duplicate_row_0.png",
         "main_qa_duplicate_row_1.png",
     ]
+
+
+def test_worker_initializer_preserves_thread_environment(monkeypatch):
+    thread_variables = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    expected = {
+        variable: str(index + 2)
+        for index, variable in enumerate(thread_variables)
+    }
+    for variable, value in expected.items():
+        monkeypatch.setenv(variable, value)
+
+    batch_module._worker_initializer()
+
+    assert {variable: os.environ[variable] for variable in thread_variables} == expected
 
 
 def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):

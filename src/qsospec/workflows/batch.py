@@ -83,14 +83,6 @@ _WORKER_STORES: Dict[str, RunStore] = {}
 
 
 def _worker_initializer() -> None:
-    for variable in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-    ):
-        os.environ[variable] = "1"
     _WORKER_STORES.clear()
 
 
