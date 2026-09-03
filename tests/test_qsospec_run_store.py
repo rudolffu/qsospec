@@ -362,6 +362,28 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     assert qsospec.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
+    original_read_object_table = store.read_object_table
+    projected_reads = []
+
+    def record_projected_read(table_name, object_key, *, columns=None):
+        projected_reads.append((table_name, object_key, columns))
+        return original_read_object_table(
+            table_name, object_key, columns=columns
+        )
+
+    store.read_object_table = record_projected_read
+    assert qsospec.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
+    assert projected_reads == [
+        (
+            "models",
+            "host-mask-object",
+            ["object_key", "workflow_metadata"],
+        )
+    ]
+    with pytest.raises(KeyError, match="Object not found in models"):
+        qsospec.load_host_reconstruction_state(store, "missing-object")
     store.read_table = lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("host-state accessor must not scan a full table")
     )

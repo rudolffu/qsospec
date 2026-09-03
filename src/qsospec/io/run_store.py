@@ -1658,7 +1658,20 @@ def load_host_reconstruction_state(
     from ..workflows.host.ppxf_host import HostSEDReconstructionError
 
     store = open_run(run) if isinstance(run, str) else run
-    row = store.object_row_by_key("models", str(object_key))
+    object_key = str(object_key)
+    table = store.read_object_table(
+        "models",
+        object_key,
+        columns=["object_key", "workflow_metadata"],
+    )
+    rows = table.to_pylist()
+    if not rows:
+        raise KeyError(f"Object not found in models: {object_key!r}")
+    if len(rows) != 1:
+        raise ValueError(
+            f"Expected one models row for {object_key!r}; found {len(rows)}"
+        )
+    row = rows[0]
     metadata = _from_key_values(row.get("workflow_metadata"))
     state = metadata.get("host_reconstruction_state")
     if not isinstance(state, Mapping):
