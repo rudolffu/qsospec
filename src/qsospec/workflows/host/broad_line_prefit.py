@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -165,10 +165,15 @@ def run_host_broad_line_prefit(
             diagnostics={"prefit_enabled": False},
         )
     requested_recipes = tuple("halpha_nii_sii" if line == "halpha" else "hbeta_oiii" for line in cfg.preferred_lines)
+    prefit_global_config = global_config or GlobalContinuumConfig()
+    prefit_global_config = replace(
+        prefit_global_config,
+        polynomial=replace(prefit_global_config.polynomial, enabled=False),
+    )
     try:
         workflow = fit_global_lines(
             spectrum,
-            global_config,
+            prefit_global_config,
             hbeta_config,
             None,
             halpha_config,

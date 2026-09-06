@@ -17,7 +17,7 @@ Default model
 
 - Pivoted power law.
 - Independently broadened UV and optical Fe II templates when covered.
-- An additive cubic correction for inputs explicitly identified as SDSS.
+- An automatically assessed, baseline-anchored quadratic correction for SDSS.
 - Continuous KD13-style Balmer bound-free plus high-order series component.
 - Auto-enabled covered line recipes, including Lyα/N V, C IV, C III], Mg II,
   optical complexes, and Paschen/NIR complexes.
@@ -62,6 +62,9 @@ its approximately 2000–10000 Å support:
    config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
 
 SDSS FITS, SDSS Parquet provenance, and arrays declared with
-``survey="sdss"`` automatically enable the degree-three additive polynomial.
-Control it explicitly with
-``PolynomialContinuumConfig(enabled=True)`` or ``enabled=False``.
+``survey="sdss"`` automatically assess a small quadratic correction after the
+polynomial-free baseline. Its slopes are preserved exactly; the correction is
+retained only if it passes improvement and safety checks. Set
+``PolynomialContinuumConfig(enabled=True)`` to attempt correction without the
+improvement-score gate, or ``enabled=False`` to keep the baseline only.
+The default correction and normalization-change limits are both 10%.

@@ -314,12 +314,16 @@ class PowerLawConfig:
 class PolynomialContinuumConfig:
     """Additive pivot-normalized polynomial continuum correction.
 
-    ``enabled=None`` selects the polynomial for SDSS spectra only. Explicit
-    ``True`` and ``False`` values always take precedence over survey metadata.
+    ``enabled=None`` assesses a baseline-anchored quadratic for SDSS spectra.
+    ``True`` bypasses the BIC gate, not fractional or numerical safeguards;
+    ``False`` disables correction. Slopes always come from the baseline.
     """
 
     enabled: Optional[bool] = None
-    degree: int = 3
+    degree: int = 2
+    max_fraction: float = 0.10
+    max_norm_fraction: float = 0.10
+    auto_delta_bic: float = 10.0
     pivot: Optional[float] = None
     scale: Optional[float] = None
     coefficient_bounds: Bounds = (None, None)
@@ -331,6 +335,12 @@ class PolynomialContinuumConfig:
             raise ValueError("PolynomialContinuumConfig.enabled must be True, False, or None.")
         if not isinstance(self.degree, int) or isinstance(self.degree, bool) or self.degree < 1:
             raise ValueError("PolynomialContinuumConfig.degree must be a positive integer.")
+        for name in ("max_fraction", "max_norm_fraction"):
+            value = getattr(self, name)
+            if not np.isfinite(value) or not 0 < value < 1:
+                raise ValueError(f"PolynomialContinuumConfig.{name} must be between 0 and 1.")
+        if not np.isfinite(self.auto_delta_bic) or self.auto_delta_bic < 0:
+            raise ValueError("PolynomialContinuumConfig.auto_delta_bic must be nonnegative.")
         for name, value in (("pivot", self.pivot), ("scale", self.scale)):
             if value is not None and (not np.isfinite(value) or value <= 0):
                 raise ValueError(f"PolynomialContinuumConfig.{name} must be positive or None.")

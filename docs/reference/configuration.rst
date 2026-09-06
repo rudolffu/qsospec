@@ -48,13 +48,20 @@ Survey-aware additive polynomial:
 .. code-block:: python
 
    polynomial = qsospec.PolynomialContinuumConfig(
-       enabled=None,  # SDSS only; use True or False to override
-       degree=3,
+       enabled=None,  # assess automatically for SDSS
+       degree=2,
+       max_fraction=0.10,
+       max_norm_fraction=0.10,
+       auto_delta_bic=10.0,
    )
 
 The polynomial has no constant term and is additive to the global continuum.
-Automatic activation requires explicit ``survey="sdss"`` provenance; a
-filename alone never activates it.
+Automatic assessment requires explicit ``survey="sdss"`` provenance; a
+filename alone never activates it. The polynomial-free baseline slope is fixed,
+and the candidate must pass the improvement score and numerical safeguards.
+``enabled=True`` bypasses only the score requirement, not fractional bounds or
+conditioning checks. ``enabled=False`` retains polynomial-free fitting.
+See :doc:`../science/continuum_model` for the staged fit and covariance policy.
 
 Known foreground E(B-V):
 

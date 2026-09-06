@@ -54,12 +54,38 @@ constant term:
    P(\lambda)=\sum_{j=1}^{d} c_j
    \left(\frac{\lambda-\lambda_{\rm pivot}}{\lambda_{\rm scale}}\right)^j.
 
-The default degree is three, with pivot and scale inherited from the
-power-law pivot. ``enabled=None`` activates this component only for spectra
-with explicit SDSS survey provenance. It remains off for DESI, LAMOST, and
-unspecified inputs. Insufficient wavelength leverage or a rank-deficient
-basis disables it with a recorded warning. In automatic power-law mode, the
-same polynomial basis is included in both BIC candidates.
+The default degree is two, with pivot and scale inherited from the
+power-law pivot (3000 Å). The polynomial is a small residual correction, not
+an independently fitted alternative to the physical continuum.
+
+First, qsospec fits and clips a polynomial-free power law + iron + Balmer
+baseline. Automatic single/broken power-law selection happens at this stage.
+It then fixes the baseline slope(s) and fits the correction on exactly the
+same accepted pixels without further clipping. Normalization may move by
+at most 10%; iron and Balmer retain their configured constraints.
+
+The signed correction is limited to 10% of the fixed baseline power law at
+every valid input wavelength, including pixels outside continuum anchors.
+Conservative per-coefficient envelopes guarantee this bound. These limits
+are configurable engineering defaults, not universal physical thresholds.
+
+``enabled=None`` assesses the quadratic only for explicit SDSS provenance.
+It accepts a numerically safe candidate when
+:math:`\chi^2_{\rm baseline}-\chi^2_{\rm candidate}-d\ln n\ge10` on the same
+accepted pixels. This is a conservative staged selection score, not exact
+Bayesian evidence. Otherwise the baseline is returned unchanged.
+``enabled=True`` bypasses this score requirement but not safety checks;
+``enabled=False`` disables the correction. Degree three remains opt-in.
+
+Insufficient coverage, a nonpositive baseline power law, incompatible bounds,
+failed optimization, or a rank-deficient/ill-conditioned combined Jacobian
+retains the baseline with a recorded reason. Candidate covariance is conditional
+on the baseline slopes; their baseline uncertainties are retained and unknown
+cross-covariances are NaN. Monte Carlo trials re-estimate the baseline and
+reassess the correction. The signed QA strip exposes both positive and negative
+corrections that could otherwise be hidden below a flux axis starting at zero.
+A global smooth polynomial must not be interpreted as an instrumental flux-step
+model. Host pPXF polynomial controls remain independent.
 
 Balmer pseudo-continuum
 -----------------------

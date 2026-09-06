@@ -5,8 +5,10 @@
 - Add the full-range Verner et al. (2009) Fe II template with native-resolution
   broadening, an exclusive single-iron preset, and optional propagation into
   the AGN-aware pPXF host basis.
-- Add a signed additive polynomial continuum that activates automatically for
-  explicitly identified SDSS spectra and remains opt-in elsewhere.
+- Add a baseline-anchored quadratic continuum correction: preserve power-law
+  slopes, limit correction and normalization changes to 10%, and assess SDSS
+  candidates with a conservative BIC improvement gate. Record selection and
+  conditional covariance provenance and show a signed QA correction strip.
 - Add a measurement-first Euclid RGS catalogue workflow with uniform
   one-narrow plus one-broad decompositions for H-alpha, H-beta, Mg II, and
   He I/Pa-gamma, covariance-aware continuous broad fractions, summed-profile

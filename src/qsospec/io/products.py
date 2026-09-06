@@ -1144,27 +1144,29 @@ def _plot_qa(
     result.metadata["qa_zoom_titles"] = {}
     result.metadata["qa_zoom_line_labels"] = {}
     ncols = max(len(available), 1)
+    polynomial_metadata = result.continuum.metadata
+    show_polynomial = bool(
+        polynomial_metadata.get("polynomial_effective")
+        and "polynomial_baseline_slopes" in polynomial_metadata
+        and "polynomial" in result.continuum.component_models
+    )
     fig = plt.figure(
-        figsize=(config.figure_width, config.figure_height),
+        figsize=(config.figure_width, config.figure_height + (1.0 if show_polynomial else 0)),
         constrained_layout=True,
     )
-    if config.show_residual_panel:
-        grid = fig.add_gridspec(
-            3,
-            ncols,
-            height_ratios=(1.0, 0.28, 0.78),
-        )
-        overview_axis = fig.add_subplot(grid[0, :])
-        residual_axis = fig.add_subplot(
-            grid[1, :],
-            sharex=overview_axis,
-        )
-        zoom_row = 2
-    else:
-        grid = fig.add_gridspec(2, ncols, height_ratios=(1.0, 0.78))
-        overview_axis = fig.add_subplot(grid[0, :])
-        residual_axis = None
-        zoom_row = 1
+    heights = [1.0] + ([0.28] if config.show_residual_panel else [])
+    heights += ([0.22] if show_polynomial else []) + [0.78]
+    grid = fig.add_gridspec(len(heights), ncols, height_ratios=heights)
+    overview_axis = fig.add_subplot(grid[0, :])
+    residual_axis = (
+        fig.add_subplot(grid[1, :], sharex=overview_axis)
+        if config.show_residual_panel else None
+    )
+    polynomial_axis = (
+        fig.add_subplot(grid[1 + int(config.show_residual_panel), :], sharex=overview_axis)
+        if show_polynomial else None
+    )
+    zoom_row = len(heights) - 1
     zoom_axes = [
         fig.add_subplot(grid[zoom_row, index])
         for index in range(ncols)
@@ -1689,6 +1691,33 @@ def _plot_qa(
         result.metadata["qa_n_residual_pixels"] = int(
             np.count_nonzero(residual_mask)
         )
+
+    result.metadata["qa_show_polynomial_panel"] = show_polynomial
+    if polynomial_axis is not None:
+        baseline_config = polynomial_metadata["polynomial_baseline_power_law_config"]
+        slopes = polynomial_metadata["polynomial_baseline_slopes"]
+        baseline_pl = polynomial_metadata["polynomial_baseline_norm"] * (
+            wave / baseline_config["pivot"]
+        ) ** slopes["power_law.slope"]
+        if baseline_config["mode"] == "double":
+            red = wave >= baseline_config["break_wave"]
+            baseline_pl[red] = (
+                polynomial_metadata["polynomial_baseline_norm"]
+                * (baseline_config["break_wave"] / baseline_config["pivot"]) ** slopes["power_law.slope"]
+                * (wave[red] / baseline_config["break_wave"]) ** slopes["power_law.red_slope"]
+            )
+        fraction = np.full_like(wave, np.nan)
+        fraction[valid] = result.continuum.component_models["polynomial"][valid] / baseline_pl[valid]
+        polynomial_axis.plot(wave, fraction, color="#d98d35", lw=0.9,
+                             label="polynomial / baseline power law")
+        limit = polynomial_metadata["polynomial_max_fraction"]
+        for level in (0, -limit, limit):
+            polynomial_axis.axhline(level, color="0.5", lw=0.6, ls=":" if level else "-")
+        polynomial_axis.set_ylim(-1.2 * limit, 1.2 * limit)
+        polynomial_axis.set_ylabel("Polynomial\n/ baseline PL", fontsize=10)
+        polynomial_axis.tick_params(axis="x", labelbottom=False)
+        _configure_qa_axis(polynomial_axis)
+        result.metadata["qa_polynomial_fraction_limits"] = [-limit, limit]
 
     for zoom_index, (axis, complex_name) in enumerate(zip(zoom_axes, available)):
         lo, hi = _COMPLEX_WINDOWS[complex_name]

@@ -209,9 +209,15 @@ class _ContinuumContext:
         spectrum: Spectrum,
         config: GlobalContinuumConfig,
         fit_mask_override: Optional[np.ndarray] = None,
+        fixed_parameters: Optional[Dict[str, float]] = None,
+        parameter_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+        initial_parameters: Optional[Dict[str, float]] = None,
     ):
         self.spectrum = spectrum
         self.config = config
+        self.fixed_parameters = fixed_parameters or {}
+        self.parameter_bounds = parameter_bounds or {}
+        self.initial_parameters = initial_parameters or {}
         self.wave = spectrum.wave_rest
         self.warnings: List[FitWarning] = []
         self.names: List[str] = []
@@ -253,6 +259,10 @@ class _ContinuumContext:
         self._configure_parameters()
 
     def _add(self, name: str, value: float, bounds) -> None:
+        if name in self.fixed_parameters:
+            return
+        value = self.initial_parameters.get(name, value)
+        bounds = self.parameter_bounds.get(name, bounds)
         lo, hi = _bounds(bounds)
         self.names.append(name)
         self.initial.append(float(np.clip(value, lo, hi)))
@@ -491,7 +501,9 @@ class _ContinuumContext:
         return None
 
     def _get(self, theta: np.ndarray, name: str, default: float = 0.0) -> float:
-        return float(theta[self.index[name]]) if name in self.index else float(default)
+        return float(theta[self.index[name]]) if name in self.index else float(
+            self.fixed_parameters.get(name, default)
+        )
 
     def _initialize_linear_amplitudes(self) -> None:
         if not self.names or not np.any(self.base_fit_mask):
@@ -585,6 +597,7 @@ class _ContinuumContext:
         need_derivatives: bool,
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
         nonlinear_values = self._named_values(self.nonlinear_names, nonlinear)
+        nonlinear_values.update(self.fixed_parameters)
         columns: List[np.ndarray] = []
         derivative_columns = [
             [] for _ in self.nonlinear_names
@@ -832,11 +845,23 @@ def _full_separable_jacobian(
 
 def _solve_separable_once(context, wave, flux, err, start, max_nfev, jacobian_method):
     _, linear_bounds, _, nonlinear_bounds = context.separable_initial_and_bounds()
+    # Solve polynomial coefficients in unit-norm weighted columns, then restore
+    # physical coefficient units before constructing parameters and covariance.
     nonlinear_initial = np.array(
         [start[context.index[name]] for name in context.nonlinear_names], dtype=float
     )
+    scales = np.ones(len(context.linear_names))
+    if getattr(context, "polynomial_enabled", False):
+        design, _ = context.separable_design(nonlinear_initial, wave, False)
+        scales = np.linalg.norm(design / err[:, None], axis=0)
+        scales = np.where(scales > 0, scales, 1.0)
+    linear_bounds = tuple(bound * scales for bound in linear_bounds)
     def evaluator(nonlinear, need_derivatives):
-        return context.separable_design(nonlinear, wave, need_derivatives)
+        design, derivatives = context.separable_design(nonlinear, wave, need_derivatives)
+        return design / scales, (
+            tuple(item / scales for item in derivatives)
+            if derivatives is not None else None
+        )
     result = solve_variable_projection(
         flux,
         err,
@@ -898,6 +923,9 @@ def _solve_separable_once(context, wave, flux, err, start, max_nfev, jacobian_me
         except VariableProjectionError:
             result = primary_result
     result.linear_solve_count += probe_count
+    result.linear = result.linear / scales
+    result.design = result.design * scales
+    result.design_derivatives = tuple(item * scales for item in result.design_derivatives)
     full_x = context.assemble_full_parameters(result.linear, result.nonlinear)
     full_jacobian = _full_separable_jacobian(
         context,
@@ -920,14 +948,24 @@ def _solve_separable_once(context, wave, flux, err, start, max_nfev, jacobian_me
 
 
 def _solve_legacy_once(context, wave, flux, err, start, max_nfev):
-    return least_squares(
-        lambda theta: (flux - context.model(theta, wave)) / err,
-        start,
-        bounds=(context.lower, context.upper),
+    scales = np.ones(len(context.names))
+    nonlinear = np.array([start[context.index[name]] for name in context.nonlinear_names])
+    design, _ = context.separable_design(nonlinear, wave, False)
+    norms = np.linalg.norm(design / err[:, None], axis=0)
+    for name, norm in zip(context.linear_names, norms):
+        if isinstance(context, _ContinuumContext) and norm > 0:
+            scales[context.index[name]] = 1.0 / norm
+    result = least_squares(
+        lambda theta: (flux - context.model(theta * scales, wave)) / err,
+        start / scales,
+        bounds=(context.lower / scales, context.upper / scales),
         jac="2-point",
         x_scale="jac",
         max_nfev=max_nfev,
     )
+    result.x = result.x * scales
+    result.jac = result.jac / scales
+    return result
 
 
 def _solve_once_with_fallback(context, wave, flux, err, start, config):
@@ -964,12 +1002,17 @@ def _fit_global_continuum_fixed(
     *,
     compute_covariance: bool = True,
     fit_mask_override: Optional[np.ndarray] = None,
+    fixed_parameters: Optional[Dict[str, float]] = None,
+    parameter_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+    initial_parameters: Optional[Dict[str, float]] = None,
 ) -> GlobalContinuumResult:
     """Fit one resolved global-continuum model."""
 
     cfg = config
     context = _ContinuumContext(
-        spectrum, cfg, fit_mask_override=fit_mask_override
+        spectrum, cfg, fit_mask_override=fit_mask_override,
+        fixed_parameters=fixed_parameters, parameter_bounds=parameter_bounds,
+        initial_parameters=initial_parameters,
     )
     if np.count_nonzero(context.base_fit_mask) <= len(context.names):
         raise ValueError("Too few valid continuum-window pixels for the active global model.")
@@ -1363,7 +1406,7 @@ def _power_law_slope_at_bound(result: GlobalContinuumResult) -> bool:
     )
 
 
-def fit_global_continuum(
+def _fit_global_continuum_power_law_selection(
     spectrum: Spectrum,
     config: Optional[GlobalContinuumConfig] = None,
     *,
@@ -1499,6 +1542,185 @@ def fit_global_continuum(
         }
     )
     return selected
+
+
+def fit_global_continuum(
+    spectrum: Spectrum,
+    config: Optional[GlobalContinuumConfig] = None,
+    *,
+    compute_covariance: bool = True,
+) -> GlobalContinuumResult:
+    """Fit a physical baseline, then assess a slope-anchored small correction.
+
+    The polynomial-free fit supplies the slopes and accepted pixels. Candidate
+    covariance is conditional on those slopes; their original errors are kept.
+    """
+    cfg = config or GlobalContinuumConfig()
+    resolved, selection = _resolve_polynomial_config(spectrum, cfg)
+    baseline = _fit_global_continuum_power_law_selection(
+        spectrum, replace(cfg, polynomial=replace(cfg.polynomial, enabled=False)),
+        compute_covariance=compute_covariance,
+    )
+    baseline.metadata.update(selection)
+    if not resolved.polynomial.enabled:
+        return baseline
+
+    poly = cfg.polynomial
+    valid = spectrum.valid_mask
+    mask = baseline.clip_mask
+    n = int(np.count_nonzero(mask))
+    slopes = {name: value for name, value in baseline.param_values.items()
+              if name in ("power_law.slope", "power_law.red_slope")}
+    norm = baseline.param_values.get("power_law.norm", np.nan)
+    pl = baseline.component_models.get("power_law")
+    details = {
+        **selection,
+        "polynomial_degree": poly.degree,
+        "polynomial_baseline_slopes": slopes,
+        "polynomial_baseline_norm": norm,
+        "polynomial_baseline_chi2": baseline.chi2,
+        "polynomial_accepted_pixels": n,
+        "polynomial_max_fraction": poly.max_fraction,
+        "polynomial_max_norm_fraction": poly.max_norm_fraction,
+        "polynomial_selection_score_definition": "chi2_baseline-chi2_candidate-degree*log(n)",
+        "polynomial_baseline_power_law_config": {
+            "mode": baseline.metadata["power_law_mode_selected"],
+            "pivot": cfg.power_law.pivot,
+            "break_wave": cfg.power_law.break_wave,
+        },
+    }
+
+    def reject(reason, candidate=None):
+        baseline.metadata.update(details)
+        baseline.metadata.update({
+            "polynomial_effective": False,
+            "polynomial_status": reason,
+            "polynomial_selection_reason": reason,
+            "polynomial_final_slopes": slopes,
+            "polynomial_final_norm": norm,
+        })
+        baseline.warnings.append(FitWarning(
+            code="global_polynomial_rejected", severity="info",
+            message="The polynomial-free continuum was retained: " + reason,
+            context={"reason": reason},
+        ))
+        if candidate is not None:
+            baseline.warnings.extend(candidate.warnings)
+        return baseline
+
+    if not baseline.success:
+        return reject("baseline_failed")
+    if pl is None or not slopes or not np.isfinite(norm) or norm <= 0 or not np.all(
+        np.isfinite(pl[valid]) & (pl[valid] > 0)
+    ):
+        return reject("baseline_power_law_unavailable")
+    pivot = poly.pivot or cfg.power_law.pivot
+    scale = poly.scale or cfg.power_law.pivot
+    x = (spectrum.wave_rest[valid] - pivot) / scale
+    bounds = {}
+    for order in range(1, poly.degree + 1):
+        maximum = float(np.max(np.abs(x**order) / pl[valid]))
+        if not np.isfinite(maximum) or maximum <= 0:
+            return reject("disabled_insufficient_coverage")
+        cap = poly.max_fraction / (poly.degree * maximum)
+        lo, hi = _bounds(poly.coefficient_bounds)
+        bounds[f"polynomial.c{order}"] = (max(lo, -cap), min(hi, cap))
+    lo, hi = _bounds(cfg.power_law.norm_bounds)
+    bounds["power_law.norm"] = (
+        max(lo, norm * (1 - poly.max_norm_fraction)),
+        min(hi, norm * (1 + poly.max_norm_fraction)),
+    )
+    if any(lo >= hi for lo, hi in bounds.values()):
+        return reject("incompatible_bounds")
+    candidate_cfg = replace(
+        cfg,
+        polynomial=replace(poly, enabled=True),
+        power_law=replace(cfg.power_law, mode=baseline.metadata["power_law_mode_selected"]),
+        clip_passes=0, blue_absorption_clip_enabled=False,
+    )
+    try:
+        candidate = _fit_global_continuum_fixed(
+            spectrum, candidate_cfg, compute_covariance=compute_covariance,
+            fit_mask_override=mask, fixed_parameters=slopes,
+            parameter_bounds=bounds, initial_parameters=baseline.param_values,
+        )
+    except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+        details["polynomial_candidate_failure"] = str(exc)
+        return reject("candidate_failed")
+    if not candidate.metadata["polynomial_effective"]:
+        return reject(candidate.metadata["polynomial_status"], candidate)
+    correction = candidate.component_models["polynomial"]
+    fraction = correction[valid] / pl[valid]
+    jac = np.asarray(candidate.optimizer_result.jac)
+    if not np.all(np.isfinite(jac)) or not np.all(np.isfinite(fraction)):
+        return reject("candidate_nonfinite")
+    column_norms = np.linalg.norm(jac, axis=0)
+    normalized = jac / np.where(column_norms > 0, column_norms, 1)
+    rank = int(np.linalg.matrix_rank(normalized))
+    condition = float(np.linalg.cond(normalized))
+    delta = float(baseline.chi2 - candidate.chi2 - poly.degree * np.log(n))
+    details.update({
+        "polynomial_candidate_chi2": candidate.chi2,
+        "polynomial_delta_bic": delta,
+        "polynomial_baseline_bic": _continuum_bic(baseline),
+        "polynomial_candidate_bic": _continuum_bic(baseline) - delta,
+        "polynomial_fraction_rms": float(np.sqrt(np.mean(fraction**2))),
+        "polynomial_fraction_max": float(np.max(np.abs(fraction))),
+        "polynomial_combined_rank": rank,
+        "polynomial_combined_condition": condition,
+        "polynomial_coefficient_bounds": bounds,
+        "polynomial_bound_parameters": [
+            name for name, active in zip(candidate.param_values, candidate.optimizer_result.active_mask)
+            if active
+        ],
+    })
+    if not candidate.success:
+        return reject("candidate_failed")
+    if rank < jac.shape[1] or not np.isfinite(condition) or condition > 1e8:
+        return reject("ill_conditioned")
+    if not np.all(np.isfinite(fraction)) or np.max(np.abs(fraction)) > poly.max_fraction * (1 + 1e-8):
+        return reject("fraction_limit_exceeded")
+    if not np.all((candidate.component_models["power_law"] + correction)[valid] > 0):
+        return reject("nonpositive_smooth_continuum")
+    if poly.enabled is None and delta < poly.auto_delta_bic:
+        return reject("bic_improvement_insufficient")
+
+    # Append baseline-derived slopes in covariance order. Their cross-covariance
+    # with the conditional stage-two parameters is unknown, not zero.
+    if candidate.covariance is not None:
+        size = len(candidate.param_values)
+        covariance = np.full((size + len(slopes), size + len(slopes)), np.nan)
+        covariance[:size, :size] = candidate.covariance
+        if baseline.covariance is not None:
+            indices = [list(baseline.param_values).index(name) for name in slopes]
+            covariance[size:, size:] = baseline.covariance[np.ix_(indices, indices)]
+        candidate.covariance = covariance
+    candidate.param_values.update(slopes)
+    candidate.param_errors.update({name: baseline.param_errors[name] for name in slopes})
+    conditional_dof = candidate.dof
+    candidate.dof = max(candidate.dof - len(slopes), 0)
+    candidate.reduced_chi2 = candidate.chi2 / candidate.dof if candidate.dof else np.nan
+    candidate.warnings = baseline.warnings + candidate.warnings
+    if details["polynomial_fraction_max"] >= 0.99 * poly.max_fraction:
+        candidate.warnings.append(FitWarning(
+            code="global_polynomial_near_fraction_limit",
+            message="The continuum correction approaches its allowed fractional limit.",
+            context={"fraction": details["polynomial_fraction_max"]},
+        ))
+    # Preserve clipping and power-law selection provenance from stage one.
+    candidate.metadata.update({key: value for key, value in baseline.metadata.items()
+                               if key.startswith(("power_law_", "blue_absorption_clip_"))})
+    candidate.metadata.update(details)
+    candidate.metadata.update({
+        "polynomial_effective": True,
+        "polynomial_status": "accepted",
+        "polynomial_selection_reason": "explicit_enabled" if poly.enabled is True else "bic_improved",
+        "polynomial_final_slopes": slopes,
+        "polynomial_final_norm": candidate.param_values["power_law.norm"],
+        "polynomial_covariance_policy": "conditional_on_baseline_slopes",
+        "polynomial_conditional_covariance_dof": conditional_dof,
+    })
+    return candidate
 
 
 def _gaussian_area_profile(wave: np.ndarray, flux: float, center: float, fwhm_kms: float) -> np.ndarray:
@@ -3796,6 +4018,8 @@ def fit_global_lines(
         "iron_templates",
     ):
         metadata[key] = continuum.metadata.get(key)
+    metadata.update({key: value for key, value in continuum.metadata.items()
+                     if key.startswith("polynomial_")})
     metadata.update(hgamma_sync_ratio_metadata)
     if (
         "balmer_pseudocontinuum_implied_hbeta_flux_input" in metadata
