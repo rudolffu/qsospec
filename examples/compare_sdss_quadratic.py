@@ -84,7 +84,7 @@ def run(sample_path, reference_manifest, input_root, output):
     host = _restore_config(qsospec.HostDecompConfig, reference["host_config"])
     uncertainty = _restore_config(qsospec.UncertaintyConfig, reference["uncertainty"])
     baseline_config = replace(global_config, polynomial=replace(global_config.polynomial, enabled=False))
-    quadratic_config = replace(global_config, polynomial=qsospec.PolynomialContinuumConfig())
+    quadratic_config = replace(global_config, polynomial=qsospec.PolynomialContinuumConfig(enabled=None))
     output.mkdir(parents=True)
     source_root = Path(qsospec.__file__).parent
     manifest = {

@@ -9,6 +9,7 @@ import qsospec
 
 
 def _config(enabled=None, *, degree=2):
+    # These correction tests explicitly opt into SDSS assessment by default.
     return qsospec.GlobalContinuumConfig(
         power_law=qsospec.PowerLawConfig(norm=2.0, slope=-1.0),
         uv_iron=None,
@@ -47,7 +48,46 @@ def _spectrum(*, survey=None, wave=None, corrected=False):
     )
 
 
-def test_polynomial_auto_activates_only_for_explicit_sdss_survey():
+@pytest.mark.parametrize("survey", ["sdss", "desi", None])
+def test_default_polynomial_is_disabled_for_every_survey(survey, monkeypatch):
+    from qsospec.fitting import global_fit
+
+    assert qsospec.PolynomialContinuumConfig().enabled is False
+    assert qsospec.GlobalContinuumConfig().polynomial.enabled is False
+    assert qsospec.GlobalContinuumConfig.lya_safe().polynomial.enabled is False
+    assert qsospec.GlobalContinuumConfig.with_single_iron("verner09").polynomial.enabled is False
+    original = global_fit._fit_global_continuum_fixed
+
+    def check_baseline_only(*args, **kwargs):
+        assert not kwargs.get("fixed_parameters"), "Default fitting attempted a polynomial candidate"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(global_fit, "_fit_global_continuum_fixed", check_baseline_only)
+    spectrum = _spectrum(survey=survey)
+    config = replace(_config(), polynomial=qsospec.PolynomialContinuumConfig())
+    result = qsospec.fit_global_continuum(spectrum, config)
+    baseline = qsospec.fit_global_continuum(spectrum, _config(False))
+    assert result.metadata["polynomial_effective"] is False
+    assert result.metadata["polynomial_requested"] == "disabled"
+    assert "polynomial" not in result.component_models
+    assert not any(name.startswith("polynomial.") for name in result.param_values)
+    np.testing.assert_array_equal(result.model, baseline.model)
+    assert result.param_values == baseline.param_values
+
+
+def test_sdss_default_polynomial_disabled_in_stored_workflow(tmp_path):
+    config = replace(_config(), polynomial=qsospec.PolynomialContinuumConfig())
+    result = qsospec.fit_object_to_store(
+        _spectrum(survey="sdss", corrected=True), str(tmp_path / "run"),
+        object_id="sdss-default", global_config=config, complexes=[], write_qa=False,
+    )
+    loaded = qsospec.load_model(str(tmp_path / "run"), "sdss-default")
+    for continuum in (result.continuum, loaded.continuum):
+        assert continuum.metadata["polynomial_effective"] is False
+        assert "polynomial" not in continuum.component_models
+
+
+def test_explicit_auto_setting_activates_only_for_sdss_survey():
     sdss = qsospec.fit_global_continuum(_spectrum(survey="sdss"), _config())
     desi = qsospec.fit_global_continuum(_spectrum(survey="desi"), _config())
     unspecified = qsospec.fit_global_continuum(_spectrum(), _config())

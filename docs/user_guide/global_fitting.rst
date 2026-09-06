@@ -17,7 +17,7 @@ Default model
 
 - Pivoted power law.
 - Independently broadened UV and optical Fe II templates when covered.
-- An automatically assessed, baseline-anchored quadratic correction for SDSS.
+- An optional baseline-anchored quadratic correction, disabled by default.
 - Continuous KD13-style Balmer bound-free plus high-order series component.
 - Auto-enabled covered line recipes, including Lyα/N V, C IV, C III], Mg II,
   optical complexes, and Paschen/NIR complexes.
@@ -61,10 +61,22 @@ its approximately 2000–10000 Å support:
 
    config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
 
-SDSS FITS, SDSS Parquet provenance, and arrays declared with
-``survey="sdss"`` automatically assess a small quadratic correction after the
-polynomial-free baseline. Its slopes are preserved exactly; the correction is
-retained only if it passes improvement and safety checks. Set
-``PolynomialContinuumConfig(enabled=True)`` to attempt correction without the
-improvement-score gate, or ``enabled=False`` to keep the baseline only.
+Polynomial correction is disabled by default, including for SDSS FITS,
+SDSS Parquet, and arrays declared with ``survey="sdss"``. No candidate is
+assessed unless requested. To opt into BIC-gated SDSS assessment:
+
+.. code-block:: python
+
+   from dataclasses import replace
+
+   config = replace(
+       config,
+       polynomial=qsospec.PolynomialContinuumConfig(enabled=None),
+   )
+
+This assesses a small quadratic after the polynomial-free baseline and retains
+it only if it passes improvement and safety checks. Its baseline slopes are
+preserved exactly. Use ``enabled=True`` to attempt correction for any survey
+without the improvement-score gate (safety checks still apply), or
+``enabled=False`` to keep the baseline only.
 The default correction and normalization-change limits are both 10%.

@@ -314,12 +314,13 @@ class PowerLawConfig:
 class PolynomialContinuumConfig:
     """Additive pivot-normalized polynomial continuum correction.
 
+    Disabled by default for every survey, including SDSS. Explicitly setting
     ``enabled=None`` assesses a baseline-anchored quadratic for SDSS spectra.
     ``True`` bypasses the BIC gate, not fractional or numerical safeguards;
     ``False`` disables correction. Slopes always come from the baseline.
     """
 
-    enabled: Optional[bool] = None
+    enabled: Optional[bool] = False
     degree: int = 2
     max_fraction: float = 0.10
     max_norm_fraction: float = 0.10

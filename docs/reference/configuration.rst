@@ -43,21 +43,23 @@ customize its target width. This preset is exclusive: it disables the default
 VW01 UV and Park22 optical components and fits one amplitude and one FWHM over
 the Verner template's 2000–10000 Å support.
 
-Survey-aware additive polynomial:
+Optional additive polynomial (disabled by default for all surveys):
 
 .. code-block:: python
 
    polynomial = qsospec.PolynomialContinuumConfig(
-       enabled=None,  # assess automatically for SDSS
+       enabled=None,  # explicitly opt into BIC-gated SDSS assessment
        degree=2,
        max_fraction=0.10,
        max_norm_fraction=0.10,
        auto_delta_bic=10.0,
    )
+   config = qsospec.GlobalContinuumConfig(polynomial=polynomial)
 
 The polynomial has no constant term and is additive to the global continuum.
-Automatic assessment requires explicit ``survey="sdss"`` provenance; a
-filename alone never activates it. The polynomial-free baseline slope is fixed,
+The default ``enabled=False`` skips assessment, including for SDSS inputs.
+Explicit ``enabled=None`` opts into assessment with ``survey="sdss"`` provenance;
+survey metadata or a filename alone never activates it. The polynomial-free baseline slope is fixed,
 and the candidate must pass the improvement score and numerical safeguards.
 ``enabled=True`` bypasses only the score requirement, not fractional bounds or
 conditioning checks. ``enabled=False`` retains polynomial-free fitting.

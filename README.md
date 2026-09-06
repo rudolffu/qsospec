@@ -9,6 +9,11 @@
 coverage-aware emission-line recipes, continuum decomposition, optional pPXF
 host subtraction, QA figures, and resumable Parquet run bundles.
 
+Polynomial continuum correction is opt-in; it is disabled by default for all
+surveys, including SDSS. See the
+[configuration guide](https://qsospec.readthedocs.io/en/latest/reference/configuration.html)
+for optional correction settings.
+
 ## Installation
 
 ```bash

@@ -54,7 +54,8 @@ constant term:
    P(\lambda)=\sum_{j=1}^{d} c_j
    \left(\frac{\lambda-\lambda_{\rm pivot}}{\lambda_{\rm scale}}\right)^j.
 
-The default degree is two, with pivot and scale inherited from the
+Correction is disabled by default for every survey, including SDSS. When
+explicitly requested, the default degree is two, with pivot and scale inherited from the
 power-law pivot (3000 Å). The polynomial is a small residual correction, not
 an independently fitted alternative to the physical continuum.
 
@@ -69,13 +70,13 @@ every valid input wavelength, including pixels outside continuum anchors.
 Conservative per-coefficient envelopes guarantee this bound. These limits
 are configurable engineering defaults, not universal physical thresholds.
 
-``enabled=None`` assesses the quadratic only for explicit SDSS provenance.
+Explicitly setting ``enabled=None`` opts into quadratic assessment only for SDSS provenance.
 It accepts a numerically safe candidate when
 :math:`\chi^2_{\rm baseline}-\chi^2_{\rm candidate}-d\ln n\ge10` on the same
 accepted pixels. This is a conservative staged selection score, not exact
 Bayesian evidence. Otherwise the baseline is returned unchanged.
 ``enabled=True`` bypasses this score requirement but not safety checks;
-``enabled=False`` disables the correction. Degree three remains opt-in.
+``enabled=False`` (the default) disables the correction. Degree three remains opt-in.
 
 Insufficient coverage, a nonpositive baseline power law, incompatible bounds,
 failed optimization, or a rank-deficient/ill-conditioned combined Jacobian
