@@ -147,6 +147,7 @@ def spectrum_data_from_mapping(
                 is_object_specific=bool(
                     provenance.get("resolution_is_object_specific", True)
                 ),
+                is_approximate=not bool(provenance.get("resolution_is_object_specific", True)),
             )
             break
     if resolution is None:
@@ -312,6 +313,9 @@ def scan_parquet_spectra(
                     object_id=spectrum.object_id or spectrum.targetid,
                     redshift=spectrum.redshift,
                     reader="parquet",
+                    metadata={name: _value(row, _lookup(columns, (name,)))
+                              for name in PROVENANCE_SCALAR_COLUMNS
+                              if _lookup(columns, (name,)) is not None},
                     explicit_object_key=(
                         str(_value(row, object_key_col)).strip()
                         if object_key_col is not None
@@ -377,6 +381,7 @@ def scan_parquet_spectrum_inputs(
                 REDSHIFT_ALIASES,
                 INPUT_ROW_INDEX_ALIASES,
                 SHARD_ID_ALIASES,
+                *((name,) for name in PROVENANCE_SCALAR_COLUMNS),
             )
             if (column := _lookup(columns, aliases)) is not None
         }
@@ -437,6 +442,9 @@ def scan_parquet_spectrum_inputs(
                     ),
                     reader="parquet",
                     explicit_object_key=explicit_key,
+                    metadata={name: _value(row, _lookup(columns, (name,)))
+                              for name in PROVENANCE_SCALAR_COLUMNS
+                              if _lookup(columns, (name,)) is not None},
                 )
                 if explicit_key is not None:
                     if not descriptor.object_key:

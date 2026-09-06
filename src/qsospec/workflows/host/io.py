@@ -30,12 +30,32 @@ SIGMA_LAMBDA_ALIASES = (
 FWHM_LAMBDA_ALIASES = ("fwhm_lambda", "resolution_fwhm_lambda")
 SIGMA_KMS_ALIASES = ("sigma_kms", "resolution_sigma_kms")
 RESOLUTION_MODE_ALIASES = ("resolution_mode",)
-REDSHIFT_ALIASES = ("redshift", "z", "z_desi", "z_vi")
-OBJECT_ID_ALIASES = ("object_id", "targetid", "target_id", "sparcl_id", "specid")
+REDSHIFT_ALIASES = ("redshift", "z_optical_fit", "z", "z_desi", "z_vi")
+OBJECT_ID_ALIASES = ("object_id", "optical_object_id", "targetid", "target_id", "sparcl_id", "specid", "catalogid")
 RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
 DEFAULT_FLUX_SCALE = 1e-17
 PROVENANCE_SCALAR_COLUMNS = (
+    "spectrum_key",
+    "optical_survey",
+    "optical_object_id",
+    "catalogid",
+    "release",
+    "run2d",
+    "coadd",
+    "observatory",
+    "obs",
+    "mjd",
+    "source_url",
+    "source_checksum",
+    "source_fits",
+    "fits_checksum_status",
+    "z_optical_fit",
+    "z_optical_fit_error",
+    "z_optical_source",
+    "z_pipeline",
+    "z_euclid",
+    "wresl_wdisp_sigma_ratio",
     "source_backend",
     "source_backend_version",
     "resolution_status",
@@ -258,6 +278,7 @@ def read_sparcli_spectrum(
                 is_object_specific=bool(
                     provenance.get("resolution_is_object_specific", True)
                 ),
+                is_approximate=not bool(provenance.get("resolution_is_object_specific", True)),
             )
             break
     if resolution is None:

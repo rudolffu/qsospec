@@ -979,6 +979,11 @@ def _run_global_fit_with_optional_host(
         host_fit_samples = fitted_host_fraction_samples(host_fit)
     else:
         host_fit_samples = {}
+    from .host.io import PROVENANCE_SCALAR_COLUMNS
+
+    workflow.metadata.update({name: spectrum_data.metadata[name]
+                              for name in PROVENANCE_SCALAR_COLUMNS
+                              if name in spectrum_data.metadata})
     workflow.metadata.update(
         {
             "input_path": input_path,

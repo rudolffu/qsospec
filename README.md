@@ -56,6 +56,32 @@ Fitzpatrick (1999) law. This requires locally configured
 data; already-corrected spectra can be declared with
 `galactic_extinction_corrected=True`.
 
+## SDSS Parquet inputs
+
+SDSS acquisition belongs in `sparcli --backend sdss`. QSOSpec consumes the
+normalized Parquet through the same `scan_parquet_spectra`, `fit_batch`,
+`plan_batch_resume`, run-store, and HostSED APIs used for DESI.
+
+Provide an explicit fitting redshift (`redshift` or `z_optical_fit`) and a stable
+`spectrum_key`. Catalog redshift selection remains an orchestration decision;
+QSOSpec does not silently choose `Z_SYS` from an arbitrary catalog. Common
+optical metadata includes `optical_survey`, `optical_object_id`, catalogid,
+release, run2d, coadd, observatory, MJD, source URL/checksum, and optical-redshift
+provenance. Exact integer IDs survive scalar scanning, selective-row resume,
+and saved object metadata. Existing DESI/SPARCL fields remain supported.
+
+The input adapter supplies observed-vacuum wavelength and per-pixel Gaussian
+`sigma_lambda` or `lsf_sigma_angstrom`. For DR20/v6_2_1, sparcli derives this from
+WRESL FWHM; WDISP is retained independently by the acquisition layer. Resolution
+marked non-object-specific/invalid remains approximate for host reliability
+and never silently becomes a constant-resolution estimate. Optical spectra
+retain their declared flux scale (SDSS: `1e-17`). Extinction correction follows
+the normal fitting configuration, not the download step.
+
+Pass explicit spectral Parquet files to the reader, excluding scalar download
+manifests. MLSpecZ's versioned SDSS workflow supplies fitted-redshift metadata,
+32 immutable inputs, and the established DESI host configuration.
+
 ## Features
 
 - Single or automatically selected broken power-law continua, Fe II, and a
