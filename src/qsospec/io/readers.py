@@ -92,6 +92,21 @@ def _array(row: Mapping[str, Any], column: Optional[str]) -> Optional[np.ndarray
     return np.asarray(value)
 
 
+def _survey_from_provenance(provenance: Mapping[str, Any]) -> Optional[str]:
+    """Return a supported survey from explicit input provenance."""
+
+    for key in ("survey", "optical_survey", "source_backend"):
+        value = provenance.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized == "sdss":
+            return "sdss"
+        if normalized == "desi":
+            return "desi"
+    return None
+
+
 def spectrum_data_from_mapping(
     row: Mapping[str, Any],
     *,
@@ -123,6 +138,7 @@ def spectrum_data_from_mapping(
         for name in PROVENANCE_SCALAR_COLUMNS
         if _lookup(columns, (name,)) is not None
     }
+    survey = _survey_from_provenance(provenance)
     redshift = overrides.get("redshift", _value(row, redshift_col))
     object_id = overrides.get("object_id", _value(row, object_col))
     targetid = _value(row, target_col)
@@ -188,6 +204,7 @@ def spectrum_data_from_mapping(
             "file_type": "parquet",
             "flux_unit": "cgs",
             "flux_scale": float(provenance.get("flux_scale") or 1e-17),
+            "survey": survey,
             "row_index": row_index,
             "selected_columns": {
                 "wavelength": wave_col,
@@ -524,6 +541,7 @@ def _read_sdss(path: Path, redshift=None, object_id=None) -> SpectrumData:
             "file_type": "sdss_fits",
             "flux_unit": "cgs",
             "flux_scale": 1e-17,
+            "survey": "sdss",
         },
     )
 

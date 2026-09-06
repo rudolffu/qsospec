@@ -133,6 +133,8 @@ class HostAgnPseudoContinuumConfig:
     powerlaw_pivot_angstrom: float = 5100.0
     optical_feii_template: str = "bg92"
     uv_feii_template: str | None = None
+    full_feii_template: str | None = None
+    inherit_global_full_iron: bool = True
     balmer_enabled: bool = True
     balmer_log10_ne: int = 9
     balmer_temperature_k: float = 15000.0

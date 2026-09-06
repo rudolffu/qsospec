@@ -93,6 +93,10 @@ Iron templates and Fe II pseudo-continuum
 - `Park et al. (2022), 2022ApJS..258...38P <https://ui.adsabs.harvard.edu/abs/2022ApJS..258...38P/abstract>`__
   — modern empirical optical Fe II template for the H beta region.
 
+- `Verner et al. (2009), doi:10.1088/0031-8949/2009/T134/014006 <https://doi.org/10.1088/0031-8949/2009/T134/014006>`__
+  — theoretical Fe II emission spectrum used by the optional single-template
+  2000–10000 Å continuum model.
+
 - `Kovacevic et al. (2025), 2025A&A...694A.289K <https://ui.adsabs.harvard.edu/abs/2025A%26A...694A.289K/abstract>`__
   — comparison of optical Fe II templates and their impact on AGN spectral
   fitting.

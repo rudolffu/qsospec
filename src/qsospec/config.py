@@ -150,6 +150,17 @@ class IronTemplateConfig:
     def vw01(cls, fwhm_kms: float = 3000.0, **kwargs) -> "IronTemplateConfig":
         return cls(template="vw01", fwhm_kms=fwhm_kms, **kwargs)
 
+    @classmethod
+    def verner09(
+        cls,
+        fwhm_kms: float = 3000.0,
+        **kwargs,
+    ) -> "IronTemplateConfig":
+        """Return the full-range Verner et al. (2009) Fe II template."""
+
+        kwargs.setdefault("fwhm_bounds", (910.0, 10000.0))
+        return cls(template="verner09", fwhm_kms=fwhm_kms, **kwargs)
+
 
 @dataclass(frozen=True)
 class LineComplexConfig:
@@ -300,6 +311,45 @@ class PowerLawConfig:
 
 
 @dataclass(frozen=True)
+class PolynomialContinuumConfig:
+    """Additive pivot-normalized polynomial continuum correction.
+
+    ``enabled=None`` selects the polynomial for SDSS spectra only. Explicit
+    ``True`` and ``False`` values always take precedence over survey metadata.
+    """
+
+    enabled: Optional[bool] = None
+    degree: int = 3
+    pivot: Optional[float] = None
+    scale: Optional[float] = None
+    coefficient_bounds: Bounds = (None, None)
+    min_pixels: int = 20
+    min_leverage: float = 0.08
+
+    def __post_init__(self) -> None:
+        if self.enabled is not None and not isinstance(self.enabled, (bool, np.bool_)):
+            raise ValueError("PolynomialContinuumConfig.enabled must be True, False, or None.")
+        if not isinstance(self.degree, int) or isinstance(self.degree, bool) or self.degree < 1:
+            raise ValueError("PolynomialContinuumConfig.degree must be a positive integer.")
+        for name, value in (("pivot", self.pivot), ("scale", self.scale)):
+            if value is not None and (not np.isfinite(value) or value <= 0):
+                raise ValueError(f"PolynomialContinuumConfig.{name} must be positive or None.")
+        lower, upper = self.coefficient_bounds
+        if lower is not None and not np.isfinite(lower):
+            raise ValueError("Polynomial coefficient lower bound must be finite or None.")
+        if upper is not None and not np.isfinite(upper):
+            raise ValueError("Polynomial coefficient upper bound must be finite or None.")
+        if lower is not None and upper is not None and upper <= lower:
+            raise ValueError("Polynomial coefficient bounds must be increasing.")
+        if self.min_pixels < self.degree + 1:
+            raise ValueError(
+                "PolynomialContinuumConfig.min_pixels must exceed the polynomial degree."
+            )
+        if not np.isfinite(self.min_leverage) or self.min_leverage <= 0:
+            raise ValueError("PolynomialContinuumConfig.min_leverage must be positive.")
+
+
+@dataclass(frozen=True)
 class BalmerPseudoContinuumConfig:
     """Continuous Kovačević-style Balmer pseudo-continuum."""
 
@@ -390,6 +440,10 @@ class GlobalContinuumConfig:
     optical_iron: Optional[IronTemplateConfig] = field(
         default_factory=lambda: IronTemplateConfig.park22(fwhm_kms=3000.0)
     )
+    full_iron: Optional[IronTemplateConfig] = None
+    polynomial: PolynomialContinuumConfig = field(
+        default_factory=PolynomialContinuumConfig
+    )
     balmer_pseudocontinuum: BalmerPseudoContinuumConfig = field(
         default_factory=BalmerPseudoContinuumConfig
     )
@@ -416,7 +470,40 @@ class GlobalContinuumConfig:
 
         return cls(continuum_windows=LYA_SAFE_CONTINUUM_WINDOWS, **changes)
 
+    @classmethod
+    def with_single_iron(
+        cls,
+        template: Union[str, IronTemplateConfig] = "verner09",
+        **changes,
+    ) -> "GlobalContinuumConfig":
+        """Return a continuum config using one exclusive iron template."""
+
+        if "uv_iron" in changes or "optical_iron" in changes or "full_iron" in changes:
+            raise ValueError(
+                "with_single_iron configures iron exclusively; do not also pass "
+                "uv_iron, optical_iron, or full_iron."
+            )
+        if isinstance(template, str):
+            normalized = template.strip().lower().replace("-", "_")
+            if normalized in {"verner09", "verner_2009", "v09", "verner"}:
+                iron = IronTemplateConfig.verner09()
+            else:
+                iron = IronTemplateConfig(template=template)
+        else:
+            iron = template
+        if not isinstance(iron, IronTemplateConfig):
+            raise TypeError("template must be a template name or IronTemplateConfig.")
+        return cls(uv_iron=None, optical_iron=None, full_iron=iron, **changes)
+
     def __post_init__(self) -> None:
+        if self.full_iron is not None and (
+            self.uv_iron is not None or self.optical_iron is not None
+        ):
+            raise ValueError(
+                "GlobalContinuumConfig.full_iron is exclusive with uv_iron "
+                "and optical_iron. Use with_single_iron() or set both split "
+                "templates to None."
+            )
         if self.optimizer_method not in ("auto", "variable_projection", "legacy_joint"):
             raise ValueError(
                 "optimizer_method must be 'auto', 'variable_projection', or 'legacy_joint'."

@@ -36,10 +36,13 @@ class IronTemplate:
     coverage: Optional[Tuple[float, float]] = None
     notes: List[str] = field(default_factory=list)
     normalization: str = "area"
+    native_fwhm_kms: float = 0.0
 
     def __post_init__(self) -> None:
         self.wave_rest = np.asarray(self.wave_rest, dtype=float)
         self.flux = np.asarray(self.flux, dtype=float)
+        if not np.isfinite(self.native_fwhm_kms) or self.native_fwhm_kms < 0:
+            raise ValueError("Iron-template native FWHM must be finite and non-negative.")
         if self.coverage is None and self.wave_rest.size:
             self.coverage = (float(self.wave_rest.min()), float(self.wave_rest.max()))
 
@@ -74,11 +77,23 @@ def _broaden_template_with_derivative(
 ):
     if fwhm_kms <= 0 or not np.isfinite(fwhm_kms):
         raise IronTemplateError("iron_template_parse_failed", "Iron template FWHM must be positive and finite.")
+    native_fwhm = float(template.native_fwhm_kms)
+    if native_fwhm > 0 and fwhm_kms <= native_fwhm:
+        raise IronTemplateError(
+            "iron_template_below_native_resolution",
+            "Iron template target FWHM must exceed its native FWHM "
+            f"of {native_fwhm:g} km/s.",
+        )
     wave = template.wave_rest
     flux = template.flux
     grid = _log_grid(float(wave.min()), float(wave.max()), velocity_step_kms)
     sampled = np.interp(grid, wave, flux, left=0.0, right=0.0)
-    sigma_pix = (float(fwhm_kms) / FWHM_TO_SIGMA) / float(velocity_step_kms)
+    convolution_fwhm = (
+        np.sqrt(float(fwhm_kms) ** 2 - native_fwhm**2)
+        if native_fwhm > 0
+        else float(fwhm_kms)
+    )
+    sigma_pix = (convolution_fwhm / FWHM_TO_SIGMA) / float(velocity_step_kms)
     half = max(1, int(np.ceil(4.0 * sigma_pix)))
     x = np.arange(-half, half + 1, dtype=float)
     raw_kernel = np.exp(-0.5 * (x / sigma_pix) ** 2)
@@ -88,7 +103,12 @@ def _broaden_template_with_derivative(
     kernel_derivative_sigma = (
         raw_derivative * kernel_sum - raw_kernel * raw_derivative.sum()
     ) / kernel_sum**2
-    sigma_derivative_fwhm = 1.0 / (FWHM_TO_SIGMA * float(velocity_step_kms))
+    convolution_derivative = (
+        float(fwhm_kms) / convolution_fwhm if native_fwhm > 0 else 1.0
+    )
+    sigma_derivative_fwhm = convolution_derivative / (
+        FWHM_TO_SIGMA * float(velocity_step_kms)
+    )
     kernel_derivative_fwhm = kernel_derivative_sigma * sigma_derivative_fwhm
     return (
         grid,
@@ -111,6 +131,8 @@ def _apply_coverage_taper(
 ) -> np.ndarray:
     values = np.asarray(values, dtype=float).copy()
     coverage = template.coverage or (float(template.wave_rest.min()), float(template.wave_rest.max()))
+    inside = (wave_rest_fit >= coverage[0]) & (wave_rest_fit <= coverage[1])
+    values[~inside] = 0.0
     span = float(coverage[1] - coverage[0])
     taper_width = min(100.0, max(20.0, 0.05 * span))
     left = (wave_rest_fit >= coverage[0]) & (wave_rest_fit < coverage[0] + taper_width)

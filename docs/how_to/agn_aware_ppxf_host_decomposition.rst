@@ -13,7 +13,8 @@ published broad-line width, and fits pPXF with:
 * E-MILES stellar templates;
 * :math:`F_\lambda` power laws with slopes from -3.0 through 0.0 in steps of
   0.1;
-* BG92 optical Fe II at the selected broad width; and
+* BG92 optical Fe II at the selected broad width, or the final fit's
+  exclusive full-range iron template when configured; and
 * the qsospec KD13/Storey-Hummer Balmer continuum and high-order series at the
   same width.
 
@@ -77,6 +78,24 @@ Fe II, optional UV Fe II, Balmer-continuum, high-order Balmer, aggregate AGN,
 pPXF best-fit, physical-total, closure-residual, and host-subtracted arrays
 when applicable. The run-store model records and optional full-grid CSV retain
 the same components.
+
+For example, this uses Verner09 in both the host AGN basis and final global
+continuum:
+
+.. code-block:: python
+
+   global_config = qsospec.GlobalContinuumConfig.with_single_iron(
+       "verner09"
+   )
+   result = qsospec.fit_global_lines_workflow(
+       "spectrum.fits",
+       run_host_decomp=True,
+       host_config=host_config,
+       global_config=global_config,
+   )
+
+An explicit ``full_feii_template`` in ``HostAgnPseudoContinuumConfig`` takes
+precedence over this inheritance.
 
 ``ppxf_agn_fraction_flux_global`` is the wavelength-integrated AGN
 pseudo-continuum fraction over valid, non-emission-line pPXF pixels. Its

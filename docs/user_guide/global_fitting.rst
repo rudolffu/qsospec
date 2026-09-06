@@ -17,6 +17,7 @@ Default model
 
 - Pivoted power law.
 - Independently broadened UV and optical Fe II templates when covered.
+- An additive cubic correction for inputs explicitly identified as SDSS.
 - Continuous KD13-style Balmer bound-free plus high-order series component.
 - Auto-enabled covered line recipes, including Lyα/N V, C IV, C III], Mg II,
   optical complexes, and Paschen/NIR complexes.
@@ -48,3 +49,19 @@ continuum windows automatically.
 
 See :doc:`../science/continuum_model`, :doc:`../reference/recipes`, and
 :doc:`../reference/configuration`.
+
+Alternative iron and polynomial choices
+---------------------------------------
+
+The default split iron model remains VW01 in the UV plus Park22 in the
+optical. To use the single Verner et al. (2009) theoretical template across
+its approximately 2000–10000 Å support:
+
+.. code-block:: python
+
+   config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
+
+SDSS FITS, SDSS Parquet provenance, and arrays declared with
+``survey="sdss"`` automatically enable the degree-three additive polynomial.
+Control it explicitly with
+``PolynomialContinuumConfig(enabled=True)`` or ``enabled=False``.

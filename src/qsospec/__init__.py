@@ -31,6 +31,7 @@ from .config import (
     LocalFitConfig,
     LorentzianComponent,
     MgIIComplexConfig,
+    PolynomialContinuumConfig,
     PowerLawConfig,
     UncertaintyConfig,
 )
@@ -242,6 +243,7 @@ __all__ = [
     "HostWorkflowResult",
     "WorkflowResult",
     "PowerLawConfig",
+    "PolynomialContinuumConfig",
     "RunStore",
     "Spectrum",
     "SpectralResolution",

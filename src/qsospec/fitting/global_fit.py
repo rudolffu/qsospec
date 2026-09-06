@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import lru_cache
+from hashlib import sha256
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -149,6 +150,59 @@ def _broken_power_law_basis(
     return basis
 
 
+def _resolve_polynomial_config(
+    spectrum: Spectrum,
+    config: GlobalContinuumConfig,
+) -> Tuple[GlobalContinuumConfig, Dict[str, Any]]:
+    requested = config.polynomial.enabled
+    survey = spectrum.metadata.survey
+    if requested is None:
+        effective = survey == "sdss"
+        reason = "automatic_sdss" if effective else "automatic_non_sdss"
+        requested_label = "auto"
+    else:
+        effective = bool(requested)
+        reason = "explicit_enabled" if effective else "explicit_disabled"
+        requested_label = "enabled" if effective else "disabled"
+    resolved = replace(
+        config,
+        polynomial=replace(config.polynomial, enabled=effective),
+    )
+    return resolved, {
+        "polynomial_requested": requested_label,
+        "polynomial_survey": survey,
+        "polynomial_activation_reason": reason,
+    }
+
+
+def _iron_template_metadata(
+    template,
+    *,
+    target_fwhm_kms: Optional[float] = None,
+) -> Dict[str, Any]:
+    values = np.ascontiguousarray(
+        np.column_stack([template.wave_rest, template.flux]),
+        dtype=np.float64,
+    )
+    native_fwhm = float(template.native_fwhm_kms)
+    convolution_fwhm = (
+        np.sqrt(float(target_fwhm_kms) ** 2 - native_fwhm**2)
+        if target_fwhm_kms is not None and native_fwhm > 0
+        else target_fwhm_kms
+    )
+    return {
+        "template": template.name,
+        "source": template.source_path,
+        "reference": template.reference,
+        "coverage": tuple(map(float, template.coverage)),
+        "normalization": template.normalization,
+        "native_fwhm_kms": native_fwhm,
+        "target_fwhm_kms": target_fwhm_kms,
+        "convolution_fwhm_kms": convolution_fwhm,
+        "source_sha256": sha256(values.view(np.uint8)).hexdigest(),
+    }
+
+
 class _ContinuumContext:
     def __init__(
         self,
@@ -166,7 +220,17 @@ class _ContinuumContext:
         self.upper: List[float] = []
         self.uv_template = None
         self.opt_template = None
+        self.full_template = None
         self.balmer_template = None
+        self.polynomial_enabled = False
+        self.polynomial_status = "disabled"
+        self.polynomial_pivot = float(
+            config.polynomial.pivot or config.power_law.pivot
+        )
+        self.polynomial_scale = float(
+            config.polynomial.scale or config.power_law.pivot
+        )
+        self.polynomial_rank = 0
 
         valid = spectrum.valid_mask
         valid_wave = self.wave[valid]
@@ -221,7 +285,11 @@ class _ContinuumContext:
                     cfg.power_law.red_slope_bounds,
                 )
 
-        for label, iron_cfg in (("uv_iron", cfg.uv_iron), ("optical_iron", cfg.optical_iron)):
+        for label, iron_cfg in (
+            ("uv_iron", cfg.uv_iron),
+            ("optical_iron", cfg.optical_iron),
+            ("full_iron", cfg.full_iron),
+        ):
             if iron_cfg is None or not iron_cfg.enabled:
                 continue
             template = _cached_iron_template(
@@ -241,10 +309,73 @@ class _ContinuumContext:
                 continue
             if label == "uv_iron":
                 self.uv_template = template
-            else:
+            elif label == "optical_iron":
                 self.opt_template = template
+            else:
+                self.full_template = template
             self._add(f"{label}.amp", iron_cfg.amp, iron_cfg.amp_bounds)
-            self._add(f"{label}.fwhm_kms", iron_cfg.fwhm_kms, iron_cfg.fwhm_bounds)
+            fwhm_bounds = iron_cfg.fwhm_bounds
+            if template.native_fwhm_kms > 0:
+                lower, upper = fwhm_bounds
+                native_floor = float(template.native_fwhm_kms) + 1.0
+                lower = native_floor if lower is None else max(float(lower), native_floor)
+                if upper is not None and float(upper) <= lower:
+                    raise ValueError(
+                        f"{label} FWHM upper bound must exceed the template's "
+                        f"native FWHM of {template.native_fwhm_kms:g} km/s."
+                    )
+                fwhm_bounds = (lower, upper)
+            self._add(
+                f"{label}.fwhm_kms",
+                iron_cfg.fwhm_kms,
+                fwhm_bounds,
+            )
+
+        polynomial = cfg.polynomial
+        if polynomial.enabled:
+            selected_wave = self.wave[self.base_fit_mask]
+            x = (selected_wave - self.polynomial_pivot) / self.polynomial_scale
+            design = np.column_stack(
+                [x**order for order in range(1, polynomial.degree + 1)]
+            )
+            self.polynomial_rank = int(np.linalg.matrix_rank(design))
+            leverage = (
+                float(np.ptp(selected_wave) / self.polynomial_scale)
+                if selected_wave.size
+                else 0.0
+            )
+            if (
+                selected_wave.size < polynomial.min_pixels
+                or leverage < polynomial.min_leverage
+                or self.polynomial_rank < polynomial.degree
+            ):
+                self.polynomial_status = "disabled_insufficient_coverage"
+                self.warnings.append(
+                    FitWarning(
+                        code="global_polynomial_disabled_insufficient_coverage",
+                        message=(
+                            "The additive polynomial was disabled because the "
+                            "continuum pixels do not provide sufficient rank or "
+                            "wavelength leverage."
+                        ),
+                        severity="info",
+                        context={
+                            "degree": polynomial.degree,
+                            "n_pixels": int(selected_wave.size),
+                            "rank": self.polynomial_rank,
+                            "leverage": leverage,
+                        },
+                    )
+                )
+            else:
+                self.polynomial_enabled = True
+                self.polynomial_status = "enabled"
+                for order in range(1, polynomial.degree + 1):
+                    self._add(
+                        f"polynomial.c{order}",
+                        0.0,
+                        polynomial.coefficient_bounds,
+                    )
 
         balmer = cfg.balmer_pseudocontinuum
         red_edge_pixels = (
@@ -349,6 +480,10 @@ class _ContinuumContext:
             red_slope=self._get(theta, "power_law.red_slope"),
         )
 
+    def _polynomial_basis(self, wave: np.ndarray, order: int) -> np.ndarray:
+        x = (np.asarray(wave, dtype=float) - self.polynomial_pivot) / self.polynomial_scale
+        return x**int(order)
+
     def _balmer_fixed_fwhm(self) -> Optional[float]:
         config = self.config.balmer_pseudocontinuum
         if not config.fit_fwhm:
@@ -375,6 +510,14 @@ class _ContinuumContext:
             fwhm = self._get(self.initial, "optical_iron.fwhm_kms")
             columns.append(evaluate_iron_basis(self.opt_template, wave, fwhm))
             names.append("optical_iron.amp")
+        if self.full_template is not None:
+            fwhm = self._get(self.initial, "full_iron.fwhm_kms")
+            columns.append(evaluate_iron_basis(self.full_template, wave, fwhm))
+            names.append("full_iron.amp")
+        if self.polynomial_enabled:
+            for order in range(1, self.config.polynomial.degree + 1):
+                columns.append(self._polynomial_basis(wave, order))
+                names.append(f"polynomial.c{order}")
         if "balmer_pseudocontinuum.amp" in self.index:
             balmer = self.config.balmer_pseudocontinuum
             fwhm = self._balmer_fixed_fwhm()
@@ -404,7 +547,13 @@ class _ContinuumContext:
         weighted_design = design / err[:, None]
         weighted_flux = self.spectrum.flux[self.base_fit_mask] / err
         try:
-            solution = lsq_linear(weighted_design, weighted_flux, bounds=(0.0, np.inf)).x
+            lower = np.asarray([self.lower[self.index[name]] for name in names])
+            upper = np.asarray([self.upper[self.index[name]] for name in names])
+            solution = lsq_linear(
+                weighted_design,
+                weighted_flux,
+                bounds=(lower, upper),
+            ).x
             for name, value in zip(names, solution):
                 idx = self.index[name]
                 self.initial[idx] = np.clip(value, self.lower[idx], self.upper[idx])
@@ -416,7 +565,9 @@ class _ContinuumContext:
         return [
             name
             for name in self.names
-            if name == "power_law.norm" or name.endswith(".amp")
+            if name == "power_law.norm"
+            or name.endswith(".amp")
+            or name.startswith("polynomial.c")
         ]
 
     @property
@@ -516,6 +667,24 @@ class _ContinuumContext:
                 basis,
                 {"optical_iron.fwhm_kms": derivative} if derivative is not None else None,
             )
+        if self.full_template is not None:
+            fwhm = nonlinear_values["full_iron.fwhm_kms"]
+            if need_derivatives:
+                basis, derivative = evaluate_iron_basis_with_derivative(
+                    self.full_template, wave, fwhm
+                )
+            else:
+                basis = evaluate_iron_basis(self.full_template, wave, fwhm)
+                derivative = None
+            append_column(
+                basis,
+                {"full_iron.fwhm_kms": derivative}
+                if derivative is not None
+                else None,
+            )
+        if self.polynomial_enabled:
+            for order in range(1, self.config.polynomial.degree + 1):
+                append_column(self._polynomial_basis(wave, order))
         if "balmer_pseudocontinuum.amp" in self.index:
             balmer = self.config.balmer_pseudocontinuum
             fwhm = self._balmer_fixed_fwhm()
@@ -597,6 +766,23 @@ class _ContinuumContext:
         if self.opt_template is not None:
             components["optical_iron"] = self._get(theta, "optical_iron.amp") * evaluate_iron_basis(
                 self.opt_template, wave, self._get(theta, "optical_iron.fwhm_kms")
+            )
+        if self.full_template is not None:
+            components["full_iron"] = self._get(
+                theta, "full_iron.amp"
+            ) * evaluate_iron_basis(
+                self.full_template,
+                wave,
+                self._get(theta, "full_iron.fwhm_kms"),
+            )
+        if self.polynomial_enabled:
+            components["polynomial"] = sum(
+                (
+                    self._get(theta, f"polynomial.c{order}")
+                    * self._polynomial_basis(wave, order)
+                    for order in range(1, self.config.polynomial.degree + 1)
+                ),
+                np.zeros_like(wave, dtype=float),
             )
         if self.balmer_template is not None:
             balmer = self.config.balmer_pseudocontinuum
@@ -927,6 +1113,38 @@ def _fit_global_continuum_fixed(
             "nonlinear_nfev": total_nfev,
             "nonlinear_njev": total_njev,
             "linear_solve_count": total_linear_solves,
+            "polynomial_effective": bool(context.polynomial_enabled),
+            "polynomial_status": context.polynomial_status,
+            "polynomial_degree": int(cfg.polynomial.degree),
+            "polynomial_pivot": float(context.polynomial_pivot),
+            "polynomial_scale": float(context.polynomial_scale),
+            "polynomial_rank": int(context.polynomial_rank),
+            "polynomial_coefficients": {
+                name: float(result.x[context.index[name]])
+                for name in context.names
+                if name.startswith("polynomial.c")
+            },
+            "iron_mode": (
+                "single"
+                if context.full_template is not None
+                else "split"
+                if context.uv_template is not None or context.opt_template is not None
+                else "disabled"
+            ),
+            "iron_templates": {
+                label: _iron_template_metadata(
+                    template,
+                    target_fwhm_kms=float(
+                        result.x[context.index[f"{label}.fwhm_kms"]]
+                    ),
+                )
+                for label, template in (
+                    ("uv_iron", context.uv_template),
+                    ("optical_iron", context.opt_template),
+                    ("full_iron", context.full_template),
+                )
+                if template is not None
+            },
         }
     )
     if "balmer_pseudocontinuum.amp" in context.index:
@@ -1154,7 +1372,10 @@ def fit_global_continuum(
     """Fit the global AGN continuum and resolve automatic power-law mode."""
 
     require_rest_frame_flux(spectrum)
-    cfg = config or GlobalContinuumConfig()
+    cfg, polynomial_selection = _resolve_polynomial_config(
+        spectrum,
+        config or GlobalContinuumConfig(),
+    )
     requested_mode = cfg.power_law.mode
     if requested_mode != "auto":
         result = _fit_global_continuum_fixed(
@@ -1177,6 +1398,7 @@ def fit_global_continuum(
                 "power_law_common_mask_pixels": int(
                     np.count_nonzero(result.clip_mask)
                 ),
+                **polynomial_selection,
             }
         )
         return result
@@ -1212,6 +1434,7 @@ def fit_global_continuum(
                 "power_law_common_mask_pixels": int(
                     np.count_nonzero(selected.clip_mask)
                 ),
+                **polynomial_selection,
             }
         )
         return selected
@@ -1272,6 +1495,7 @@ def fit_global_continuum(
             "power_law_double_bic": double_bic,
             "power_law_delta_bic": delta_bic,
             "power_law_common_mask_pixels": int(np.count_nonzero(common_mask)),
+            **polynomial_selection,
         }
     )
     return selected
@@ -3557,6 +3781,21 @@ def fit_global_lines(
             lya_coverage is not None and lya_coverage.edge_truncated
         ),
     }
+    for key in (
+        "polynomial_requested",
+        "polynomial_effective",
+        "polynomial_activation_reason",
+        "polynomial_survey",
+        "polynomial_status",
+        "polynomial_degree",
+        "polynomial_pivot",
+        "polynomial_scale",
+        "polynomial_rank",
+        "polynomial_coefficients",
+        "iron_mode",
+        "iron_templates",
+    ):
+        metadata[key] = continuum.metadata.get(key)
     metadata.update(hgamma_sync_ratio_metadata)
     if (
         "balmer_pseudocontinuum_implied_hbeta_flux_input" in metadata

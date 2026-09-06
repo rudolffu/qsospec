@@ -29,7 +29,37 @@ default :math:`\Delta\mathrm{BIC}\ge10`.
    f_\lambda = N\left(\frac{\lambda}{\lambda_\mathrm{pivot}}\right)^\alpha,
 
 plus independently broadened UV and optical Fe II templates when the
-spectrum and template overlap sufficiently.
+spectrum and template overlap sufficiently. The unchanged default combines
+VW01 in the UV and Park22 in the optical.
+
+As an alternative, ``GlobalContinuumConfig.with_single_iron("verner09")``
+uses one Verner et al. (2009) theoretical template over approximately
+2000–10000 Å. Its fitted width is the final target FWHM. qsospec records the
+template's assumed native 900 km/s FWHM and applies only the additional
+quadrature broadening
+
+.. math::
+
+   \mathrm{FWHM}_{\rm conv} =
+   \sqrt{\mathrm{FWHM}_{\rm target}^2 - (900\,\mathrm{km\,s^{-1}})^2}.
+
+Optional polynomial correction
+------------------------------
+
+The global continuum can include a signed additive polynomial without a
+constant term:
+
+.. math::
+
+   P(\lambda)=\sum_{j=1}^{d} c_j
+   \left(\frac{\lambda-\lambda_{\rm pivot}}{\lambda_{\rm scale}}\right)^j.
+
+The default degree is three, with pivot and scale inherited from the
+power-law pivot. ``enabled=None`` activates this component only for spectra
+with explicit SDSS survey provenance. It remains off for DESI, LAMOST, and
+unspecified inputs. Insufficient wavelength leverage or a rank-deficient
+basis disables it with a recorded warning. In automatic power-law mode, the
+same polynomial basis is included in both BIC candidates.
 
 Balmer pseudo-continuum
 -----------------------

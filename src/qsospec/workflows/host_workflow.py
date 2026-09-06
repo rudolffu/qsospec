@@ -45,6 +45,34 @@ def _host_decomp_decision(requested: bool, redshift: Optional[float]) -> Tuple[b
     return True, None
 
 
+def _host_config_with_global_iron(host_config: Any, global_config: Optional[GlobalContinuumConfig]):
+    """Propagate an exclusive bundled iron template into the AGN host basis."""
+
+    if global_config is None or global_config.full_iron is None:
+        return host_config
+    iron = global_config.full_iron
+    pseudo = host_config.agn_pseudocontinuum
+    if (
+        not iron.enabled
+        or not pseudo.inherit_global_full_iron
+        or pseudo.full_feii_template is not None
+    ):
+        return host_config
+    if iron.template_path is not None:
+        raise ValueError(
+            "Host AGN-basis inheritance only supports bundled full-range iron "
+            "templates; configure HostAgnPseudoContinuumConfig explicitly for "
+            "an external template."
+        )
+    return replace(
+        host_config,
+        agn_pseudocontinuum=replace(
+            pseudo,
+            full_feii_template=iron.template,
+        ),
+    )
+
+
 @dataclass
 class HostWorkflowResult:
     """Result of optional host subtraction followed by a qsospec fit."""
@@ -100,9 +128,16 @@ def _spectrum_from_arrays(
             "flux_scale",
             "flux_frame",
             "rest_frame_conversion",
+            "survey",
         ):
             if key in spectrum_data.metadata:
                 base_metadata[key] = spectrum_data.metadata[key]
+        if not base_metadata.get("survey"):
+            explicit_survey = spectrum_data.metadata.get("optical_survey")
+            if explicit_survey is not None:
+                normalized_survey = str(explicit_survey).strip().lower()
+                if normalized_survey in {"sdss", "desi"}:
+                    base_metadata["survey"] = normalized_survey
         base_metadata.update(
             {
                 "source": source,
@@ -193,6 +228,7 @@ def _host_subtracted_spectrum(
     fit_range: Tuple[float, float],
     host_config: Optional[Any],
     source: str,
+    global_config: Optional[GlobalContinuumConfig] = None,
     pseudocontinuum_width_override_kms: Optional[float] = None,
 ) -> Tuple[
     Spectrum,
@@ -278,6 +314,7 @@ def _host_subtracted_spectrum(
                     _spectrum_from_spectrum_data(spectrum_data, source=source),
                     config=cfg.broad_line_prefit,
                     width_grid_kms=cfg.agn_pseudocontinuum.width_grid_kms,
+                    global_config=global_config,
                 )
                 broad_prefit_seconds = perf_counter() - prefit_start
                 selected_width = broad_prefit.selected_width_grid_kms
@@ -708,6 +745,7 @@ def _run_host_refit_mc(
                 fit_range=host_fit_range,
                 host_config=host_config,
                 source=source,
+                global_config=global_config,
             )
             trial = fit_global_lines(
                 fit_spectrum,
@@ -765,7 +803,18 @@ def _run_global_fit_with_optional_host(
 
     workflow_start = perf_counter()
     uncertainty = uncertainty_config or UncertaintyConfig()
-    resolved_host_config = host_config or default_config()
+    base_host_config = host_config or default_config()
+    global_full_iron_propagated = bool(
+        global_config is not None
+        and global_config.full_iron is not None
+        and global_config.full_iron.enabled
+        and base_host_config.agn_pseudocontinuum.inherit_global_full_iron
+        and base_host_config.agn_pseudocontinuum.full_feii_template is None
+    )
+    resolved_host_config = _host_config_with_global_iron(
+        base_host_config,
+        global_config,
+    )
     spectrum_data = correct_spectrum_data(
         spectrum_data, galactic_extinction_config
     )
@@ -792,6 +841,7 @@ def _run_global_fit_with_optional_host(
                 fit_range=host_fit_range,
                 host_config=resolved_host_config,
                 source=source,
+                global_config=global_config,
             )
         )
         primary_uncertainty = (
@@ -873,6 +923,7 @@ def _run_global_fit_with_optional_host(
                 fit_range=host_fit_range,
                 host_config=resolved_host_config,
                 source=source,
+                global_config=global_config,
                 pseudocontinuum_width_override_kms=float(candidate_width),
             )
             updated_host_fit.quality_metrics.update(
@@ -1149,6 +1200,17 @@ def _run_global_fit_with_optional_host(
             "host_strategy_fallback_reason": (
                 host_fit.strategy_fallback_reason
                 if host_fit is not None else None
+            ),
+            "host_full_iron_template": (
+                resolved_host_config.agn_pseudocontinuum.full_feii_template
+                if host_fit is not None
+                and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "full_iron_propagated_to_host": bool(
+                host_fit is not None
+                and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+                and global_full_iron_propagated
             ),
             "host_method_reference": (
                 "Aydar et al. 2026, A&A, 710, A141"

@@ -8,6 +8,10 @@ from qsospec.jacobian import model_jacobian_dense
 from qsospec.parameters import pack_line_complex_parameters
 from qsospec.residuals import model_vector
 from qsospec.templates import IronTemplateError, load_iron_template, prepare_iron_template
+from qsospec.templates.iron import (
+    evaluate_iron_basis,
+    evaluate_iron_basis_with_derivative,
+)
 
 
 def _write_template(path, wave, flux):
@@ -219,3 +223,103 @@ def test_fit_local_no_overlap_warning_does_not_crash_other_windows():
     assert "iron_template_no_overlap" in result.warning_codes()
     assert "iron.amp" not in result.window_results["Hb_OIII"].param_values
     assert "iron.amp" in result.window_results["MgII"].param_values
+
+
+def test_verner09_resource_aliases_and_native_resolution():
+    canonical = load_iron_template("verner09")
+
+    assert canonical.name == "verner09"
+    assert canonical.native_fwhm_kms == 900.0
+    assert canonical.coverage[0] >= 2000.0
+    assert canonical.coverage[1] <= 10000.0
+    assert np.all(np.diff(canonical.wave_rest) > 0)
+    assert np.trapezoid(canonical.flux, canonical.wave_rest) == pytest.approx(1.0)
+    for alias in ("verner_2009", "v09", "verner"):
+        loaded = load_iron_template(alias)
+        np.testing.assert_allclose(loaded.wave_rest, canonical.wave_rest)
+        np.testing.assert_allclose(loaded.flux, canonical.flux)
+
+
+def test_verner09_target_fwhm_derivative_matches_finite_difference():
+    template = load_iron_template("verner09")
+    wave = np.linspace(2200.0, 9800.0, 900)
+    target_fwhm = 3200.0
+    basis, derivative = evaluate_iron_basis_with_derivative(
+        template,
+        wave,
+        target_fwhm,
+    )
+    step = 1.0
+    finite_difference = (
+        evaluate_iron_basis(template, wave, target_fwhm + step)
+        - evaluate_iron_basis(template, wave, target_fwhm - step)
+    ) / (2.0 * step)
+
+    assert np.any(basis > 0)
+    np.testing.assert_allclose(
+        derivative,
+        finite_difference,
+        rtol=3e-3,
+        atol=2e-9,
+    )
+    with pytest.raises(IronTemplateError, match="native FWHM"):
+        evaluate_iron_basis(template, wave, 900.0)
+
+
+def test_single_verner09_global_fit_uses_one_iron_component():
+    wave = np.linspace(2000.0, 10000.0, 1600)
+    template = load_iron_template("verner09")
+    iron = 5200.0 * evaluate_iron_basis(template, wave, 3300.0)
+    power_law = 2.2 * (wave / 3000.0) ** -1.1
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        power_law + iron,
+        err=np.full_like(wave, 0.002),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    config = qsospec.GlobalContinuumConfig.with_single_iron(
+        qsospec.IronTemplateConfig.verner09(
+            amp=5000.0,
+            fwhm_kms=3000.0,
+        ),
+        power_law=qsospec.PowerLawConfig(norm=2.0, slope=-1.0),
+        polynomial=qsospec.PolynomialContinuumConfig(enabled=False),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            enabled=False
+        ),
+        continuum_windows=((2000.0, 10000.0),),
+        mask_windows=(),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+    )
+
+    result = qsospec.fit_global_continuum(spectrum, config)
+
+    assert result.success
+    assert "full_iron" in result.component_models
+    assert "uv_iron" not in result.component_models
+    assert "optical_iron" not in result.component_models
+    assert "full_iron.amp" in result.param_values
+    assert "full_iron.fwhm_kms" in result.param_values
+    assert result.param_values["full_iron.amp"] == pytest.approx(5200.0, rel=0.03)
+    assert result.param_values["full_iron.fwhm_kms"] == pytest.approx(
+        3300.0,
+        rel=0.08,
+    )
+    assert result.metadata["iron_mode"] == "single"
+    metadata = result.metadata["iron_templates"]["full_iron"]
+    assert metadata["native_fwhm_kms"] == 900.0
+    assert metadata["target_fwhm_kms"] == pytest.approx(
+        result.param_values["full_iron.fwhm_kms"]
+    )
+    assert metadata["convolution_fwhm_kms"] < metadata["target_fwhm_kms"]
+
+
+def test_single_verner09_string_preset_uses_safe_width_bound():
+    config = qsospec.GlobalContinuumConfig.with_single_iron("v09")
+
+    assert config.uv_iron is None
+    assert config.optical_iron is None
+    assert config.full_iron.template == "verner09"
+    assert config.full_iron.fwhm_bounds[0] > 900.0

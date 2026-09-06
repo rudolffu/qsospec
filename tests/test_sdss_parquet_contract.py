@@ -23,6 +23,7 @@ def test_sdss_provenance_through_batch_store_and_resume(tmp_path):
     assert descriptors == [d for d, _ in spectra]
     assert spectra[0][1].object_id == "63050395803782712"
     assert spectra[0][1].targetid is None
+    assert spectra[0][1].metadata["survey"] == "sdss"
     assert descriptors[0].metadata["catalogid"] == 63050395803782712
     kwargs = dict(n_workers=1, show_progress=False,
                   galactic_extinction_config=qsospec.GalacticExtinctionConfig(ebv_override=0.),

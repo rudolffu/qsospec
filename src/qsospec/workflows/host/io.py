@@ -36,6 +36,7 @@ RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
 DEFAULT_FLUX_SCALE = 1e-17
 PROVENANCE_SCALAR_COLUMNS = (
+    "survey",
     "spectrum_key",
     "optical_survey",
     "optical_object_id",
@@ -74,6 +75,19 @@ PROVENANCE_SCALAR_COLUMNS = (
     "qsospec_shard_id",
     "input_row_index",
 )
+
+
+def _survey_from_provenance(provenance: Mapping[str, Any]) -> Optional[str]:
+    """Return an explicitly declared supported survey, if present."""
+
+    for key in ("survey", "optical_survey", "source_backend"):
+        value = provenance.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized in {"sdss", "desi"}:
+            return normalized
+    return None
 
 
 @dataclass
@@ -238,12 +252,14 @@ def read_sparcli_spectrum(
         for name in PROVENANCE_SCALAR_COLUMNS
         if _find_column(columns, (name,)) is not None
     }
+    survey = _survey_from_provenance(provenance)
 
     metadata = {
         "input_file": str(input_path),
         "file_type": file_type,
         "flux_unit": "cgs",
         "flux_scale": float(provenance.get("flux_scale") or DEFAULT_FLUX_SCALE),
+        "survey": survey,
         "columns": list(map(str, columns)),
         "selected_columns": {
             "wavelength": wave_col,

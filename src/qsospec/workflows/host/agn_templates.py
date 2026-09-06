@@ -235,75 +235,85 @@ def build_host_agn_template_bundle(
     interval = _normalization_interval(wave, valid)
     wave_size, wave_bytes = _wave_cache_payload(wave)
 
-    optical = _cached_builtin_iron_template(cfg.optical_feii_template)
-    optical_raw = _cached_iron_basis(
-        cfg.optical_feii_template,
-        float(selected_fwhm_kms),
-        wave_size,
-        wave_bytes,
-    )
-    optical_support = (wave >= float(optical.coverage[0])) & (wave <= float(optical.coverage[1])) & valid
-    if np.any(optical_support):
-        optical_values, optical_norm = _normalize(optical_raw, optical_support)
-        optical_interval = _normalization_interval(wave, optical_support)
+    def append_iron(
+        template_name: str,
+        *,
+        name: str,
+        category: str,
+        linear_group: str,
+        fallback_reference: str,
+    ) -> None:
+        template = _cached_builtin_iron_template(template_name)
+        support = (
+            (wave >= float(template.coverage[0]))
+            & (wave <= float(template.coverage[1]))
+            & valid
+        )
+        if not np.any(support):
+            return
+        raw = _cached_iron_basis(
+            template_name,
+            float(selected_fwhm_kms),
+            wave_size,
+            wave_bytes,
+        )
+        values, normalization = _normalize(raw, support)
+        normalization_interval = _normalization_interval(wave, support)
+        native_fwhm = float(template.native_fwhm_kms)
         components.append(
             HostAgnTemplateComponent(
-                name="feii_optical",
-                category="agn_feii_optical",
-                values=optical_values,
+                name=name,
+                category=category,
+                values=values,
                 wavelength=wave,
-                normalization=optical_norm,
-                intrinsic_fwhm_kms=None,
+                normalization=normalization,
+                intrinsic_fwhm_kms=native_fwhm or None,
                 selected_fwhm_kms=float(selected_fwhm_kms),
-                source_id=optical.source_path or optical.name,
-                source_reference=optical.reference or "Boroson & Green 1992",
-                wavelength_coverage=tuple(map(float, optical.coverage)),
+                source_id=template.source_path or template.name,
+                source_reference=template.reference or fallback_reference,
+                wavelength_coverage=tuple(map(float, template.coverage)),
                 included_in_global_fagn=True,
-                linear_group="feii_optical",
+                linear_group=linear_group,
                 metadata={
                     "physical_broadening_applied_once": True,
-                    "native_resolution_status": "unknown_assumed_negligible",
-                    "source_sha256": _template_hash(np.column_stack([optical.wave_rest, optical.flux])),
-                    "normalization_method": ("median_absolute_over_supported_fit_interval"),
-                    "normalization_interval": optical_interval,
+                    "native_resolution_status": (
+                        "known" if native_fwhm > 0 else "unknown_assumed_negligible"
+                    ),
+                    "native_fwhm_kms": native_fwhm,
+                    "source_sha256": _template_hash(
+                        np.column_stack([template.wave_rest, template.flux])
+                    ),
+                    "normalization_method": (
+                        "median_absolute_over_supported_fit_interval"
+                    ),
+                    "normalization_interval": normalization_interval,
                 },
             )
         )
 
-    if cfg.uv_feii_template is not None:
-        ultraviolet = _cached_builtin_iron_template(cfg.uv_feii_template)
-        uv_support = (wave >= float(ultraviolet.coverage[0])) & (wave <= float(ultraviolet.coverage[1])) & valid
-        if np.any(uv_support):
-            uv_raw = _cached_iron_basis(
+    if cfg.full_feii_template is not None:
+        append_iron(
+            cfg.full_feii_template,
+            name="feii_full",
+            category="agn_feii_full",
+            linear_group="feii_full",
+            fallback_reference="Verner et al. 2009",
+        )
+    else:
+        append_iron(
+            cfg.optical_feii_template,
+            name="feii_optical",
+            category="agn_feii_optical",
+            linear_group="feii_optical",
+            fallback_reference="Boroson & Green 1992",
+        )
+        if cfg.uv_feii_template is not None:
+            append_iron(
                 cfg.uv_feii_template,
-                float(selected_fwhm_kms),
-                wave_size,
-                wave_bytes,
-            )
-            uv_values, uv_norm = _normalize(uv_raw, uv_support)
-            uv_interval = _normalization_interval(wave, uv_support)
-            components.append(
-                HostAgnTemplateComponent(
-                    name="feii_uv",
-                    category="agn_feii_uv",
-                    values=uv_values,
-                    wavelength=wave,
-                    normalization=uv_norm,
-                    intrinsic_fwhm_kms=None,
-                    selected_fwhm_kms=float(selected_fwhm_kms),
-                    source_id=ultraviolet.source_path or ultraviolet.name,
-                    source_reference=ultraviolet.reference or "Vestergaard & Wilkes 2001",
-                    wavelength_coverage=tuple(map(float, ultraviolet.coverage)),
-                    included_in_global_fagn=True,
-                    linear_group="feii_uv",
-                    metadata={
-                        "physical_broadening_applied_once": True,
-                        "native_resolution_status": "unknown_assumed_negligible",
-                        "source_sha256": _template_hash(np.column_stack([ultraviolet.wave_rest, ultraviolet.flux])),
-                        "normalization_method": "median_absolute_over_supported_fit_interval",
-                        "normalization_interval": uv_interval,
-                    },
-                )
+                name="feii_uv",
+                category="agn_feii_uv",
+                linear_group="feii_uv",
+                fallback_reference="Vestergaard & Wilkes 2001",
             )
 
     if cfg.balmer_enabled:
@@ -433,6 +443,7 @@ def build_host_agn_template_bundle(
         for index, item in enumerate(components)
     ]
     support = valid & lsf_valid & np.any(np.isfinite(matrix), axis=1)
+    iron_components = [item for item in components if "feii" in item.category]
     metadata = {
         "host_pseudocontinuum_method": "aydar2026_inspired",
         "host_pseudocontinuum_exact_replication": False,
@@ -440,8 +451,18 @@ def build_host_agn_template_bundle(
         "powerlaw_grid_replication_status": "exact_slopes",
         "powerlaw_slope_convention": "F_lambda",
         "broadening_grid_source": "Aydar et al. 2026 Table A.1",
-        "optical_feii_source": optical.source_path,
-        "optical_feii_sha256": _template_hash(np.column_stack([optical.wave_rest, optical.flux])),
+        "iron_mode": "single" if cfg.full_feii_template is not None else "split",
+        "iron_templates": [
+            {
+                "name": item.name,
+                "source": item.source_id,
+                "reference": item.source_reference,
+                "coverage": item.wavelength_coverage,
+                "native_fwhm_kms": item.intrinsic_fwhm_kms,
+                "source_sha256": item.metadata["source_sha256"],
+            }
+            for item in iron_components
+        ],
         "balmer_source": ("qsospec KD13/Storey-Hummer implementation" if cfg.balmer_enabled else None),
         "selected_fwhm_kms": float(selected_fwhm_kms),
         "intrinsic_template_cache_grid_sha256": sha256(wave_bytes).hexdigest(),

@@ -57,6 +57,13 @@ subtracts only the stellar model. See
 :doc:`../how_to/agn_aware_ppxf_host_decomposition` for configuration,
 provenance, coverage classes, fractions, and limitations.
 
+When the final continuum uses an exclusive full-range iron template, such as
+``GlobalContinuumConfig.with_single_iron("verner09")``, the AGN-aware host
+strategy inherits that one template and suppresses its split Fe components.
+Set ``HostAgnPseudoContinuumConfig(full_feii_template=...)`` explicitly to
+retain a different host-stage template. The default ``masked_simple``
+strategy is unaffected.
+
 Stellar-template resolution profiles
 ------------------------------------
 

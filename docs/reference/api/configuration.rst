@@ -9,6 +9,7 @@ Configuration API
    GalacticExtinctionConfig
    GlobalContinuumConfig
    PowerLawConfig
+   PolynomialContinuumConfig
    IronTemplateConfig
    BalmerPseudoContinuumConfig
    HbetaComplexConfig

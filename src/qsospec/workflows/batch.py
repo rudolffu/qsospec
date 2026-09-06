@@ -761,6 +761,7 @@ def fit_object_to_store(
                 "rest_frame_conversion": dict(
                     prepared_spectrum.metadata.rest_frame_conversion
                 ),
+                "survey": prepared_spectrum.metadata.survey,
                 "spectrum_metadata": (
                     prepared_spectrum.metadata.to_dict()
                 ),

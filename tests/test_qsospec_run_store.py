@@ -584,6 +584,7 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     np.testing.assert_allclose(sdss_data.wave_obs, wave)
     assert sdss_data.metadata["flux_unit"] == "cgs"
     assert sdss_data.metadata["flux_scale"] == pytest.approx(1e-17)
+    assert sdss_data.metadata["survey"] == "sdss"
 
     lamost = tmp_path / "lamost.fits"
     columns = [

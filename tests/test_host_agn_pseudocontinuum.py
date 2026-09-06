@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import qsospec
 from qsospec import Spectrum
 from qsospec.global_result import EmissionComplexResult
 from qsospec.workflows.host.agn_templates import (
@@ -27,6 +28,7 @@ from qsospec.workflows.host.ppxf_host import (
     run_ppxf_host_fit,
 )
 from qsospec.workflows.host.templates import PPXFTemplateLibrary
+from qsospec.workflows.host_workflow import _host_config_with_global_iron
 
 
 def _fake_complex(prefix, *, fwhm=3420.0, flux=10.0, success=True):
@@ -156,6 +158,43 @@ def test_agn_bundle_reuses_physics_and_closes_balmer_branches():
     )
     optical = by_name["feii_optical"]
     assert np.all(optical.values[wave < optical.wavelength_coverage[0]] == 0)
+
+
+def test_host_agn_bundle_uses_one_full_verner_component():
+    wave = np.linspace(1800.0, 10200.0, 1200)
+    bundle = build_host_agn_template_bundle(
+        wave,
+        selected_fwhm_kms=4000.0,
+        config=HostAgnPseudoContinuumConfig(full_feii_template="verner09"),
+    )
+
+    iron = [
+        component
+        for component in bundle.components
+        if "feii" in component.category
+    ]
+    assert [component.name for component in iron] == ["feii_full"]
+    assert bundle.metadata["iron_mode"] == "single"
+    assert iron[0].intrinsic_fwhm_kms == 900.0
+    assert np.all(iron[0].values[wave < 2000.0] == 0)
+    assert np.all(iron[0].values[wave > 10000.0] == 0)
+
+
+def test_global_full_iron_propagates_unless_host_override_is_explicit():
+    global_config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
+    host = HostDecompConfig(strategy="agn_pseudocontinuum_masked")
+
+    inherited = _host_config_with_global_iron(host, global_config)
+    assert inherited.agn_pseudocontinuum.full_feii_template == "verner09"
+
+    explicit = HostDecompConfig(
+        strategy="agn_pseudocontinuum_masked",
+        agn_pseudocontinuum=HostAgnPseudoContinuumConfig(
+            full_feii_template="vw01"
+        ),
+    )
+    retained = _host_config_with_global_iron(explicit, global_config)
+    assert retained.agn_pseudocontinuum.full_feii_template == "vw01"
 
 
 @pytest.mark.parametrize(

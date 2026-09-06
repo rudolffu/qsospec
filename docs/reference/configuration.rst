@@ -30,6 +30,32 @@ Automatic single/broken power-law selection:
 The broken law is selected only with adequate wavelength leverage on both
 sides of 4661 Å and a default BIC improvement of at least 10.
 
+One full-range Verner et al. (2009) iron template:
+
+.. code-block:: python
+
+   global_config = qsospec.GlobalContinuumConfig.with_single_iron(
+       "verner09"
+   )
+
+Pass ``IronTemplateConfig.verner09(fwhm_kms=4000)`` instead of the string to
+customize its target width. This preset is exclusive: it disables the default
+VW01 UV and Park22 optical components and fits one amplitude and one FWHM over
+the Verner template's 2000–10000 Å support.
+
+Survey-aware additive polynomial:
+
+.. code-block:: python
+
+   polynomial = qsospec.PolynomialContinuumConfig(
+       enabled=None,  # SDSS only; use True or False to override
+       degree=3,
+   )
+
+The polynomial has no constant term and is additive to the global continuum.
+Automatic activation requires explicit ``survey="sdss"`` provenance; a
+filename alone never activates it.
+
 Known foreground E(B-V):
 
 .. code-block:: python
@@ -67,6 +93,7 @@ package:
 - :class:`qsospec.GalacticExtinctionConfig`
 - :class:`qsospec.GlobalContinuumConfig`
 - :class:`qsospec.PowerLawConfig`
+- :class:`qsospec.PolynomialContinuumConfig`
 - :class:`qsospec.IronTemplateConfig`
 - :class:`qsospec.BalmerPseudoContinuumConfig`
 - :class:`qsospec.HbetaComplexConfig`

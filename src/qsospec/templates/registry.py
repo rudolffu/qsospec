@@ -6,6 +6,8 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Dict, Optional
 
+import numpy as np
+
 from .iron import IronTemplate, IronTemplateError
 from .normalize import area_normalize, read_two_column_template
 
@@ -20,6 +22,10 @@ _ALIASES: Dict[str, str] = {
     "veron04_optical": "veron04_optical",
     "vw01": "vw01_uv",
     "vw01_uv": "vw01_uv",
+    "verner09": "verner09",
+    "verner_2009": "verner09",
+    "v09": "verner09",
+    "verner": "verner09",
     "external": "external",
 }
 
@@ -28,6 +34,7 @@ _REFERENCES: Dict[str, str] = {
     "park22_optical": "Park et al. 2022, ApJS, 258, 38",
     "veron04_optical": "Veron-Cetty, Joly & Veron 2004, A&A, 417, 515",
     "vw01_uv": "Vestergaard & Wilkes 2001 / legacy qsofitmore UV Fe template",
+    "verner09": "Verner et al. 2009, Physica Scripta, T134, 014006",
 }
 
 _NOTES: Dict[str, str] = {
@@ -35,7 +42,13 @@ _NOTES: Dict[str, str] = {
     "park22_optical": "Bundled area-normalized copy generated from the provided Park22 tab1.txt.",
     "veron04_optical": "Bundled area-normalized copy generated from the provided VC04 iwz1.fit.",
     "vw01_uv": "Bundled area-normalized copy of qsofitmore's legacy UV/MgII template.",
+    "verner09": (
+        "Bundled theoretical Fe II template spanning the UV-to-near-IR; "
+        "the model assumes a native FWHM of 900 km/s."
+    ),
 }
+
+_NATIVE_FWHM_KMS: Dict[str, float] = {"verner09": 900.0}
 
 
 def _data_dir():
@@ -94,6 +107,18 @@ def load_iron_template(
         try:
             with as_file(path) as materialized_path:
                 wave, flux = read_two_column_template(str(materialized_path))
+            if canonical == "verner09":
+                source_wave = wave
+                source_flux = flux
+                selected = (wave >= 2000.0) & (wave <= 10000.0)
+                wave = wave[selected]
+                flux = flux[selected]
+                if wave[-1] < 10000.0 < source_wave[-1]:
+                    wave = np.append(wave, 10000.0)
+                    flux = np.append(
+                        flux,
+                        np.interp(10000.0, source_wave, source_flux),
+                    )
             wave, flux, _ = area_normalize(wave, flux)
         except ValueError as exc:
             raise IronTemplateError("iron_template_parse_failed", str(exc)) from exc
@@ -110,4 +135,5 @@ def load_iron_template(
         coverage=(float(wave.min()), float(wave.max())),
         notes=notes,
         normalization="area",
+        native_fwhm_kms=float(_NATIVE_FWHM_KMS.get(canonical, 0.0)),
     )
