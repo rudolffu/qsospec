@@ -338,10 +338,10 @@ def _measurement_rows(
                     "method": method,
                     "metadata": _key_values({
                         "uncertainty_status": "available" if _float(errors.get(quantity)) is not None else "unavailable",
-                        "uncertainty_method": result.monte_carlo.get("method", "local_gaussian") if errors else "unavailable",
-                        "uncertainty_interval": result.monte_carlo.get("percentiles", {}).get(
+                        "uncertainty_method": ("local_gaussian" if section.endswith("_parameter") else (result.metadata.get("continuum_sample_uncertainty_method", "local_gaussian") if section == "continuum_sample" else method)) if _float(errors.get(quantity)) is not None else "unavailable",
+                        "uncertainty_interval": ({} if section.endswith("_parameter") else result.monte_carlo.get("percentiles", {})).get(
                             f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
-                        "valid_uncertainty_trials": result.monte_carlo.get("valid_trial_counts", {}).get(
+                        "valid_uncertainty_trials": ({} if section.endswith("_parameter") else result.monte_carlo.get("valid_trial_counts", {})).get(
                             f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
                         "uncertainty_conditioning": "fixed_host" if section == "continuum_parameter" else "see_scope_covariance_block",
                         **((metadata_by_quantity or {}).get(str(quantity), {})),
