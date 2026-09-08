@@ -291,7 +291,7 @@ def test_lya_schema_v4_round_trip(tmp_path):
     )
     loaded = qsospec.load_model(store, "lya-object")
     loaded_fit = loaded.line_complexes["lya_nv"]
-    assert store.manifest["schema_version"] == "5"
+    assert store.manifest["schema_version"] == "6"
     assert loaded_fit.metadata["lya_coverage_status"] == "full"
     np.testing.assert_array_equal(
         loaded_fit.excluded_mask,
@@ -300,7 +300,7 @@ def test_lya_schema_v4_round_trip(tmp_path):
 
     store.manifest["schema_version"] = "4"
     store._write_manifest()
-    with pytest.raises(ValueError, match="requires schema 5"):
+    with pytest.raises(ValueError, match="requires schema 6"):
         qsospec.open_run(str(store.path))
 
 

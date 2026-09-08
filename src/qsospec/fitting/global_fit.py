@@ -41,7 +41,8 @@ from ..templates import (
     load_balmer_template,
     load_iron_template,
 )
-from ..templates.iron import evaluate_iron_basis, evaluate_iron_basis_with_derivative
+from ..templates.iron import (evaluate_iron_basis, evaluate_iron_basis_with_derivative,
+    evaluate_iron_kernel, resolve_iron_width, regional_weights, resolve_regional_intervals)
 from ..solvers.variable_projection import (
     VariableProjectionError,
     evaluate_profile_chi2,
@@ -103,8 +104,13 @@ def _covariance_from_jacobian(
     if jacobian is None or np.size(jacobian) == 0:
         return None, {name: np.nan for name in names}, warnings
     jac = np.asarray(jacobian, dtype=float)
-    info = jac.T @ jac
-    rank = int(np.linalg.matrix_rank(info))
+    scales = np.linalg.norm(jac, axis=0)
+    scales = np.where(scales > 0, scales, 1.)
+    normalized = jac / scales
+    info = normalized.T @ normalized
+    _, singular, vectors = np.linalg.svd(normalized, full_matrices=False)
+    keep = singular > np.finfo(float).eps*max(normalized.shape)*singular[0]
+    rank = int(np.count_nonzero(keep))
     if rank < info.shape[0]:
         warnings.append(
             FitWarning(
@@ -113,8 +119,11 @@ def _covariance_from_jacobian(
                 context={"rank": rank, "n_parameters": int(info.shape[0])},
             )
         )
-    covariance = np.linalg.pinv(info) * (float(reduced_chi2) if np.isfinite(reduced_chi2) else 1.0)
+    covariance = ((vectors[keep].T / singular[keep]**2) @ vectors[keep]) / np.outer(scales, scales) * (float(reduced_chi2) if np.isfinite(reduced_chi2) else 1.0)
     errors = np.sqrt(np.clip(np.diag(covariance), 0.0, np.inf))
+    if rank < info.shape[0]:
+        unidentified = np.sum(vectors[~keep]**2, axis=0) > 1.e-8
+        errors[unidentified] = np.nan
     return covariance, {name: float(errors[i]) for i, name in enumerate(names)}, warnings
 
 
@@ -196,8 +205,8 @@ def _iron_template_metadata(
         "reference": template.reference,
         "coverage": tuple(map(float, template.coverage)),
         "normalization": template.normalization,
-        "native_fwhm_kms": native_fwhm,
-        "target_fwhm_kms": target_fwhm_kms,
+        **resolve_iron_width(template, target_fwhm_kms),
+
         "convolution_fwhm_kms": convolution_fwhm,
         "source_sha256": sha256(values.view(np.uint8)).hexdigest(),
     }
@@ -227,6 +236,8 @@ class _ContinuumContext:
         self.uv_template = None
         self.opt_template = None
         self.full_template = None
+        self.middle_template = None
+        self.bridge_metadata = {"status": "disabled"}
         self.balmer_template = None
         self.polynomial_enabled = False
         self.polynomial_status = "disabled"
@@ -327,7 +338,7 @@ class _ContinuumContext:
             fwhm_bounds = iron_cfg.fwhm_bounds
             if template.native_fwhm_kms > 0:
                 lower, upper = fwhm_bounds
-                native_floor = float(template.native_fwhm_kms) + 1.0
+                native_floor = float(template.native_fwhm_kms)
                 lower = native_floor if lower is None else max(float(lower), native_floor)
                 if upper is not None and float(upper) <= lower:
                     raise ValueError(
@@ -340,6 +351,35 @@ class _ContinuumContext:
                 iron_cfg.fwhm_kms,
                 fwhm_bounds,
             )
+
+        bridge = cfg.regional_iron
+        compatible = (cfg.full_iron is None and
+            (cfg.uv_iron is not None or cfg.optical_iron is not None) and
+            (cfg.uv_iron is None or cfg.uv_iron.template == "vw01") and
+            (cfg.optical_iron is None or cfg.optical_iron.template == "park22"))
+        if bridge.enabled and compatible:
+            uv = _cached_iron_template("vw01", None, "area")
+            optical = _cached_iron_template("park22", None, "area")
+            maxima = [c.fwhm_bounds[1] if c is not None else bridge.fixed_kernel_fwhm_kms
+                      for c in (cfg.uv_iron, cfg.optical_iron)]
+            self.bridge_intervals = resolve_regional_intervals(uv, optical, *maxima,
+                bridge.uv_interval, bridge.optical_interval)
+            middle = _cached_iron_template("verner09", None, "area")
+            weights = regional_weights(self.wave, *self.bridge_intervals)[1]
+            basis = evaluate_iron_kernel(middle, self.wave, bridge.fixed_kernel_fwhm_kms, taper=False)[0]*weights
+            count = np.count_nonzero(self.base_fit_mask & (basis != 0))
+            self.bridge_metadata = {"status": "insufficient_coverage", "valid_basis_pixels": int(count),
+                                   "intervals": self.bridge_intervals}
+            if count >= cfg.min_component_pixels:
+                self.middle_template = middle
+                self.bridge_parent = "optical_iron" if self.opt_template is not None else "uv_iron" if self.uv_template is not None else None
+                # Fixed normalization on template coordinates at a reference kernel.
+                reference = evaluate_iron_kernel(middle, middle.wave_rest, 3000., taper=False)[0]
+                self.bridge_norm = float(np.trapezoid(reference*regional_weights(middle.wave_rest, *self.bridge_intervals)[1], middle.wave_rest))
+                self._add("middle_iron.amp", bridge.amp, (0., None))
+                self.bridge_metadata.update(status="enabled", parent=self.bridge_parent or "fixed",
+                    normalization=self.bridge_norm, reference_kernel_fwhm_kms=3000.,
+                    normalization_definition="weighted_integral_at_fixed_reference_kernel")
 
         polynomial = cfg.polynomial
         if polynomial.enabled:
@@ -490,6 +530,32 @@ class _ContinuumContext:
             red_slope=self._get(theta, "power_law.red_slope"),
         )
 
+    def _iron_basis(self, label, template, wave, kernel):
+        if self.middle_template is None:
+            return evaluate_iron_basis_with_derivative(template, wave, kernel)
+        raw = evaluate_iron_kernel(template, wave, kernel, taper=False)
+        weighted = regional_weights(wave, *self.bridge_intervals)
+        index = {"uv_iron": 0, "middle_iron": 1, "optical_iron": 2}[label]
+        # Keep the legacy outer taper exactly; the guarded inner handoff is
+        # wholly inside the template support and replaces its inner taper.
+        if label != "middle_iron":
+            legacy = evaluate_iron_basis_with_derivative(template, wave, kernel)
+            outer = np.asarray(wave) < self.bridge_intervals[0][0] if index == 0 else np.asarray(wave) > self.bridge_intervals[1][1]
+            raw = tuple(np.where(outer, old, new) for old, new in zip(legacy, raw))
+        scale = self.bridge_norm if label == "middle_iron" else 1.
+        return tuple(item*weighted[index]/scale for item in raw)
+
+    def _middle_kernel(self, values):
+        return values[self.bridge_parent+".fwhm_kms"] if self.bridge_parent else self.config.regional_iron.fixed_kernel_fwhm_kms
+
+    def prior_residuals(self, theta):
+        if self.config.iron_width_coupling != "soft" or self.uv_template is None or self.opt_template is None:
+            return np.empty(0)
+        u, o = (self._get(theta, label+".fwhm_kms") for label in ("uv_iron", "optical_iron"))
+        if u <= 0 or o <= 0:
+            raise ValueError("Log-kernel coupling requires strictly positive kernel bounds")
+        return np.array([(np.log10(u/o)-self.config.iron_width_prior_center_dex)/self.config.iron_width_prior_scatter_dex])
+
     def _polynomial_basis(self, wave: np.ndarray, order: int) -> np.ndarray:
         x = (np.asarray(wave, dtype=float) - self.polynomial_pivot) / self.polynomial_scale
         return x**int(order)
@@ -516,16 +582,20 @@ class _ContinuumContext:
             names.append("power_law.norm")
         if self.uv_template is not None:
             fwhm = self._get(self.initial, "uv_iron.fwhm_kms")
-            columns.append(evaluate_iron_basis(self.uv_template, wave, fwhm))
+            columns.append(self._iron_basis("uv_iron", self.uv_template, wave, fwhm)[0])
             names.append("uv_iron.amp")
         if self.opt_template is not None:
             fwhm = self._get(self.initial, "optical_iron.fwhm_kms")
-            columns.append(evaluate_iron_basis(self.opt_template, wave, fwhm))
+            columns.append(self._iron_basis("optical_iron", self.opt_template, wave, fwhm)[0])
             names.append("optical_iron.amp")
         if self.full_template is not None:
             fwhm = self._get(self.initial, "full_iron.fwhm_kms")
             columns.append(evaluate_iron_basis(self.full_template, wave, fwhm))
             names.append("full_iron.amp")
+        if self.middle_template is not None:
+            values = {name: self._get(self.initial, name) for name in self.names}
+            columns.append(self._iron_basis("middle_iron", self.middle_template, wave, self._middle_kernel(values))[0])
+            names.append("middle_iron.amp")
         if self.polynomial_enabled:
             for order in range(1, self.config.polynomial.degree + 1):
                 columns.append(self._polynomial_basis(wave, order))
@@ -657,11 +727,9 @@ class _ContinuumContext:
         if self.uv_template is not None:
             fwhm = nonlinear_values["uv_iron.fwhm_kms"]
             if need_derivatives:
-                basis, derivative = evaluate_iron_basis_with_derivative(
-                    self.uv_template, wave, fwhm
-                )
+                basis, derivative = self._iron_basis("uv_iron", self.uv_template, wave, fwhm)
             else:
-                basis = evaluate_iron_basis(self.uv_template, wave, fwhm)
+                basis = self._iron_basis("uv_iron", self.uv_template, wave, fwhm)[0]
                 derivative = None
             append_column(
                 basis,
@@ -670,11 +738,9 @@ class _ContinuumContext:
         if self.opt_template is not None:
             fwhm = nonlinear_values["optical_iron.fwhm_kms"]
             if need_derivatives:
-                basis, derivative = evaluate_iron_basis_with_derivative(
-                    self.opt_template, wave, fwhm
-                )
+                basis, derivative = self._iron_basis("optical_iron", self.opt_template, wave, fwhm)
             else:
-                basis = evaluate_iron_basis(self.opt_template, wave, fwhm)
+                basis = self._iron_basis("optical_iron", self.opt_template, wave, fwhm)[0]
                 derivative = None
             append_column(
                 basis,
@@ -695,6 +761,9 @@ class _ContinuumContext:
                 if derivative is not None
                 else None,
             )
+        if self.middle_template is not None:
+            basis, derivative = self._iron_basis("middle_iron", self.middle_template, wave, self._middle_kernel(nonlinear_values))
+            append_column(basis, {self.bridge_parent+".fwhm_kms": derivative} if self.bridge_parent else {})
         if self.polynomial_enabled:
             for order in range(1, self.config.polynomial.degree + 1):
                 append_column(self._polynomial_basis(wave, order))
@@ -773,13 +842,9 @@ class _ContinuumContext:
                 wave, theta
             )
         if self.uv_template is not None:
-            components["uv_iron"] = self._get(theta, "uv_iron.amp") * evaluate_iron_basis(
-                self.uv_template, wave, self._get(theta, "uv_iron.fwhm_kms")
-            )
+            components["uv_iron"] = self._get(theta, "uv_iron.amp") * self._iron_basis("uv_iron", self.uv_template, wave, self._get(theta, "uv_iron.fwhm_kms"))[0]
         if self.opt_template is not None:
-            components["optical_iron"] = self._get(theta, "optical_iron.amp") * evaluate_iron_basis(
-                self.opt_template, wave, self._get(theta, "optical_iron.fwhm_kms")
-            )
+            components["optical_iron"] = self._get(theta, "optical_iron.amp") * self._iron_basis("optical_iron", self.opt_template, wave, self._get(theta, "optical_iron.fwhm_kms"))[0]
         if self.full_template is not None:
             components["full_iron"] = self._get(
                 theta, "full_iron.amp"
@@ -788,6 +853,10 @@ class _ContinuumContext:
                 wave,
                 self._get(theta, "full_iron.fwhm_kms"),
             )
+        if self.middle_template is not None:
+            values = {name: self._get(theta, name) for name in self.names}
+            values.update(self.fixed_parameters)
+            components["middle_iron"] = self._get(theta, "middle_iron.amp")*self._iron_basis("middle_iron", self.middle_template, wave, self._middle_kernel(values))[0]
         if self.polynomial_enabled:
             components["polynomial"] = sum(
                 (
@@ -956,7 +1025,8 @@ def _solve_legacy_once(context, wave, flux, err, start, max_nfev):
         if isinstance(context, _ContinuumContext) and norm > 0:
             scales[context.index[name]] = 1.0 / norm
     result = least_squares(
-        lambda theta: (flux - context.model(theta * scales, wave)) / err,
+        lambda theta: np.concatenate(((flux - context.model(theta * scales, wave)) / err,
+            context.prior_residuals(theta * scales) if hasattr(context, "prior_residuals") else [])),
         start / scales,
         bounds=(context.lower / scales, context.upper / scales),
         jac="2-point",
@@ -970,7 +1040,7 @@ def _solve_legacy_once(context, wave, flux, err, start, max_nfev):
 
 def _solve_once_with_fallback(context, wave, flux, err, start, config):
     requested = config.optimizer_method
-    if requested == "legacy_joint":
+    if requested == "legacy_joint" or (isinstance(context, _ContinuumContext) and context.config.iron_width_coupling == "soft"):
         return (
             _solve_legacy_once(context, wave, flux, err, start, config.max_nfev),
             "legacy_joint",
@@ -1097,11 +1167,30 @@ def _fit_global_continuum_fixed(
     dof = max(int(wave_fit.size - result.x.size), 0)
     reduced = float(chi2 / dof) if dof else np.nan
     if compute_covariance:
-        covariance, errors, cov_warnings = _covariance_from_jacobian(result.jac, reduced, context.names)
+        prior = context.prior_residuals(result.x)
+        if prior.size:
+            scaled_jac = result.jac.copy()
+            scaled_jac[:wave_fit.size] /= np.sqrt(reduced) if np.isfinite(reduced) and reduced > 0 else 1.
+            covariance, errors, cov_warnings = _covariance_from_jacobian(scaled_jac, 1., context.names)
+        else:
+            covariance, errors, cov_warnings = _covariance_from_jacobian(result.jac, reduced, context.names)
     else:
         covariance = None
         errors = {name: np.nan for name in context.names}
         cov_warnings = []
+    width_diagnostics = {}
+    data_jac = np.asarray(result.jac[:wave_fit.size])
+    for index,name in enumerate(context.names):
+        if "iron.fwhm" not in name:
+            continue
+        other = np.delete(data_jac,index,axis=1)
+        column = data_jac[:,index]
+        projected = column-other@np.linalg.lstsq(other,column,rcond=None)[0]
+        information = float(projected@projected)
+        prior_info = float(np.sum(result.jac[wave_fit.size:,index]**2))
+        status = "boundary_limited" if getattr(result,"active_mask",np.zeros(len(context.names)))[index] else "predominantly_regularized" if prior_info>information else "data_constrained" if information>1.e-12 else "unidentified"
+        width_diagnostics[name] = {"status":status,"profile_data_information":information,
+            "prior_information":prior_info,"basis":"additional_kernel"}
     warnings = list(context.warnings) + cov_warnings + _active_bound_warnings(result, context.names)
     if fallback_reasons:
         warnings.append(
@@ -1114,9 +1203,32 @@ def _fit_global_continuum_fixed(
     if not result.success:
         warnings.append(FitWarning(code="fit_failed", message=str(result.message), severity="error"))
     components = context.components(result.x, context.wave)
+    from ..uncertainties import propagate
+    sample_errors = {}
+    for wavelength in (1350., 3000., 5100.):
+        if not np.any(spectrum.valid_mask & (np.abs(context.wave-wavelength) < 20.)):
+            continue
+        def sample_function(theta):
+            rendered = context.components(theta, np.array([wavelength]))
+            return [float(rendered.get("power_law", np.zeros(1))[0]),
+                    float(sum(rendered.values(), np.zeros(1))[0])]
+        _, sample_cov = propagate(sample_function, result.x, covariance)
+        for i, prefix in enumerate(("f_powerlaw", "fAGN")):
+            sample_errors[f"{prefix}_{int(wavelength)}"] = float(np.sqrt(sample_cov[i,i])) if sample_cov is not None and sample_cov[i,i] >= 0 else np.nan
+
     metadata = spectrum.metadata.to_dict()
     metadata.update(
         {
+            "iron_width_diagnostics": width_diagnostics,
+            "iron_width_prior": {"center_dex": cfg.iron_width_prior_center_dex, "scatter_dex": cfg.iron_width_prior_scatter_dex, "basis": "additional_kernel"},
+            "power_law_pivot": cfg.power_law.pivot,
+            "covariance_parameter_names": list(context.names),
+            "continuum_sample_errors": sample_errors,
+            "regional_iron": context.bridge_metadata,
+            "iron_width_coupling": cfg.iron_width_coupling,
+            "prior_penalty": float(np.sum(context.prior_residuals(result.x)**2)),
+            "total_objective": chi2 + float(np.sum(context.prior_residuals(result.x)**2)),
+            "covariance_noise_scaling": "data_residual_scaled_prior_absolute",
             "continuum_windows": list(cfg.continuum_windows),
             "mask_windows": list(cfg.mask_windows),
             "balmer_template": context.balmer_template.name if context.balmer_template is not None else None,
@@ -1170,6 +1282,8 @@ def _fit_global_continuum_fixed(
             "iron_mode": (
                 "single"
                 if context.full_template is not None
+                else "hybrid"
+                if context.middle_template is not None
                 else "split"
                 if context.uv_template is not None or context.opt_template is not None
                 else "disabled"
@@ -1190,6 +1304,21 @@ def _fit_global_continuum_fixed(
             },
         }
     )
+    for label in ("uv_iron", "optical_iron", "full_iron"):
+        iron_cfg = getattr(cfg,label)
+        if label in metadata["iron_templates"]:
+            metadata["iron_templates"][label]["requested_configuration"] = {
+                "width_mode": iron_cfg.width_mode, "legacy_fwhm_kms": iron_cfg.fwhm_kms,
+                "kernel_fwhm_kms": iron_cfg.kernel_fwhm_kms, "target_fwhm_kms": iron_cfg.target_fwhm_kms,
+                "bounds_in_legacy_coordinates": iron_cfg.fwhm_bounds}
+    if context.middle_template is not None:
+        values = dict(zip(context.names,result.x));values.update(context.fixed_parameters)
+        kernel = context._middle_kernel(values)
+        metadata["iron_templates"]["middle_iron"] = {
+            **_iron_template_metadata(context.middle_template,target_fwhm_kms=float(np.hypot(900.,kernel))),
+            **resolve_iron_width(context.middle_template,kernel,"kernel"),
+            "width_parent": context.bridge_parent or "fixed", "width_status": "shared_kernel"}
+        metadata["regional_iron"]["kernel_fwhm_kms"] = float(kernel)
     if "balmer_pseudocontinuum.amp" in context.index:
         balmer = cfg.balmer_pseudocontinuum
         balmer_amp = float(
@@ -1695,7 +1824,9 @@ def fit_global_continuum(
             indices = [list(baseline.param_values).index(name) for name in slopes]
             covariance[size:, size:] = baseline.covariance[np.ix_(indices, indices)]
         candidate.covariance = covariance
+        candidate.metadata["covariance_parameter_names"] = list(candidate.param_values)
     candidate.param_values.update(slopes)
+    candidate.metadata["covariance_parameter_names"] = list(candidate.param_values)
     candidate.param_errors.update({name: baseline.param_errors[name] for name in slopes})
     conditional_dof = candidate.dof
     candidate.dof = max(candidate.dof - len(slopes), 0)
@@ -3569,7 +3700,7 @@ def fit_global_lines(
             )
 
     hgamma = None
-    hgamma_sync_policy = balmer_config.sync_with_hgamma
+    hgamma_sync_policy = {"none": "never", "hard_legacy": "auto", "soft": "never"}.get(balmer_config.sync_with_hgamma, balmer_config.sync_with_hgamma)
     hgamma_sync_requested = (
         hgamma_sync_policy in ("auto", "require")
         and balmer_available
@@ -3822,6 +3953,18 @@ def fit_global_lines(
             "Required Hγ-to-Hδ Balmer flux synchronization was unavailable.",
         )
 
+    if balmer_config.sync_with_hgamma == "soft" and hgamma is not None:
+        continuum, hgamma = _joint_hgamma_refinement(spectrum, resolved_global_cfg, continuum, hgamma, uncertainty_cfg.covariance)
+        hgamma_sync_status = continuum.metadata.get("hgamma_joint_status", "unavailable")
+        hgamma_sync_requested = True
+        hgamma_sync_attempted = hgamma_sync_status in ("fit", "failed")
+        hgamma_sync_converged = hgamma_sync_status == "fit"
+        hgamma_sync_iterations = int(hgamma_sync_attempted)
+        if hgamma_sync_converged:
+            width_source = "joint_hgamma_continuum"
+            width_converged = False
+    if hbeta is not None and continuum is not continuum_initial:
+        hbeta = fit_hbeta_complex(spectrum, continuum, hbeta_cfg, compute_covariance=uncertainty_cfg.covariance)
     line_complexes: Dict[str, EmissionComplexResult] = {}
     if hbeta is not None:
         hbeta.metadata.update(
@@ -3948,6 +4091,7 @@ def fit_global_lines(
             resolved_global_cfg.balmer_width_sync_tolerance_kms
         ),
         "continuum_samples": samples,
+        "continuum_sample_errors": continuum.metadata.get("continuum_sample_errors", {}),
         "measurement_vocabulary_version": MEASUREMENT_VOCABULARY_VERSION,
         "continuum_sample_flux_density_unit": spectrum.flux_density_unit,
         "flux_frame": spectrum.flux_frame,
@@ -4091,8 +4235,14 @@ def fit_global_lines(
             int(uncertainty_cfg.monte_carlo_trials),
             uncertainty_cfg.random_seed,
             requested_recipes,
+            baseline=workflow,
+            pixel_covariance=uncertainty_cfg.pixel_covariance,
         )
+        from ..uncertainties import apply_bootstrap_errors
+        apply_bootstrap_errors(workflow)
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo"
+        workflow.metadata["continuum_sample_errors"] = {name: workflow.monte_carlo["errors"].get(name, np.nan)
+            for name in workflow.metadata.get("continuum_samples", {})}
     return workflow
 
 
@@ -4331,64 +4481,161 @@ def fit_global_hbeta(
     return result
 
 
-def _run_workflow_mc(
-    spectrum,
-    global_config,
-    hbeta_config,
-    mgii_config,
-    halpha_config,
-    lya_nv_config,
-    n_trials,
-    seed,
-    recipes,
-):
-    rng = np.random.default_rng(seed)
-    samples: Dict[str, List[float]] = {}
-    continuum_successes = 0
-    complex_successes: Dict[str, int] = {recipe.id: 0 for recipe in recipes}
-    for _ in range(n_trials):
-        noisy = Spectrum.from_arrays(
-            spectrum.wave_obs,
-            spectrum.flux + rng.normal(0.0, spectrum.err),
-            err=spectrum.err,
-            z=spectrum.z,
-            mask=spectrum.mask,
-            metadata=spectrum.metadata,
-        )
+def _run_workflow_mc(spectrum, global_config, hbeta_config, mgii_config, halpha_config,
+                     lya_nv_config, n_trials, seed, recipes, baseline=None, pixel_covariance=None):
+    from ..uncertainties import summarize_matched_draws, trial_seed, workflow_measurements, pixel_noise_factor, draw_pixel_noise
+    factor = pixel_noise_factor(spectrum.err,pixel_covariance)
+    if baseline is None:
+        baseline = fit_global_lines(spectrum, global_config, hbeta_config, mgii_config,
+            halpha_config, UncertaintyConfig(monte_carlo_trials=0), lya_nv_config=lya_nv_config, complexes=recipes)
+    center = baseline.continuum.model.copy()
+    for fit in baseline.line_complexes.values():
+        center += np.where(fit.fit_mask, fit.model, 0.)
+    draws, failures = [], []
+    counts = {recipe.id: 0 for recipe in recipes}
+    for trial_id in range(n_trials):
+        rng = np.random.default_rng(trial_seed(seed, spectrum.metadata.source, trial_id))
+        noisy = replace(spectrum, flux=center+draw_pixel_noise(rng,factor))
         try:
-            result = fit_global_lines(
-                noisy,
-                global_config,
-                hbeta_config,
-                mgii_config,
-                halpha_config,
-                UncertaintyConfig(covariance=True, monte_carlo_trials=0),
-                lya_nv_config=lya_nv_config,
-                complexes=recipes,
-            )
-            values = {}
-            if result.continuum_success:
-                continuum_successes += 1
-                values.update(result.continuum.param_values)
-            for recipe_key, complex_result in result.line_complexes.items():
-                recipe_id = complex_result.metadata.get("recipe_id", recipe_key)
-                if complex_result.success:
-                    if recipe_id in complex_successes:
-                        complex_successes[recipe_id] += 1
-                    values.update(complex_result.metrics)
-            for name, value in values.items():
-                if np.isfinite(value):
-                    samples.setdefault(name, []).append(float(value))
-        except Exception:
+            result = fit_global_lines(noisy, global_config, hbeta_config, mgii_config, halpha_config,
+                UncertaintyConfig(covariance=True, monte_carlo_trials=0), lya_nv_config=lya_nv_config, complexes=recipes)
+            if not result.continuum_success:
+                raise RuntimeError("continuum_not_converged")
+            draws.append({"trial_id": trial_id, "values": workflow_measurements(result),
+                "parameters": {key: fit.param_values for key,fit in result.line_complexes.items()}})
+            for key,fit in result.line_complexes.items():
+                counts[key] = counts.get(key,0)+int(fit.success)
+        except Exception as exc:
+            failures.append({"trial_id": trial_id, "reason": str(exc)})
+    summary = summarize_matched_draws(draws, failures, n_trials)
+    summary.update(continuum_success_count=len(draws), complex_success_counts=counts,
+        noise_model="supplied_pixel_covariance" if pixel_covariance is not None else "diagonal_pixel_errors")
+    return summary
+
+
+def _joint_hgamma_refinement(spectrum, config, continuum, hgamma, compute_covariance=True):
+    """Refine continuum and the blue complex on a union mask, once per pixel."""
+    from .complexes import GenericComplexContext
+    from ..templates.balmer import load_balmer_anchor_ratios
+    from ..uncertainties import propagate
+    recipe = complex_recipes.get("oii_nev_neiii_hgamma")
+    coverage = resolve_recipe_coverage(spectrum, recipe)
+    if "Hgamma_broad" not in coverage.active_component_ids:
+        continuum.metadata["hgamma_joint_status"] = "unavailable_coverage"
+        return continuum, hgamma
+    # Require both wings through the maximum configured Hgamma half width.
+    center = 4341.68
+    margin = center*2.*hgamma.param_values.get("hgamma_broad.fwhm_kms", 5000.)/(2.35482*C_KMS)
+    local = spectrum.valid_mask & (np.abs(spectrum.wave_rest-center) < margin)
+    if not np.any(local) or spectrum.wave_rest[local].min() > center-margin*.9 or spectrum.wave_rest[local].max() < center+margin*.9:
+        continuum.metadata["hgamma_joint_status"] = "unavailable_truncated"
+        return continuum, hgamma
+    ctx = _ContinuumContext(spectrum, config, initial_parameters=continuum.param_values)
+    if "balmer_pseudocontinuum.amp" not in ctx.index:
+        return continuum, hgamma
+    line = GenericComplexContext(replace(recipe, continuum_mode="fixed_global"), coverage.active_component_ids, 1.)
+    linked = line.index["Hgamma_broad.flux"]
+    retained = [i for i in range(len(line.names)) if i != linked]
+    n = len(ctx.names)
+    start = np.r_[ctx.initial, [hgamma.param_values.get(line.names[i], line.initial[i]) for i in retained], 0.]
+    lower = np.r_[ctx.lower, line.lower[retained], -3.]
+    upper = np.r_[ctx.upper, line.upper[retained], 3.]
+    ratio = load_balmer_anchor_ratios(log10_ne=config.balmer_pseudocontinuum.log10_ne).hgamma_rel_hbeta
+    scatter = config.balmer_pseudocontinuum.hgamma_ratio_scatter_dex
+    union = spectrum.valid_mask & (continuum.clip_mask | hgamma.fit_mask)
+    wave = spectrum.wave_rest[union]
+    def unpack(theta):
+        lt = line.initial.copy()
+        lt[retained] = theta[n:-1]
+        lt[linked] = ratio*theta[ctx.index["balmer_pseudocontinuum.amp"]]*10.**theta[-1]
+        return theta[:n], lt
+    def data(theta):
+        ct, lt = unpack(theta)
+        return (spectrum.flux[union]-ctx.model(ct, wave)-line.model(lt, wave))/spectrum.err[union]
+    def prior(theta):
+        return np.r_[ctx.prior_residuals(theta[:n]), theta[-1]/scatter]
+    fit = least_squares(lambda t: np.r_[data(t), prior(t)], np.clip(start, lower, upper), bounds=(lower, upper), x_scale="jac", max_nfev=config.max_nfev)
+    if not fit.success:
+        continuum.metadata["hgamma_joint_status"] = "failed"
+        return continuum, hgamma
+    names = ctx.names + ["hgamma_region:"+line.names[i] for i in retained] + ["balmer.delta_gamma_dex"]
+    joint_cov, _, warnings = _covariance_from_jacobian(fit.jac, 1., names) if compute_covariance else (None, {}, [])
+    ct, lt = unpack(fit.x)
+    components = ctx.components(ct, spectrum.wave_rest)
+    chi2 = float(np.sum(data(fit.x)**2))
+    from copy import deepcopy
+    meta = deepcopy(continuum.metadata)
+    meta.update(hgamma_joint_status="fit", hgamma_delta_dex=float(fit.x[-1]), hgamma_ratio_scatter_dex=scatter,
+        hgamma_ratio_tolerance_definition="model_ratio_tolerance", hgamma_joint_n_pixels=int(union.sum()),
+        hgamma_joint_data_chi2=chi2, hgamma_joint_prior_penalty=float(np.sum(prior(fit.x)**2)),
+        joint_covariance={"parameter_names": names, "parameter_values": fit.x.tolist(), "values": None if joint_cov is None else joint_cov.tolist(), "noise_scaling": "absolute", "adopted_hgamma_rel_hbeta": ratio},
+        covariance_noise_scaling="absolute_pixel_errors_and_priors")
+    meta["iron_width_diagnostics"] = {}
+    data_jac = fit.jac[:int(union.sum())]
+    for i,name in enumerate(ctx.names):
+        if "iron.fwhm" not in name:
             continue
-    percentiles = {}
-    for name, values in samples.items():
-        if values:
-            p16, p50, p84 = np.percentile(values, [16.0, 50.0, 84.0])
-            percentiles[name] = {"p16": float(p16), "p50": float(p50), "p84": float(p84)}
-    return {
-        "n_requested": int(n_trials),
-        "continuum_success_count": int(continuum_successes),
-        "complex_success_counts": complex_successes,
-        "percentiles": percentiles,
-    }
+        other = np.delete(data_jac,i,axis=1)
+        residual_column = data_jac[:,i]-other@np.linalg.lstsq(other,data_jac[:,i],rcond=None)[0]
+        information = float(residual_column@residual_column)
+        prior_information = float(np.sum(fit.jac[int(union.sum()):,i]**2))
+        meta["iron_width_diagnostics"][name] = {
+            "status": "boundary_limited" if fit.active_mask[i] else "predominantly_regularized" if prior_information>information else "data_constrained" if information>1.e-12 else "unidentified",
+            "profile_data_information":information,"prior_information":prior_information,
+            "state":"final_joint_hgamma_continuum"}
+    covariance = None if joint_cov is None else joint_cov[:n,:n]
+    meta["balmer_pseudocontinuum_fwhm_kms"] = float(ctx._balmer_fixed_fwhm() if ctx._balmer_fixed_fwhm() is not None else ctx._get(ct,"balmer_pseudocontinuum.fwhm_kms"))
+    meta["balmer_pseudocontinuum_velocity_kms"] = ctx._get(ct,"balmer_pseudocontinuum.velocity_kms")
+    for label,template in (("uv_iron",ctx.uv_template),("optical_iron",ctx.opt_template),("full_iron",ctx.full_template)):
+        if template is not None:
+            meta.setdefault("iron_templates",{})[label] = {
+                **meta.get("iron_templates",{}).get(label,{}),
+                **_iron_template_metadata(template,target_fwhm_kms=ctx._get(ct,label+".fwhm_kms"))}
+    if ctx.middle_template is not None:
+        kernel = ctx._middle_kernel(dict(zip(ctx.names,ct)))
+        meta["regional_iron"] = {**ctx.bridge_metadata,"kernel_fwhm_kms":float(kernel)}
+        meta.setdefault("iron_templates",{})["middle_iron"] = {
+            **meta.get("iron_templates",{}).get("middle_iron",{}),
+            **resolve_iron_width(ctx.middle_template,kernel,"kernel")}
+    meta["covariance_parameter_names"] = list(ctx.names)
+    meta["continuum_sample_errors"] = {}
+    for wavelength in (1350.,3000.,5100.):
+        if not np.any(spectrum.valid_mask & (np.abs(spectrum.wave_rest-wavelength)<20.)):
+            continue
+        def samples(t):
+            c = ctx.components(t, np.array([wavelength]))
+            return [c.get("power_law", np.zeros(1))[0], sum(c.values(),np.zeros(1))[0]]
+        _, cov = propagate(samples, ct, covariance)
+        for i,prefix in enumerate(("f_powerlaw","fAGN")):
+            meta["continuum_sample_errors"][f"{prefix}_{int(wavelength)}"] = float(np.sqrt(cov[i,i])) if cov is not None and cov[i,i]>=0 else np.nan
+    edge_components = ctx.components(ct,np.array([config.balmer_pseudocontinuum.edge]))
+    meta["balmer_pseudocontinuum_edge_flux_density_input"] = float(sum(value[0] for name,value in edge_components.items() if name.startswith("balmer_")))
+    meta["balmer_pseudocontinuum_implied_hbeta_flux_input"] = float(ct[ctx.index["balmer_pseudocontinuum.amp"]])
+    meta["balmer_pseudocontinuum_implied_hbeta_flux_cgs"] = float(ct[ctx.index["balmer_pseudocontinuum.amp"]])*(spectrum.flux_scale if spectrum.flux_scale is not None else np.nan)
+    continuum = replace(continuum, param_values=dict(zip(ctx.names, map(float, ct))),
+        param_errors={name: float(np.sqrt(covariance[i,i])) if covariance is not None else np.nan for i,name in enumerate(ctx.names)},
+        covariance=covariance, model=sum(components.values(),np.zeros_like(spectrum.flux)), component_models=components,
+        fit_mask=union, clip_mask=union, metadata=meta, warnings=continuum.warnings+warnings, optimizer_result=fit)
+    _, line_cov = propagate(lambda t: unpack(t)[1], fit.x, joint_cov)
+    lc = line.components(lt, spectrum.wave_rest)
+    hgamma = replace(hgamma, param_values=dict(zip(line.names,map(float,lt))), covariance=line_cov,
+        param_errors={name: float(np.sqrt(line_cov[i,i])) if line_cov is not None else np.nan for i,name in enumerate(line.names)},
+        model=sum(lc.values(),np.zeros_like(spectrum.flux)), component_models=lc,
+        flux_continuum_subtracted=spectrum.flux-continuum.model, metrics={}, metric_errors={},
+        metadata={**hgamma.metadata, "joint_state": "hgamma_continuum", "metric_status": "recompute_from_selected_profile"})
+    from .complexes import generic_complex_metrics
+    def metrics(theta):
+        ct, lt = unpack(theta)
+        current = replace(continuum, model=ctx.model(ct,spectrum.wave_rest))
+        return generic_complex_metrics(line,lt,current,spectrum)
+    hgamma.metrics = metrics(fit.x)
+    hgamma.metric_errors = _metric_errors(fit.x,joint_cov,metrics)
+    hgamma.metadata["metric_status"] = "joint_continuum_propagation"
+    line_residual = (spectrum.flux-continuum.model-hgamma.model)[hgamma.fit_mask]/spectrum.err[hgamma.fit_mask]
+    hgamma.chi2 = float(np.sum(line_residual**2))
+    hgamma.reduced_chi2 = hgamma.chi2/hgamma.dof if hgamma.dof else np.nan
+    hgamma.bic = np.nan
+    continuum.chi2 = chi2
+    continuum.dof = int(union.sum())-len(fit.x)
+    continuum.reduced_chi2 = chi2/continuum.dof if continuum.dof>0 else np.nan
+    return continuum, hgamma

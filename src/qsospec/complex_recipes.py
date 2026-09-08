@@ -285,6 +285,7 @@ _RECIPES = (
             _component("OII3727", ("oii_3727",), "narrow", kinematic_group="blue_narrow"),
             _component("OII3730", ("oii_3730",), "narrow", kinematic_group="blue_narrow"),
             _component("NeIII3870", ("neiii_3870",), "narrow", kinematic_group="blue_narrow"),
+            _component("OIII4364", ("oiii_4364",), "narrow", kinematic_group="blue_narrow"),
             _component("Hgamma_narrow", ("hgamma",), "narrow", kinematic_group="blue_narrow"),
             _component("Hgamma_broad", ("hgamma",), "broad", required=False,
                        velocity_bounds_kms=(-2000.0, 2000.0),

@@ -207,3 +207,25 @@ def test_batch_uses_shared_bounded_width_update_and_final_components(monkeypatch
         "balmer_high_order", "agn_total", "physical_component_total",
         "ppxf_bestfit", "closure_residual", "host_subtracted_flux",
     }
+
+
+def test_host_resampling_retains_matched_host_agn_variation(monkeypatch):
+    wave=np.linspace(2900.,5200.,120)
+    data=SpectrumData(wave_obs=wave,flux=np.full_like(wave,3.),error=np.full_like(wave,.1),redshift=0.,object_id='host-trials')
+    calls=[]
+    def host_trial(noisy,**kwargs):
+        calls.append(noisy.flux.copy())
+        host=np.full_like(wave,float(np.mean(noisy.flux[:20]))/3.)
+        spectrum=qsospec.Spectrum.from_arrays(wave,noisy.flux-host,err=noisy.error,wave_frame='rest',flux_unit='relative')
+        return None,spectrum,None,None,host,None,None,None,None
+    monkeypatch.setattr(host_workflow,'_host_subtracted_spectrum',host_trial)
+    config=qsospec.GlobalContinuumConfig(uv_iron=None,optical_iron=None,
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+        power_law=qsospec.PowerLawConfig(mode='single'),clip_passes=0,blue_absorption_clip_enabled=False)
+    result=host_workflow._run_host_refit_mc(data,n_trials=4,seed=4,redshift=0.,template_root='',template_file='',host_fit_range=(2900.,5200.),host_config=None,source='test',global_config=config,hbeta_config=None,mgii_config=None,halpha_config=None,complexes=[])
+    assert len(calls)==4
+    assert result['host_refitted']
+    assert result['errors']['fHost_3000']>0
+    assert result['errors']['fracHost_3000']>0
+    assert [row['trial_id'] for row in result['draws']]==list(range(4))
+    assert result['measurement_covariance'] is not None

@@ -1129,6 +1129,8 @@ def run_ppxf_host_fit(
             "agn_powerlaw": "powerlaw",
             "agn_feii_optical": "feii_optical",
             "agn_feii_uv": "feii_uv",
+            "agn_feii_middle": "middle_iron",
+            "agn_feii_full": "feii_full",
             "agn_balmer_continuum": "balmer_continuum",
             "agn_balmer_high_order": "balmer_high_order",
         }
@@ -1234,6 +1236,8 @@ def run_ppxf_host_fit(
                     "powerlaw",
                     "feii_optical",
                     "feii_uv",
+                    "middle_iron",
+                    "feii_full",
                     "balmer_continuum",
                     "balmer_high_order",
                 }

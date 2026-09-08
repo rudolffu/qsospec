@@ -48,7 +48,15 @@ def _host_decomp_decision(requested: bool, redshift: Optional[float]) -> Tuple[b
 def _host_config_with_global_iron(host_config: Any, global_config: Optional[GlobalContinuumConfig]):
     """Propagate an exclusive bundled iron template into the AGN host basis."""
 
-    if global_config is None or global_config.full_iron is None:
+    if global_config is None:
+        global_config = GlobalContinuumConfig()
+    if global_config.full_iron is None:
+        pseudo = host_config.agn_pseudocontinuum
+        uv, optical = global_config.uv_iron, global_config.optical_iron
+        if pseudo.inherit_global_full_iron and pseudo.full_feii_template is None and uv is not None and optical is not None and uv.template == "vw01" and optical.template == "park22":
+            return replace(host_config, agn_pseudocontinuum=replace(pseudo,
+                uv_feii_template="vw01", optical_feii_template="park22",
+                regional_iron_enabled=global_config.regional_iron.enabled))
         return host_config
     iron = global_config.full_iron
     pseudo = host_config.agn_pseudocontinuum
@@ -725,16 +733,20 @@ def _run_host_refit_mc(
     halpha_config: Optional[HalphaComplexConfig],
     lya_nv_config: Optional[LyaNVComplexConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
+    pixel_covariance=None,
 ) -> Dict[str, Any]:
-    rng = np.random.default_rng(seed)
+    from ..uncertainties import summarize_matched_draws, trial_seed, workflow_measurements, pixel_noise_factor, draw_pixel_noise
+    draws, failures = [], []
     samples: Dict[str, list] = {}
     continuum_successes = 0
     complex_successes: Dict[str, int] = {}
     error = np.asarray(spectrum_data.uncertainty(), dtype=float)
-    for _ in range(int(n_trials)):
+    factor = pixel_noise_factor(error,pixel_covariance)
+    for trial_id in range(int(n_trials)):
+        rng = np.random.default_rng(trial_seed(seed, source, trial_id))
         noisy_data = replace(
             spectrum_data,
-            flux=np.asarray(spectrum_data.flux, dtype=float) + rng.normal(0.0, error),
+            flux=np.asarray(spectrum_data.flux, dtype=float) + draw_pixel_noise(rng,factor),
         )
         try:
             _, fit_spectrum, _, _, host_on_grid, _, _, _, _ = _host_subtracted_spectrum(
@@ -758,7 +770,7 @@ def _run_host_refit_mc(
                 host_model_on_grid=host_on_grid,
                 complexes=complexes,
             )
-            values = {}
+            values = workflow_measurements(trial)
             if trial.continuum_success:
                 continuum_successes += 1
                 values.update(trial.continuum.param_values)
@@ -766,14 +778,16 @@ def _run_host_refit_mc(
                 if complex_result.success:
                     complex_successes[recipe_id] = complex_successes.get(recipe_id, 0) + 1
                     values.update(complex_result.metrics)
+            draws.append({"trial_id": trial_id, "values": values, "parameters": {key: fit.param_values for key,fit in trial.line_complexes.items()}})
             for name, value in values.items():
                 if np.isfinite(value):
                     samples.setdefault(name, []).append(float(value))
-        except Exception:
+        except Exception as exc:
+            failures.append({"trial_id": trial_id, "reason": str(exc)})
             continue
-    return _summarize_mc_results(
-        samples, n_trials, continuum_successes, complex_successes
-    )
+    summary = summarize_matched_draws(draws, failures, n_trials)
+    summary.update(continuum_success_count=continuum_successes, complex_success_counts=complex_successes, method="observed_spectrum_perturbation_bootstrap", host_refitted=True)
+    return summary
 
 
 def _run_global_fit_with_optional_host(
@@ -1330,6 +1344,7 @@ def _run_global_fit_with_optional_host(
     if host_decomp_enabled and uncertainty.monte_carlo_trials > 0 and uncertainty.refit_host_in_mc:
         workflow.monte_carlo = _run_host_refit_mc(
             spectrum_data,
+            pixel_covariance=uncertainty.pixel_covariance,
             n_trials=uncertainty.monte_carlo_trials,
             seed=uncertainty.random_seed,
             redshift=spectrum_data.redshift,
@@ -1345,7 +1360,11 @@ def _run_global_fit_with_optional_host(
             lya_nv_config=lya_nv_config,
             complexes=complexes,
         )
+        from ..uncertainties import apply_bootstrap_errors
+        apply_bootstrap_errors(workflow)
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo_host_refit"
+        workflow.metadata["continuum_sample_errors"] = {name: workflow.monte_carlo["errors"].get(name, np.nan)
+            for name in workflow.metadata.get("continuum_samples", {})}
     return workflow
 
 

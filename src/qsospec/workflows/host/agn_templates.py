@@ -23,6 +23,7 @@ from ...templates import (
     load_iron_template,
 )
 from .config import HostAgnPseudoContinuumConfig
+from ...templates.iron import evaluate_iron_kernel, regional_weights, resolve_regional_intervals
 
 
 @lru_cache(maxsize=16)
@@ -235,6 +236,13 @@ def build_host_agn_template_bundle(
     interval = _normalization_interval(wave, valid)
     wave_size, wave_bytes = _wave_cache_payload(wave)
 
+    hybrid = cfg.regional_iron_enabled and cfg.full_feii_template is None and cfg.uv_feii_template == "vw01" and cfg.optical_feii_template == "park22"
+    intervals = None
+    if hybrid:
+        intervals = resolve_regional_intervals(_cached_builtin_iron_template("vw01"),
+            _cached_builtin_iron_template("park22"), 10000., 10000.)
+        hybrid = bool(np.any(valid & (regional_weights(wave,*intervals)[1] > 0)))
+
     def append_iron(
         template_name: str,
         *,
@@ -251,12 +259,18 @@ def build_host_agn_template_bundle(
         )
         if not np.any(support):
             return
-        raw = _cached_iron_basis(
-            template_name,
-            float(selected_fwhm_kms),
-            wave_size,
-            wave_bytes,
-        )
+        raw = (evaluate_iron_kernel(template,wave,selected_fwhm_kms,taper=False)[0]
+            if hybrid and template_name == "verner09" else _cached_iron_basis(
+                template_name,float(selected_fwhm_kms),wave_size,wave_bytes))
+        if hybrid:
+            index = {"vw01":0,"verner09":1,"park22":2}[template_name]
+            weights = regional_weights(wave,*intervals)[index]
+            untapered = evaluate_iron_kernel(template,wave,selected_fwhm_kms,taper=False)[0]
+            outer = wave < intervals[0][0] if index == 0 else wave > intervals[1][1] if index == 2 else np.zeros_like(wave,dtype=bool)
+            raw = np.where(outer,raw,untapered)*weights
+            support &= weights > 0
+            if not np.any(support):
+                return
         values, normalization = _normalize(raw, support)
         normalization_interval = _normalization_interval(wave, support)
         native_fwhm = float(template.native_fwhm_kms)
@@ -277,9 +291,10 @@ def build_host_agn_template_bundle(
                 metadata={
                     "physical_broadening_applied_once": True,
                     "native_resolution_status": (
-                        "known" if native_fwhm > 0 else "unknown_assumed_negligible"
+                        "known" if native_fwhm > 0 else "mixed_empirical"
                     ),
-                    "native_fwhm_kms": native_fwhm,
+                    "native_fwhm_kms": native_fwhm if native_fwhm>0 else None,
+                    "kernel_fwhm_kms": float(selected_fwhm_kms) if hybrid or native_fwhm == 0 else float(np.sqrt(selected_fwhm_kms**2-native_fwhm**2)),
                     "source_sha256": _template_hash(
                         np.column_stack([template.wave_rest, template.flux])
                     ),
@@ -315,6 +330,10 @@ def build_host_agn_template_bundle(
                 linear_group="feii_uv",
                 fallback_reference="Vestergaard & Wilkes 2001",
             )
+
+    if hybrid:
+        append_iron("verner09", name="middle_iron", category="agn_feii_middle",
+                    linear_group="middle_iron", fallback_reference="Verner et al. 2009")
 
     if cfg.balmer_enabled:
         balmer = load_balmer_template(
@@ -451,7 +470,9 @@ def build_host_agn_template_bundle(
         "powerlaw_grid_replication_status": "exact_slopes",
         "powerlaw_slope_convention": "F_lambda",
         "broadening_grid_source": "Aydar et al. 2026 Table A.1",
-        "iron_mode": "single" if cfg.full_feii_template is not None else "split",
+        "iron_mode": "single" if cfg.full_feii_template is not None else "hybrid" if hybrid else "split",
+        "regional_iron_intervals": intervals if hybrid else None,
+        "regional_iron_width_approximation": "coarse_shared_kernel" if hybrid else None,
         "iron_templates": [
             {
                 "name": item.name,

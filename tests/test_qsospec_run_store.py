@@ -239,6 +239,7 @@ def test_balmer_hgamma_sync_metadata_archive_round_trip(tmp_path):
                 amplitude=10.0,
                 fwhm_kms=3400.0,
                 sync_with_hbeta="never",
+                sync_with_hgamma="hard_legacy",
             ),
             continuum_windows=((3300.0, 4260.0),),
             mask_windows=(),
@@ -390,14 +391,14 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     assert qsospec.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
-    assert store.manifest["schema_version"] == "5"
+    assert store.manifest["schema_version"] == "6"
 
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["schema_version"] = "4"
     manifest_path.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="requires schema 5"):
+    with pytest.raises(ValueError, match="requires schema 6"):
         qsospec.open_run(str(run_path))
 
 
@@ -744,3 +745,22 @@ def test_batch_records_storage_timings_and_rejects_noop_compaction(tmp_path):
             galactic_extinction_config=_extinction_config(),
             global_config=_continuum_config(), complexes=[],
         )
+
+
+def test_covariance_order_and_matched_draw_round_trip(tmp_path):
+    data=_spectrum_data('covariance-roundtrip')
+    data.wave_obs=np.linspace(2900.,5300.,len(data.flux))
+    result=qsospec.fit_object_to_store(data,str(tmp_path/'run'),
+        galactic_extinction_config=_extinction_config(),global_config=_continuum_config(),
+        uncertainty_config=qsospec.UncertaintyConfig(monte_carlo_trials=3),complexes=[],write_qa=False)
+    loaded=qsospec.load_model(str(tmp_path/'run'),'covariance-roundtrip')
+    assert list(loaded.continuum.param_values)==list(result.continuum.param_values)
+    np.testing.assert_allclose(loaded.continuum.covariance,result.continuum.covariance)
+    assert loaded.monte_carlo['covariance_trial_ids']==result.monte_carlo['covariance_trial_ids']
+    rows=qsospec.open_run(str(tmp_path/'run')).read_table('measurements').to_pandas()
+    samples=rows[rows.section=='continuum_sample']
+    assert samples.error.notna().any()
+    report=tmp_path/'recovery.json'
+    qsospec.recover_uncertainties(loaded,report)
+    with pytest.raises(FileExistsError):
+        qsospec.recover_uncertainties(loaded,report)

@@ -262,8 +262,9 @@ def test_verner09_target_fwhm_derivative_matches_finite_difference():
         rtol=3e-3,
         atol=2e-9,
     )
-    with pytest.raises(IronTemplateError, match="native FWHM"):
-        evaluate_iron_basis(template, wave, 900.0)
+    assert np.all(np.isfinite(evaluate_iron_basis(template, wave, 900.0)))
+    with pytest.raises(IronTemplateError):
+        evaluate_iron_basis(template, wave, 899.0)
 
 
 def test_single_verner09_global_fit_uses_one_iron_component():
@@ -323,3 +324,75 @@ def test_single_verner09_string_preset_uses_safe_width_bound():
     assert config.optical_iron is None
     assert config.full_iron.template == "verner09"
     assert config.full_iron.fwhm_bounds[0] > 900.0
+
+
+def test_regional_partition_and_shared_kernel_jacobian():
+    from qsospec.templates.iron import regional_weights, resolve_regional_intervals
+    from qsospec.fitting.global_fit import _ContinuumContext
+    uv, optical = (load_iron_template(name) for name in ('vw01','park22'))
+    intervals = resolve_regional_intervals(uv,optical,10000.,10000.)
+    wave = np.linspace(2000.,5500.,1500)
+    weights = np.array(regional_weights(wave,*intervals))
+    assert np.all((weights>=0)&(weights<=1))
+    np.testing.assert_allclose(weights.sum(axis=0),1.,atol=1e-15)
+    spectrum = qsospec.Spectrum.from_arrays(wave,np.ones_like(wave),err=np.ones_like(wave),wave_frame='rest',flux_unit='relative')
+    config = qsospec.GlobalContinuumConfig(power_law=qsospec.PowerLawConfig(mode='single'),continuum_windows=((2000.,5500.),),balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False))
+    ctx = _ContinuumContext(spectrum,config)
+    assert 'middle_iron.amp' in ctx.names
+    assert not any(name.startswith('middle_iron.') and not name.endswith('.amp') for name in ctx.names)
+    assert ctx.bridge_parent == 'optical_iron'
+    nonlinear = np.array([ctx.initial[ctx.index[name]] for name in ctx.nonlinear_names])
+    design, derivatives = ctx.separable_design(nonlinear,wave,True)
+    index = ctx.nonlinear_names.index('optical_iron.fwhm_kms')
+    plus,minus=nonlinear.copy(),nonlinear.copy();plus[index]+=1.;minus[index]-=1.
+    difference=(ctx.separable_design(plus,wave,False)[0]-ctx.separable_design(minus,wave,False)[0])/2
+    np.testing.assert_allclose(derivatives[index],difference,rtol=0.005,atol=2e-9)
+    middle = design[:,ctx.linear_names.index('middle_iron.amp')]
+    assert np.any(middle[(wave>3500)&(wave<4000)]>0)
+
+
+def test_explicit_native_width_status_and_zero_kernel():
+    from qsospec.templates.iron import resolve_iron_width, evaluate_iron_kernel
+    verner=load_iron_template('verner09');park=load_iron_template('park22')
+    assert resolve_iron_width(park,3000.)['native_fwhm_kms'] is None
+    assert resolve_iron_width(park,3000.)['target_fwhm_kms'] is None
+    with pytest.raises(ValueError):
+        resolve_iron_width(park,3000.,'target')
+    assert resolve_iron_width(verner,900.,'target')['kernel_fwhm_kms']==0.
+    basis, derivative=evaluate_iron_kernel(verner,np.linspace(3300.,4500.,100),0.)
+    assert np.all(np.isfinite(basis))
+    np.testing.assert_array_equal(derivative,0.)
+
+
+def test_soft_iron_prior_accounting_and_positive_domain():
+    wave=np.linspace(2500.,5500.,350)
+    spectrum=qsospec.Spectrum.from_arrays(wave,2.*(wave/3000.)**-1.,err=np.full_like(wave,.1),wave_frame='rest',flux_unit='relative')
+    config=qsospec.GlobalContinuumConfig(iron_width_coupling='soft',clip_passes=0,blue_absorption_clip_enabled=False,
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False))
+    fit=qsospec.fit_global_continuum(spectrum,config)
+    assert fit.metadata['total_objective']==pytest.approx(fit.chi2+fit.metadata['prior_penalty'])
+    assert fit.dof==int(fit.clip_mask.sum())-len(fit.param_values)
+    assert fit.metadata['iron_width_prior']['basis']=='additional_kernel'
+    with pytest.raises(ValueError,match='positive lower'):
+        qsospec.GlobalContinuumConfig(iron_width_coupling='soft',uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_bounds=(0.,10000.)))
+
+
+def test_soft_width_prior_yields_to_strong_spectral_information():
+    from dataclasses import replace
+    from qsospec.fitting.global_fit import _ContinuumContext
+    wave=np.linspace(2500.,5500.,650)
+    spectrum=qsospec.Spectrum.from_arrays(wave,np.ones_like(wave),err=np.full_like(wave,.002),wave_frame='rest',flux_unit='relative')
+    config=qsospec.GlobalContinuumConfig(power_law=qsospec.PowerLawConfig(norm=2.,slope=-1.,mode='single'),
+        uv_iron=qsospec.IronTemplateConfig.vw01(amp=400.,fwhm_kms=1800.),
+        optical_iron=qsospec.IronTemplateConfig.park22(amp=400.,fwhm_kms=6000.),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+        clip_passes=0,blue_absorption_clip_enabled=False)
+    context=_ContinuumContext(spectrum,config)
+    truth=context.initial.copy()
+    for key,value in {'power_law.norm':2.,'power_law.slope':-1.,'uv_iron.amp':400.,'optical_iron.amp':400.,'middle_iron.amp':40.}.items():
+        truth[context.index[key]]=value
+    spectrum=replace(spectrum,flux=context.model(truth,wave))
+    result=qsospec.fit_global_continuum(spectrum,replace(config,iron_width_coupling='soft'))
+    assert result.success
+    assert result.param_values['uv_iron.fwhm_kms']/result.param_values['optical_iron.fwhm_kms']==pytest.approx(.3,rel=.03)
+    assert result.metadata['prior_penalty']>1.

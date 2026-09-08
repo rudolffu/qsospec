@@ -93,6 +93,8 @@ def plot_ppxf_host_fit(
         "powerlaw": ("tab:red", "--", "power law"),
         "feii_optical": ("tab:purple", ":", "optical Fe II"),
         "feii_uv": ("mediumpurple", ":", "UV Fe II"),
+        "middle_iron": ("purple", "--", "regional Fe II"),
+        "feii_full": ("purple", ":", "full Fe II"),
         "balmer_continuum": ("goldenrod", "-.", "Balmer continuum"),
         "balmer_high_order": ("darkgoldenrod", ":", "high-order Balmer"),
     }

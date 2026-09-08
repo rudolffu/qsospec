@@ -44,7 +44,9 @@ def test_local_ppxf_template_fit_smoke():
     assert sed.flags["template_covers_1um"]
 
 
-def test_local_ppxf_agn_pseudocontinuum_smoke():
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_local_ppxf_agn_pseudocontinuum_smoke(hybrid):
+    from qsospec.workflows.host.config import HostAgnPseudoContinuumConfig
     if importlib.util.find_spec("ppxf") is None:
         pytest.skip("pPXF is not installed")
     template_path = Path.home() / "tools/ppxf_data/spectra_emiles_9.0.npz"
@@ -68,6 +70,7 @@ def test_local_ppxf_agn_pseudocontinuum_smoke():
         templates,
         strategy="agn_pseudocontinuum_masked",
         selected_pseudocontinuum_fwhm_kms=4000.0,
+        agn_pseudocontinuum_config=HostAgnPseudoContinuumConfig(uv_feii_template="vw01", optical_feii_template="park22") if hybrid else None,
         residual_clip_iterations=0,
         quiet=True,
     )
@@ -75,6 +78,8 @@ def test_local_ppxf_agn_pseudocontinuum_smoke():
     assert fit.status == "success"
     assert fit.strategy_used == "agn_pseudocontinuum_masked"
     assert fit.closure_metrics["closure_status"] == "numerical"
+    if hybrid:
+        assert "middle_iron" in fit.component_models
     assert "feii_optical" in fit.component_models
     assert "balmer_continuum" in fit.component_models
     assert "balmer_high_order" in fit.component_models

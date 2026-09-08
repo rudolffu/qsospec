@@ -884,100 +884,7 @@ def fit_generic_complex(
         )
 
     def metrics(theta):
-        values: Dict[str, float] = {}
-        grouped: Dict[
-            Tuple[str, str],
-            List[Tuple[float, float, float, str]],
-        ] = {}
-        for (
-            instance_id,
-            component,
-            line_ids,
-            velocity_group,
-            width_group,
-        ) in context.instances:
-            flux_name = (
-                f"{component.fixed_ratio_to}.flux"
-                if component.fixed_ratio_to is not None
-                else f"{instance_id}.flux"
-            )
-            ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
-            flux = context._value(theta, flux_name) / ratio
-            velocity = context._value(
-                theta, f"{velocity_group}.velocity_kms"
-            )
-            width = context._value(theta, f"{width_group}.fwhm_kms")
-            for feature in line_ids:
-                grouped.setdefault((feature, component.role), []).append(
-                    (flux, velocity, width, component.profile)
-                )
-
-        for (feature, role), entries in grouped.items():
-            definition = lines.get(feature)
-            reference_wave = definition.vacuum_wavelength
-            maximum_width = max(entry[2] for entry in entries)
-            half_span = max(
-                50.0,
-                5.0 * maximum_width * reference_wave / C_KMS,
-            )
-            grid = np.linspace(
-                reference_wave - half_span,
-                reference_wave + half_span,
-                2401,
-            )
-            profile = np.zeros_like(grid)
-            for flux, velocity, width, profile_name in entries:
-                basis, _, _ = _profile(
-                    grid,
-                    reference_wave,
-                    velocity,
-                    width,
-                    profile_name,
-                )
-                profile += flux * basis
-            integrated_flux = float(np.trapezoid(profile, grid))
-            centroid = (
-                float(np.trapezoid(grid * profile, grid) / integrated_flux)
-                if integrated_flux > 0
-                else np.nan
-            )
-            variance = (
-                float(
-                    np.trapezoid(
-                        (grid - centroid) ** 2 * profile,
-                        grid,
-                    )
-                    / integrated_flux
-                )
-                if integrated_flux > 0
-                else np.nan
-            )
-            sigma_kms = (
-                np.sqrt(max(variance, 0.0)) / reference_wave * C_KMS
-                if np.isfinite(variance)
-                else np.nan
-            )
-            fwhm_kms = _numerical_profile_fwhm(
-                grid, profile, reference_wave
-            )
-            continuum_at_line = float(
-                np.interp(centroid, continuum.wave_rest, continuum.model)
-            )
-            prefix = f"{feature}_{role}"
-            values[f"{prefix}_flux_input"] = integrated_flux
-            values[f"{prefix}_flux_cgs"] = (
-                integrated_flux
-                * spectrum.flux_density_scale_to_cgs
-                if spectrum.flux_density_scale_to_cgs is not None else np.nan
-            )
-            values[f"{prefix}_fwhm_kms"] = fwhm_kms
-            values[f"{prefix}_sigma_kms"] = float(sigma_kms)
-            values[f"{prefix}_centroid"] = centroid
-            values[f"{prefix}_ew_rest"] = (
-                integrated_flux / continuum_at_line
-                if continuum_at_line > 0 else np.nan
-            )
-        return values
+        return generic_complex_metrics(context, theta, continuum, spectrum)
 
     metric_values = metrics(result.x)
     metric_errors = _metric_errors(result.x, covariance, metrics)
@@ -1248,3 +1155,101 @@ def fit_lya_nv_complex(
         }
     )
     return result
+
+
+def generic_complex_metrics(context, theta, continuum, spectrum):
+    """Evaluate native generic metrics on a supplied final model state."""
+    values: Dict[str, float] = {}
+    grouped: Dict[
+        Tuple[str, str],
+        List[Tuple[float, float, float, str]],
+    ] = {}
+    for (
+        instance_id,
+        component,
+        line_ids,
+        velocity_group,
+        width_group,
+    ) in context.instances:
+        flux_name = (
+            f"{component.fixed_ratio_to}.flux"
+            if component.fixed_ratio_to is not None
+            else f"{instance_id}.flux"
+        )
+        ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
+        flux = context._value(theta, flux_name) / ratio
+        velocity = context._value(
+            theta, f"{velocity_group}.velocity_kms"
+        )
+        width = context._value(theta, f"{width_group}.fwhm_kms")
+        for feature in line_ids:
+            grouped.setdefault((feature, component.role), []).append(
+                (flux, velocity, width, component.profile)
+            )
+
+    for (feature, role), entries in grouped.items():
+        definition = lines.get(feature)
+        reference_wave = definition.vacuum_wavelength
+        maximum_width = max(entry[2] for entry in entries)
+        half_span = max(
+            50.0,
+            5.0 * maximum_width * reference_wave / C_KMS,
+        )
+        grid = np.linspace(
+            reference_wave - half_span,
+            reference_wave + half_span,
+            2401,
+        )
+        profile = np.zeros_like(grid)
+        for flux, velocity, width, profile_name in entries:
+            basis, _, _ = _profile(
+                grid,
+                reference_wave,
+                velocity,
+                width,
+                profile_name,
+            )
+            profile += flux * basis
+        integrated_flux = float(np.trapezoid(profile, grid))
+        centroid = (
+            float(np.trapezoid(grid * profile, grid) / integrated_flux)
+            if integrated_flux > 0
+            else np.nan
+        )
+        variance = (
+            float(
+                np.trapezoid(
+                    (grid - centroid) ** 2 * profile,
+                    grid,
+                )
+                / integrated_flux
+            )
+            if integrated_flux > 0
+            else np.nan
+        )
+        sigma_kms = (
+            np.sqrt(max(variance, 0.0)) / reference_wave * C_KMS
+            if np.isfinite(variance)
+            else np.nan
+        )
+        fwhm_kms = _numerical_profile_fwhm(
+            grid, profile, reference_wave
+        )
+        continuum_at_line = float(
+            np.interp(centroid, continuum.wave_rest, continuum.model)
+        )
+        prefix = f"{feature}_{role}"
+        values[f"{prefix}_flux_input"] = integrated_flux
+        values[f"{prefix}_flux_cgs"] = (
+            integrated_flux
+            * spectrum.flux_density_scale_to_cgs
+            if spectrum.flux_density_scale_to_cgs is not None else np.nan
+        )
+        values[f"{prefix}_fwhm_kms"] = fwhm_kms
+        values[f"{prefix}_sigma_kms"] = float(sigma_kms)
+        values[f"{prefix}_centroid"] = centroid
+        values[f"{prefix}_ew_rest"] = (
+            integrated_flux / continuum_at_line
+            if continuum_at_line > 0 else np.nan
+        )
+    return values

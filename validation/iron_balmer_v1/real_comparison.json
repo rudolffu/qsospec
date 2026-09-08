@@ -1,0 +1,1228 @@
+{
+  "scope": "fixed_archived_host",
+  "objects": [
+    {
+      "object_id": "113506544049645456",
+      "z": 0.7521462496567684,
+      "source_run": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-010-of-032",
+      "host_policy": "fixed_archived_host_for_common_comparison",
+      "modes": {
+        "legacy": {
+          "seconds": 50.20280158286914,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 428,
+              "signed_bias_sigma": 0.6280716779022744,
+              "rms_sigma": 1.2158345998392226,
+              "lag1_correlation": 0.0681349034410517
+            },
+            "3600-4000": {
+              "n": 874,
+              "signed_bias_sigma": 0.20714120149428822,
+              "rms_sigma": 1.0805342572982908,
+              "lag1_correlation": 0.11606227817191697
+            },
+            "4000-4400": {
+              "n": 872,
+              "signed_bias_sigma": -0.23582088425507625,
+              "rms_sigma": 1.0491090837324615,
+              "lag1_correlation": 0.01996282206848298
+            },
+            "2700-2900": {
+              "n": 438,
+              "signed_bias_sigma": 0.0028782084254920406,
+              "rms_sigma": 1.0351661629854008,
+              "lag1_correlation": -0.031276612398191454
+            },
+            "4700-5100": {
+              "n": 868,
+              "signed_bias_sigma": -0.022947939360835976,
+              "rms_sigma": 1.0359763867611496,
+              "lag1_correlation": 0.0667333311158191
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 4.515561612939743,
+            "fAGN_3000": 5.079459738017237,
+            "fHost_3000": 0.4179954673055665,
+            "fracHost_3000": 0.07603435620554955,
+            "f_powerlaw_5100": 1.5727048051712231,
+            "fAGN_5100": 1.5727048051712231,
+            "fHost_5100": 0.6446938407724557,
+            "fracHost_5100": 0.2907433185060359
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.02699022155634062,
+            "fAGN_3000": 0.020538203154995265,
+            "f_powerlaw_5100": 0.01309999558875584,
+            "fAGN_5100": 0.01098755704207481
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 2.3718297151625667e-07,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "unidentified",
+              "profile_data_information": 0.0,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 4.515561536022796,
+            "power_law.slope": -1.987705341477237,
+            "uv_iron.amp": 1195.1903711344444,
+            "uv_iron.fwhm_kms": 9999.9998987635,
+            "optical_iron.amp": 0.0,
+            "optical_iron.fwhm_kms": 3000.0,
+            "balmer_pseudocontinuum.amp": 40.131325022048735,
+            "balmer_pseudocontinuum.fwhm_kms": 7661.963879232729,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999998427809
+          }
+        },
+        "bridge_only": {
+          "seconds": 16.11183249996975,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 428,
+              "signed_bias_sigma": 0.4169867137423402,
+              "rms_sigma": 1.1227813092482013,
+              "lag1_correlation": 0.06671976094408145
+            },
+            "3600-4000": {
+              "n": 874,
+              "signed_bias_sigma": 0.21762501148387042,
+              "rms_sigma": 1.088612137720097,
+              "lag1_correlation": 0.1262174211221268
+            },
+            "4000-4400": {
+              "n": 872,
+              "signed_bias_sigma": -0.3139800281953415,
+              "rms_sigma": 1.0801455722251831,
+              "lag1_correlation": 0.04028082137857125
+            },
+            "2700-2900": {
+              "n": 438,
+              "signed_bias_sigma": 0.0003948442309079652,
+              "rms_sigma": 1.0351813388366895,
+              "lag1_correlation": -0.03122801196617411
+            },
+            "4700-5100": {
+              "n": 868,
+              "signed_bias_sigma": -0.01315247585335131,
+              "rms_sigma": 1.0342074377475743,
+              "lag1_correlation": 0.06400386258938594
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 4.336798959609957,
+            "fAGN_3000": 5.031153111741926,
+            "fHost_3000": 0.4179954673055665,
+            "fracHost_3000": 0.07670839971455355,
+            "f_powerlaw_5100": 1.4825649908667833,
+            "fAGN_5100": 1.5297481240376887,
+            "fHost_5100": 0.6446938407724557,
+            "fracHost_5100": 0.2964870303304441
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.03654182045865121,
+            "fAGN_3000": 0.024632114937588354,
+            "f_powerlaw_5100": 0.01640298670174004,
+            "fAGN_5100": 0.010556142004328747
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2055,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 9999.999999995
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 2.777301864802124e-07,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 2.639364541550792e-07,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 4.336798883549731,
+            "power_law.slope": -2.022815033500427,
+            "uv_iron.amp": 1531.6604295301518,
+            "uv_iron.fwhm_kms": 9999.99999999499,
+            "optical_iron.amp": 90.2483794045171,
+            "optical_iron.fwhm_kms": 9999.999999995,
+            "middle_iron.amp": 326.8471122513781,
+            "balmer_pseudocontinuum.amp": 40.274182698851206,
+            "balmer_pseudocontinuum.fwhm_kms": 7402.190370925221,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999977
+          }
+        },
+        "soft_hgamma_only": {
+          "seconds": 13.061943999957293,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 428,
+              "signed_bias_sigma": 0.3585374812538646,
+              "rms_sigma": 1.0939603293514804,
+              "lag1_correlation": 0.05113829668895283
+            },
+            "3600-4000": {
+              "n": 874,
+              "signed_bias_sigma": 0.007794153685736563,
+              "rms_sigma": 1.0299538105846735,
+              "lag1_correlation": 0.06203954935336611
+            },
+            "4000-4400": {
+              "n": 872,
+              "signed_bias_sigma": -0.20282364762583469,
+              "rms_sigma": 1.068876613024075,
+              "lag1_correlation": 0.07093847385212464
+            },
+            "2700-2900": {
+              "n": 438,
+              "signed_bias_sigma": 0.011798591648601439,
+              "rms_sigma": 1.034516265273839,
+              "lag1_correlation": -0.032745751798470286
+            },
+            "4700-5100": {
+              "n": 868,
+              "signed_bias_sigma": 0.008833005254570281,
+              "rms_sigma": 1.0320604315154915,
+              "lag1_correlation": 0.0605286765585534
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 3.971331984314003,
+            "fAGN_3000": 5.110933809324938,
+            "fHost_3000": 0.4179954673055665,
+            "fracHost_3000": 0.07560152181224962,
+            "f_powerlaw_5100": 1.2872417392276456,
+            "fAGN_5100": 1.3584889475902358,
+            "fHost_5100": 0.6446938407724557,
+            "fracHost_5100": 0.32183475443067205
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.04673193198344442,
+            "fAGN_3000": 0.02082194962119072,
+            "f_powerlaw_5100": 0.026175805366850918,
+            "fAGN_5100": 0.023699749470117284
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 4.653052805389238e-07,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 6.887498856769471e-07,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 3.9713319087824903,
+            "power_law.slope": -2.123143252752916,
+            "uv_iron.amp": 1129.9193108354702,
+            "uv_iron.fwhm_kms": 5212.8981284555975,
+            "optical_iron.amp": 272.4532831685111,
+            "optical_iron.fwhm_kms": 4255.144966300332,
+            "balmer_pseudocontinuum.amp": 273.5751548870158,
+            "balmer_pseudocontinuum.fwhm_kms": 7464.735018109185,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        },
+        "combined": {
+          "seconds": 20.853058124892414,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 428,
+              "signed_bias_sigma": 0.2050657448902858,
+              "rms_sigma": 1.0656356960873485,
+              "lag1_correlation": 0.06957229833953532
+            },
+            "3600-4000": {
+              "n": 874,
+              "signed_bias_sigma": 0.024324328961474267,
+              "rms_sigma": 1.038987264113863,
+              "lag1_correlation": 0.0780067143354917
+            },
+            "4000-4400": {
+              "n": 872,
+              "signed_bias_sigma": -0.13919421377767432,
+              "rms_sigma": 1.048017445921416,
+              "lag1_correlation": 0.05195602920049579
+            },
+            "2700-2900": {
+              "n": 438,
+              "signed_bias_sigma": -0.0033907932151466457,
+              "rms_sigma": 1.0358094161374967,
+              "lag1_correlation": -0.02997463952814021
+            },
+            "4700-5100": {
+              "n": 868,
+              "signed_bias_sigma": 0.00481284771475179,
+              "rms_sigma": 1.0329932434592233,
+              "lag1_correlation": 0.0624355545833402
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 3.8173794601602786,
+            "fAGN_3000": 5.12589809372462,
+            "fHost_3000": 0.4179954673055665,
+            "fracHost_3000": 0.0753974553631028,
+            "f_powerlaw_5100": 1.2401915057607034,
+            "fAGN_5100": 1.407545873299762,
+            "fHost_5100": 0.6446938407724557,
+            "fracHost_5100": 0.3141415870435538
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.04856660764860078,
+            "fAGN_3000": 0.024541235225705706,
+            "f_powerlaw_5100": 0.02317740032097275,
+            "fAGN_5100": 0.018350943907669216
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2055,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 8423.676040463786
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 2.9540185728721667e-07,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 5.760161233906945e-07,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 3.8173793878057554,
+            "power_law.slope": -2.118806065564501,
+            "uv_iron.amp": 1600.0744353507996,
+            "uv_iron.fwhm_kms": 9999.999999999998,
+            "optical_iron.amp": 346.4271989025633,
+            "optical_iron.fwhm_kms": 8423.676040463786,
+            "middle_iron.amp": 298.34154488000905,
+            "balmer_pseudocontinuum.amp": 258.4212652200557,
+            "balmer_pseudocontinuum.fwhm_kms": 7412.778429132315,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        }
+      }
+    },
+    {
+      "object_id": "1480622244667403470",
+      "z": 0.9659902964227808,
+      "source_run": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-031-of-032",
+      "host_policy": "fixed_archived_host_for_common_comparison",
+      "modes": {
+        "legacy": {
+          "seconds": 7.820250374730676,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 491,
+              "signed_bias_sigma": 0.9579255236454691,
+              "rms_sigma": 1.4527431279595966,
+              "lag1_correlation": 0.18717244070585962
+            },
+            "3600-4000": {
+              "n": 982,
+              "signed_bias_sigma": 0.20252667988263776,
+              "rms_sigma": 1.106385566914807,
+              "lag1_correlation": 0.13773960138024888
+            },
+            "4000-4400": {
+              "n": 983,
+              "signed_bias_sigma": -0.5625321820512674,
+              "rms_sigma": 1.3186259675513192,
+              "lag1_correlation": 0.11698314009988489
+            },
+            "2700-2900": {
+              "n": 491,
+              "signed_bias_sigma": 0.014640931632175487,
+              "rms_sigma": 1.041421964401967,
+              "lag1_correlation": -0.022241402025460738
+            },
+            "4700-5100": {
+              "n": 730,
+              "signed_bias_sigma": 1.0344413073069478,
+              "rms_sigma": 2.4456139574646976,
+              "lag1_correlation": 0.756680551370179
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 9.202821904336384,
+            "fAGN_3000": 10.409245486172498,
+            "fHost_3000": 0.01434400106047638,
+            "fracHost_3000": 0.0013761095520928952
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.02521911146424188,
+            "fAGN_3000": 0.02020650598588592
+          },
+          "warnings": [
+            "hbeta_sync_skipped_not_covered",
+            "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 1.3213092241634947e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 2.432694675367212e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 9.202821818098286,
+            "power_law.slope": -1.584807838425826,
+            "uv_iron.amp": 2524.997169528853,
+            "uv_iron.fwhm_kms": 9999.999999999998,
+            "optical_iron.amp": 130.68163320103974,
+            "optical_iron.fwhm_kms": 1544.2335138343333,
+            "balmer_pseudocontinuum.amp": 94.7322733210974,
+            "balmer_pseudocontinuum.fwhm_kms": 8644.589781005217,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        },
+        "bridge_only": {
+          "seconds": 11.44114741589874,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 491,
+              "signed_bias_sigma": 0.610043262044749,
+              "rms_sigma": 1.2604117858677653,
+              "lag1_correlation": 0.20408143170189633
+            },
+            "3600-4000": {
+              "n": 982,
+              "signed_bias_sigma": 0.27089766643602353,
+              "rms_sigma": 1.1236507259292634,
+              "lag1_correlation": 0.14183654063971943
+            },
+            "4000-4400": {
+              "n": 983,
+              "signed_bias_sigma": -0.5443079446887804,
+              "rms_sigma": 1.3145017456871102,
+              "lag1_correlation": 0.12288071797066719
+            },
+            "2700-2900": {
+              "n": 491,
+              "signed_bias_sigma": 0.00822674690232449,
+              "rms_sigma": 1.040191751573895,
+              "lag1_correlation": -0.02482990319068402
+            },
+            "4700-5100": {
+              "n": 730,
+              "signed_bias_sigma": 1.2841587922123163,
+              "rms_sigma": 2.567389597660775,
+              "lag1_correlation": 0.7561911031924207
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 8.853656985718334,
+            "fAGN_3000": 10.387805695880145,
+            "fHost_3000": 0.01434400106047638,
+            "fracHost_3000": 0.0013789458408481757
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.03282762362929073,
+            "fAGN_3000": 0.025092204010017542
+          },
+          "warnings": [
+            "hbeta_sync_skipped_not_covered",
+            "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor",
+            "hgamma_sync_not_converged",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2318,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 9999.999999995025
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 1.3917732492337737e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 1.3853748601787794e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 8.853656898577201,
+            "power_law.slope": -1.6336737465187992,
+            "uv_iron.amp": 3259.990387169217,
+            "uv_iron.fwhm_kms": 9999.999999994685,
+            "optical_iron.amp": 400.511218560995,
+            "optical_iron.fwhm_kms": 9999.999999995025,
+            "middle_iron.amp": 598.4507002925087,
+            "balmer_pseudocontinuum.amp": 108.38889589205982,
+            "balmer_pseudocontinuum.fwhm_kms": 7737.977215243857,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999994714
+          }
+        },
+        "soft_hgamma_only": {
+          "seconds": 20.139287541620433,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 491,
+              "signed_bias_sigma": 0.6039892453135954,
+              "rms_sigma": 1.216990410197501,
+              "lag1_correlation": 0.13151334851962293
+            },
+            "3600-4000": {
+              "n": 982,
+              "signed_bias_sigma": 0.02429613636103816,
+              "rms_sigma": 1.065081228636114,
+              "lag1_correlation": 0.099539219528868
+            },
+            "4000-4400": {
+              "n": 983,
+              "signed_bias_sigma": -0.3288018007938176,
+              "rms_sigma": 1.2693150245877456,
+              "lag1_correlation": 0.1652811440385114
+            },
+            "2700-2900": {
+              "n": 491,
+              "signed_bias_sigma": 0.015070496431745468,
+              "rms_sigma": 1.0413578989175962,
+              "lag1_correlation": -0.022397201662547536
+            },
+            "4700-5100": {
+              "n": 730,
+              "signed_bias_sigma": 2.044348617156325,
+              "rms_sigma": 2.9902659148083983,
+              "lag1_correlation": 0.7380898515454463
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 8.213686346651931,
+            "fAGN_3000": 10.518223586594987,
+            "fHost_3000": 0.01434400106047638,
+            "fracHost_3000": 0.00136187125704164
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.05704626718554318,
+            "fAGN_3000": 0.01804190988388387
+          },
+          "warnings": [
+            "hbeta_sync_skipped_not_covered",
+            "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor",
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 1.1001911782074757e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 8.200442428838512e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 8.213686255011442,
+            "power_law.slope": -1.764346269060245,
+            "uv_iron.amp": 2283.551662799873,
+            "uv_iron.fwhm_kms": 9999.999999999998,
+            "optical_iron.amp": 733.1314017837336,
+            "optical_iron.fwhm_kms": 3314.347690523646,
+            "balmer_pseudocontinuum.amp": 551.0375368040685,
+            "balmer_pseudocontinuum.fwhm_kms": 8174.400186877029,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        },
+        "combined": {
+          "seconds": 14.008052707649767,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 491,
+              "signed_bias_sigma": 0.24018135161288515,
+              "rms_sigma": 1.1478171132442105,
+              "lag1_correlation": 0.2301070128370196
+            },
+            "3600-4000": {
+              "n": 982,
+              "signed_bias_sigma": -0.035816636469214506,
+              "rms_sigma": 1.0818805832611724,
+              "lag1_correlation": 0.12653995728680753
+            },
+            "4000-4400": {
+              "n": 983,
+              "signed_bias_sigma": -0.14142207084299002,
+              "rms_sigma": 1.1659437107138027,
+              "lag1_correlation": 0.06641633447077401
+            },
+            "2700-2900": {
+              "n": 491,
+              "signed_bias_sigma": 0.007991256459249706,
+              "rms_sigma": 1.039882718920884,
+              "lag1_correlation": -0.025531220548150307
+            },
+            "4700-5100": {
+              "n": 730,
+              "signed_bias_sigma": 2.378900519376025,
+              "rms_sigma": 3.2380890413495087,
+              "lag1_correlation": 0.7358466172729895
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 7.711177819900084,
+            "fAGN_3000": 10.539718945984285,
+            "fHost_3000": 0.01434400106047638,
+            "fracHost_3000": 0.0013590975468355377
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.10341318607183007,
+            "fAGN_3000": 0.023311646606924575
+          },
+          "warnings": [
+            "hbeta_sync_skipped_not_covered",
+            "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor",
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2318,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 5754.695129981721
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "boundary_limited",
+              "profile_data_information": 1.2184801445750098e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 5.465106345450967e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 7.711177729483552,
+            "power_law.slope": -1.8185581445535097,
+            "uv_iron.amp": 3098.4178803796385,
+            "uv_iron.fwhm_kms": 9999.999999999998,
+            "optical_iron.amp": 988.4568257215017,
+            "optical_iron.fwhm_kms": 5754.695129981721,
+            "middle_iron.amp": 522.2675811639388,
+            "balmer_pseudocontinuum.amp": 651.819668299866,
+            "balmer_pseudocontinuum.fwhm_kms": 8828.541246613808,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        }
+      }
+    },
+    {
+      "object_id": "2779599899604114953",
+      "z": 0.887511212160674,
+      "source_run": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-016-of-032",
+      "host_policy": "fixed_archived_host_for_common_comparison",
+      "modes": {
+        "legacy": {
+          "seconds": 5.678897832985967,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 472,
+              "signed_bias_sigma": 1.2796942506312798,
+              "rms_sigma": 1.8299354386609543,
+              "lag1_correlation": 0.3572035684121036
+            },
+            "3600-4000": {
+              "n": 944,
+              "signed_bias_sigma": 0.27878606819879276,
+              "rms_sigma": 1.2628058641354956,
+              "lag1_correlation": 0.2694396206714393
+            },
+            "4000-4400": {
+              "n": 944,
+              "signed_bias_sigma": -0.6062800716628696,
+              "rms_sigma": 1.2745192980018658,
+              "lag1_correlation": 0.24210036952895364
+            },
+            "2700-2900": {
+              "n": 472,
+              "signed_bias_sigma": 0.01327024375196347,
+              "rms_sigma": 1.022250697669067,
+              "lag1_correlation": 0.09033292074585444
+            },
+            "4700-5100": {
+              "n": 943,
+              "signed_bias_sigma": -1.35176600394264,
+              "rms_sigma": 2.2698103928706628,
+              "lag1_correlation": 0.6537306954139553
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 17.968905664931693,
+            "fAGN_3000": 19.525861838646033,
+            "fHost_3000": 0.07398091332574128,
+            "fracHost_3000": 0.0037745666769851347,
+            "f_powerlaw_5100": 7.593667959033504,
+            "fAGN_5100": 7.670437822254744,
+            "fHost_5100": 1.2538477512585287,
+            "fracHost_5100": 0.14049838958312486
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.041235021533574445,
+            "fAGN_3000": 0.029732532906935484,
+            "f_powerlaw_5100": 0.026530674713946333,
+            "fAGN_5100": 0.024355548931508916
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 6.724855667188694e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 4.018988286084856e-05,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 17.96890555869601,
+            "power_law.slope": -1.6232231476368535,
+            "uv_iron.amp": 3913.591060411283,
+            "uv_iron.fwhm_kms": 3227.998700698735,
+            "optical_iron.amp": 565.5245878334691,
+            "optical_iron.fwhm_kms": 732.8410131722048,
+            "balmer_pseudocontinuum.amp": 100.64237553827157,
+            "balmer_pseudocontinuum.fwhm_kms": 14893.065501304467,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        },
+        "bridge_only": {
+          "seconds": 17.32466470915824,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 472,
+              "signed_bias_sigma": 0.7230060884477935,
+              "rms_sigma": 1.4416003330383744,
+              "lag1_correlation": 0.290926143898718
+            },
+            "3600-4000": {
+              "n": 944,
+              "signed_bias_sigma": 0.24888187488879482,
+              "rms_sigma": 1.2584564377576557,
+              "lag1_correlation": 0.2710286331000404
+            },
+            "4000-4400": {
+              "n": 944,
+              "signed_bias_sigma": -0.45787574884189114,
+              "rms_sigma": 1.2452918761703,
+              "lag1_correlation": 0.28914292389577984
+            },
+            "2700-2900": {
+              "n": 472,
+              "signed_bias_sigma": -0.056750337067954806,
+              "rms_sigma": 1.0259466055296151,
+              "lag1_correlation": 0.09335584550214729
+            },
+            "4700-5100": {
+              "n": 943,
+              "signed_bias_sigma": -1.1471218053382441,
+              "rms_sigma": 2.045423011579443,
+              "lag1_correlation": 0.6032897246455453
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 17.569624873811307,
+            "fAGN_3000": 19.518925676576963,
+            "fHost_3000": 0.07398091332574128,
+            "fracHost_3000": 0.0037759029262083906,
+            "f_powerlaw_5100": 7.319379310629384,
+            "fAGN_5100": 7.452011064729396,
+            "fHost_5100": 1.2538477512585287,
+            "fracHost_5100": 0.14402344188673183
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.04868789268814284,
+            "fAGN_3000": 0.035065114236789624,
+            "f_powerlaw_5100": 0.028479404770301815,
+            "fAGN_5100": 0.02529641763383172
+          },
+          "warnings": [
+            "covariance_rank_deficient",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2227,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 2090.537767824512
+          },
+          "hgamma_status": null,
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 7.2176746074366915e-06,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 8.268670100774655e-05,
+              "prior_information": 0.0,
+              "basis": "additional_kernel"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 17.569624767123376,
+            "power_law.slope": -1.6502061745980903,
+            "uv_iron.amp": 4537.911990858357,
+            "uv_iron.fwhm_kms": 3014.263588507784,
+            "optical_iron.amp": 845.4831056595317,
+            "optical_iron.fwhm_kms": 2090.537767824512,
+            "middle_iron.amp": 819.5482696313331,
+            "balmer_pseudocontinuum.amp": 93.435810678792,
+            "balmer_pseudocontinuum.fwhm_kms": 1962.8220054106268,
+            "balmer_pseudocontinuum.velocity_kms": -535.4089303088177
+          }
+        },
+        "soft_hgamma_only": {
+          "seconds": 11.629630292300135,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 472,
+              "signed_bias_sigma": 0.8462056947773212,
+              "rms_sigma": 1.5292437081146746,
+              "lag1_correlation": 0.3214410808397004
+            },
+            "3600-4000": {
+              "n": 944,
+              "signed_bias_sigma": -0.10437009195327475,
+              "rms_sigma": 1.2693658310388956,
+              "lag1_correlation": 0.30673049160676574
+            },
+            "4000-4400": {
+              "n": 944,
+              "signed_bias_sigma": -0.38460773466161696,
+              "rms_sigma": 1.2482751193335726,
+              "lag1_correlation": 0.3235345512287145
+            },
+            "2700-2900": {
+              "n": 472,
+              "signed_bias_sigma": 0.036758793813898745,
+              "rms_sigma": 1.0111643332564448,
+              "lag1_correlation": 0.0817154988532523
+            },
+            "4700-5100": {
+              "n": 943,
+              "signed_bias_sigma": -0.20292203016178503,
+              "rms_sigma": 1.141894047966312,
+              "lag1_correlation": 0.1321421102444355
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 15.683353549037124,
+            "fAGN_3000": 19.651306284572218,
+            "fHost_3000": 0.07398091332574128,
+            "fracHost_3000": 0.0037505620366138502,
+            "f_powerlaw_5100": 5.96635068045837,
+            "fAGN_5100": 6.23219287501668,
+            "fHost_5100": 1.2538477512585287,
+            "fracHost_5100": 0.1674914435887051
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.09059191161403751,
+            "fAGN_3000": 0.02413258653782761,
+            "f_powerlaw_5100": 0.06468812043854795,
+            "fAGN_5100": 0.05715664258391707
+          },
+          "warnings": [
+            "hbeta_sync_skipped_unreliable",
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "disabled"
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 7.908806871315355e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 0.00014973509710708262,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 15.683353437138344,
+            "power_law.slope": -1.8213587288503126,
+            "uv_iron.amp": 3690.5771547025224,
+            "uv_iron.fwhm_kms": 2815.551416613306,
+            "optical_iron.amp": 1783.8066999362663,
+            "optical_iron.fwhm_kms": 1835.282541831904,
+            "balmer_pseudocontinuum.amp": 1167.6345044228076,
+            "balmer_pseudocontinuum.fwhm_kms": 11043.914534310665,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999998
+          }
+        },
+        "combined": {
+          "seconds": 24.04281708272174,
+          "success": true,
+          "regions": {
+            "3400-3600": {
+              "n": 472,
+              "signed_bias_sigma": 0.35341650299859306,
+              "rms_sigma": 1.2770525423327297,
+              "lag1_correlation": 0.2667457833756405
+            },
+            "3600-4000": {
+              "n": 944,
+              "signed_bias_sigma": -0.08774862793519106,
+              "rms_sigma": 1.225829261838566,
+              "lag1_correlation": 0.2576749357892133
+            },
+            "4000-4400": {
+              "n": 944,
+              "signed_bias_sigma": -0.1999580420699698,
+              "rms_sigma": 1.1603519483166398,
+              "lag1_correlation": 0.27026459602614855
+            },
+            "2700-2900": {
+              "n": 472,
+              "signed_bias_sigma": -0.06571700886035624,
+              "rms_sigma": 1.0199644232732767,
+              "lag1_correlation": 0.08146872662391444
+            },
+            "4700-5100": {
+              "n": 943,
+              "signed_bias_sigma": -0.2808947168495366,
+              "rms_sigma": 1.1908086155552087,
+              "lag1_correlation": 0.1800235874053669
+            }
+          },
+          "samples": {
+            "f_powerlaw_3000": 15.597159690103418,
+            "fAGN_3000": 19.642555901950473,
+            "fHost_3000": 0.07398091332574128,
+            "fracHost_3000": 0.003752226570967649,
+            "f_powerlaw_5100": 6.071369234553723,
+            "fAGN_5100": 6.3701800691418065,
+            "fHost_5100": 1.2538477512585287,
+            "fracHost_5100": 0.1644600178272552
+          },
+          "sample_errors": {
+            "f_powerlaw_3000": 0.09775338639835897,
+            "fAGN_3000": 0.03267605725100976,
+            "f_powerlaw_5100": 0.06790651323443384,
+            "fAGN_5100": 0.05914318250956875
+          },
+          "warnings": [
+            "balmer_high_n_extension_model_dependent",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host",
+            "oiii_wing_rejected",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "parameter_at_bound",
+            "statistical_uncertainty_excludes_continuum_host"
+          ],
+          "bridge": {
+            "status": "enabled",
+            "valid_basis_pixels": 2227,
+            "intervals": [
+              [
+                3156.3025471114734,
+                3306.3025471114734
+              ],
+              [
+                4233.1864726256445,
+                4383.1864726256445
+              ]
+            ],
+            "parent": "optical_iron",
+            "normalization": 0.11346864433567996,
+            "reference_kernel_fwhm_kms": 3000.0,
+            "normalization_definition": "weighted_integral_at_fixed_reference_kernel",
+            "kernel_fwhm_kms": 2470.295143054504
+          },
+          "hgamma_status": "fit",
+          "width_diagnostics": {
+            "uv_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 6.648695186746355e-06,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            },
+            "optical_iron.fwhm_kms": {
+              "status": "data_constrained",
+              "profile_data_information": 9.357398912685573e-05,
+              "prior_information": 0.0,
+              "state": "final_joint_hgamma_continuum"
+            }
+          },
+          "parameters": {
+            "power_law.norm": 15.597159583129308,
+            "power_law.slope": -1.7780897753536136,
+            "uv_iron.amp": 4791.998839833037,
+            "uv_iron.fwhm_kms": 3394.302959761952,
+            "optical_iron.amp": 1764.6965765752693,
+            "optical_iron.fwhm_kms": 2470.295143054504,
+            "middle_iron.amp": 865.2044009534534,
+            "balmer_pseudocontinuum.amp": 963.0756982762925,
+            "balmer_pseudocontinuum.fwhm_kms": 9208.839673167262,
+            "balmer_pseudocontinuum.velocity_kms": -1999.9999999999727
+          }
+        }
+      }
+    }
+  ]
+}

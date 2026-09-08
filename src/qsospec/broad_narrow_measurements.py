@@ -265,8 +265,10 @@ def _profile_widths(
     stops = np.flatnonzero(above & ~np.r_[above[1:], False])
     ambiguous = len(starts) != 1
     left_index, right_index = int(starts[0]), int(stops[-1])
-    left = float(velocity[left_index])
-    right = float(velocity[right_index])
+    if left_index == 0 or right_index == len(velocity)-1:
+        return np.nan, np.nan, True
+    left = float(np.interp(half, profile[left_index-1:left_index+1], velocity[left_index-1:left_index+1]))
+    right = float(np.interp(half, profile[right_index:right_index+2][::-1], velocity[right_index:right_index+2][::-1]))
     total = narrow_flux + broad_flux
     mean = (narrow_flux * narrow_velocity + broad_flux * broad_velocity) / total
     variance = (
@@ -424,6 +426,25 @@ def measurement_record(
     continuum_total = continuum_global + local_continuum
     total_ew = total_flux / continuum_total if np.isfinite(continuum_total) and continuum_total > 0 else np.nan
 
+    from .uncertainties import propagate
+    names = list(result.param_values)
+    def derived(theta):
+        values = dict(zip(names,theta))
+        widths = _profile_widths(*(values[name] for name in
+            (narrow_flux_name,broad_flux_name,nvel_name,bvel_name,nwidth_name,bwidth_name)))
+        denominator = continuum_global+values.get("continuum.constant",0.)+values.get("continuum.slope",0.)*(primary_wave-.5*sum(definition.fit_window))
+        ew = (values[narrow_flux_name]+values[broad_flux_name])/denominator if denominator>0 else np.nan
+        return [widths[0],widths[1],ew]
+    _, derived_covariance = propagate(derived,list(result.param_values.values()),result.covariance)
+    derived_errors = np.sqrt(np.maximum(0.,np.diag(derived_covariance))) if derived_covariance is not None else np.full(3,np.nan)
+    if profile_ambiguous:
+        derived_errors[0] = np.nan
+    def intrinsic_error(width,name):
+        intrinsic = intrinsic_fwhm_kms(width,cfg.instrumental_fwhm_kms)
+        error = result.param_errors.get(name,np.nan)
+        if not np.isfinite(intrinsic) or intrinsic<=0 or width-cfg.instrumental_fwhm_kms <= error:
+            return np.nan
+        return float(width/intrinsic*error)
     warnings = tuple(result.warning_codes())
     bound_parameters = tuple(
         str(warning.context.get("parameter", ""))
@@ -485,6 +506,12 @@ def measurement_record(
         "narrow_fwhm_intrinsic_approx_kms": intrinsic_fwhm_kms(nwidth, cfg.instrumental_fwhm_kms),
         "broad_fwhm_intrinsic_approx_kms": intrinsic_fwhm_kms(bwidth, cfg.instrumental_fwhm_kms),
         "total_equivalent_width_rest": total_ew,
+        "total_equivalent_width_rest_error": float(derived_errors[2]),
+        "total_profile_fwhm_observed_kms_error": float(derived_errors[0]),
+        "total_profile_sigma_kms_error": float(derived_errors[1]),
+        "narrow_fwhm_intrinsic_approx_kms_error": intrinsic_error(nwidth,nwidth_name),
+        "broad_fwhm_intrinsic_approx_kms_error": intrinsic_error(bwidth,bwidth_name),
+        "uncertainty_conditioning": "fixed_global_continuum_with_fitted_local_continuum_covariance",
         "total_profile_fwhm_observed_kms": profile_fwhm,
         "total_profile_sigma_kms": profile_sigma,
         "total_profile_fwhm_ambiguous": profile_ambiguous,

@@ -1,0 +1,17 @@
+[
+  {
+    "object_id": "113506544049645456",
+    "object_key": "euclid_desi_dr1:113506544049645456:39627905638073960",
+    "run_root": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-010-of-032"
+  },
+  {
+    "object_id": "1480622244667403470",
+    "object_key": "euclid_desi_dr1:1480622244667403470:39633460331021420",
+    "run_root": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-031-of-032"
+  },
+  {
+    "object_id": "2779599899604114953",
+    "object_key": "euclid_desi_dr1:2779599899604114953:39633393901636982",
+    "run_root": "/home/yuming/data/desi_qsospec/euclid_desi_dr1_v1/full_plan/aimsz_local_coadd_v1/runs/full_32_agn_pseudocontinuum_masked_v2/shard-016-of-032"
+  }
+]

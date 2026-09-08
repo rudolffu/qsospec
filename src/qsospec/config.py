@@ -116,16 +116,40 @@ class IronTemplateConfig:
     fwhm_kms: float = 3000.0
     fwhm_bounds: Bounds = (500.0, 10000.0)
     normalization: str = "area"
+    width_mode: str = "legacy"
+    kernel_fwhm_kms: Optional[float] = None
+    target_fwhm_kms: Optional[float] = None
 
     def __post_init__(self) -> None:
+        if self.width_mode not in ("legacy", "kernel", "target"):
+            raise ValueError("Iron width_mode must be legacy, kernel, or target")
+        if self.kernel_fwhm_kms is not None and self.target_fwhm_kms is not None:
+            raise ValueError("Specify only one explicit width")
+        if self.width_mode == "target" and self.target_fwhm_kms is None:
+            object.__setattr__(self, "target_fwhm_kms", self.fwhm_kms)
+        if self.width_mode == "kernel" and self.kernel_fwhm_kms is None:
+            object.__setattr__(self, "kernel_fwhm_kms", self.fwhm_kms)
+        if self.target_fwhm_kms is not None:
+            if self.template != "verner09":
+                raise ValueError("Empirical templates do not have a justified scalar native width")
+            if self.target_fwhm_kms < 900.:
+                raise ValueError("Target FWHM is below the native FWHM")
+            object.__setattr__(self, "fwhm_kms", float(self.target_fwhm_kms))
+            object.__setattr__(self, "width_mode", "target")
+        if self.kernel_fwhm_kms is not None:
+            if not np.isfinite(self.kernel_fwhm_kms) or self.kernel_fwhm_kms < 0:
+                raise ValueError("Kernel FWHM must be non-negative and finite")
+            value = np.hypot(900., self.kernel_fwhm_kms) if self.template == "verner09" else self.kernel_fwhm_kms
+            object.__setattr__(self, "fwhm_kms", float(value))
+            object.__setattr__(self, "width_mode", "kernel")
         if not self.template:
             raise ValueError("IronTemplateConfig.template must be non-empty.")
         if not np.isfinite(self.amp):
             raise ValueError("IronTemplateConfig.amp must be finite.")
-        if not np.isfinite(self.fwhm_kms) or self.fwhm_kms <= 0:
+        if not np.isfinite(self.fwhm_kms) or self.fwhm_kms < 0:
             raise ValueError("IronTemplateConfig.fwhm_kms must be positive and finite.")
         fwhm_lo, fwhm_hi = self.fwhm_bounds
-        if fwhm_lo is not None and (not np.isfinite(fwhm_lo) or fwhm_lo <= 0):
+        if fwhm_lo is not None and (not np.isfinite(fwhm_lo) or fwhm_lo < 0):
             raise ValueError("IronTemplateConfig.fwhm_bounds lower bound must be positive and finite.")
         if fwhm_hi is not None and (not np.isfinite(fwhm_hi) or fwhm_hi <= 0):
             raise ValueError("IronTemplateConfig.fwhm_bounds upper bound must be positive and finite.")
@@ -380,7 +404,8 @@ class BalmerPseudoContinuumConfig:
     velocity_bounds: Bounds = (-2000.0, 2000.0)
     sync_with_hbeta: str = "auto"
     sync_min_fwhm_snr: Optional[float] = 3.0
-    sync_with_hgamma: str = "auto"
+    sync_with_hgamma: str = "soft"
+    hgamma_ratio_scatter_dex: float = 0.30
     sync_min_hgamma_flux_snr: Optional[float] = 3.0
 
     def __post_init__(self) -> None:
@@ -425,7 +450,7 @@ class BalmerPseudoContinuumConfig:
                 "BalmerPseudoContinuumConfig.sync_min_fwhm_snr must be "
                 "non-negative or None."
             )
-        if self.sync_with_hgamma not in ("auto", "never", "require"):
+        if self.sync_with_hgamma not in ("auto", "never", "require", "none", "soft", "hard_legacy"):
             raise ValueError(
                 "BalmerPseudoContinuumConfig.sync_with_hgamma must be "
                 "'auto', 'never', or 'require'."
@@ -441,6 +466,16 @@ class BalmerPseudoContinuumConfig:
 
 
 @dataclass(frozen=True)
+class RegionalIronConfig:
+    """Regional Verner09 bridge; one amplitude and a shared additional kernel."""
+    enabled: bool = True
+    amp: float = 1.0
+    uv_interval: Tuple[float, float] = (3300.0, 3450.0)
+    optical_interval: Tuple[float, float] = (4100.0, 4250.0)
+    fixed_kernel_fwhm_kms: float = 3000.0
+
+
+@dataclass(frozen=True)
 class GlobalContinuumConfig:
     """Configuration for the first qsospec global AGN continuum."""
 
@@ -452,6 +487,10 @@ class GlobalContinuumConfig:
         default_factory=lambda: IronTemplateConfig.park22(fwhm_kms=3000.0)
     )
     full_iron: Optional[IronTemplateConfig] = None
+    regional_iron: RegionalIronConfig = field(default_factory=RegionalIronConfig)
+    iron_width_coupling: str = "independent"
+    iron_width_prior_center_dex: float = 0.0
+    iron_width_prior_scatter_dex: float = 0.25
     polynomial: PolynomialContinuumConfig = field(
         default_factory=PolynomialContinuumConfig
     )
@@ -507,6 +546,15 @@ class GlobalContinuumConfig:
         return cls(uv_iron=None, optical_iron=None, full_iron=iron, **changes)
 
     def __post_init__(self) -> None:
+        if self.iron_width_coupling not in ("independent", "soft"):
+            raise ValueError("iron_width_coupling must be independent or soft")
+        if not np.isfinite(self.iron_width_prior_scatter_dex) or self.iron_width_prior_scatter_dex <= 0:
+            raise ValueError("Iron prior scatter must be positive")
+        if self.iron_width_coupling == "soft":
+            for item in (self.uv_iron, self.optical_iron):
+                if item is not None and (item.fwhm_bounds[0] is None or item.fwhm_bounds[0] <= 0):
+                    raise ValueError("Soft log-kernel coupling requires positive lower bounds")
+
         if self.full_iron is not None and (
             self.uv_iron is not None or self.optical_iron is not None
         ):
@@ -765,3 +813,4 @@ class UncertaintyConfig:
     monte_carlo_trials: int = 0
     random_seed: Optional[int] = 12345
     refit_host_in_mc: bool = True
+    pixel_covariance: Optional[np.ndarray] = None

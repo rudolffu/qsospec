@@ -246,7 +246,7 @@ def _plot_global(
     balmer_label_used = False
     for name, component in continuum.component_models.items():
         color, linestyle = _CONTINUUM_STYLES.get(name, ("0.5", "-"))
-        if name in ("uv_iron", "optical_iron", "full_iron"):
+        if name in ("uv_iron", "middle_iron", "optical_iron", "full_iron"):
             label = "iron" if not iron_label_used else "_nolegend_"
             iron_label_used = True
         elif name in ("balmer_bound_free", "balmer_high_order_series"):
@@ -332,6 +332,7 @@ _BALMER_STYLE = (_TCC_COLORS["balmer_cont"], "-.")
 _CONTINUUM_STYLES = {
     "power_law": (_TCC_COLORS["powerlaw"], "--"),
     "uv_iron": _IRON_STYLE,
+    "middle_iron": _IRON_STYLE,
     "optical_iron": _IRON_STYLE,
     "full_iron": _IRON_STYLE,
     "polynomial": (_TCC_COLORS["continuum"], ":"),
@@ -1343,7 +1344,7 @@ def _plot_qa(
             color, linestyle = _CONTINUUM_STYLES.get(
                 component_name, ("0.5", ":")
             )
-            if component_name in ("uv_iron", "optical_iron", "full_iron"):
+            if component_name in ("uv_iron", "middle_iron", "optical_iron", "full_iron"):
                 label = (
                     "Fe II"
                     if labels and not iron_label_used

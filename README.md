@@ -101,3 +101,8 @@ workflows, model definitions, examples, and API reference.
 
 `qsospec` is distributed under the
 [GPLv3 license](https://github.com/rudolffu/qsospec/blob/main/LICENSE).
+
+Regional VW01/Verner09/Park22 iron, soft Hγ refinement, and native covariance /
+matched-bootstrap products are described in
+[the iron, Balmer and uncertainty guide](docs/iron-balmer-uncertainties.md).
+A compact comparison is available in `examples/iron_balmer_uncertainty.py`.

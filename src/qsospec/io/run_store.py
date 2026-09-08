@@ -42,7 +42,7 @@ from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -336,9 +336,16 @@ def _measurement_rows(
                     "error": _float(errors.get(quantity)),
                     "unit": (units or {}).get(str(quantity)),
                     "method": method,
-                    "metadata": _key_values(
-                        (metadata_by_quantity or {}).get(str(quantity), {})
-                    ),
+                    "metadata": _key_values({
+                        "uncertainty_status": "available" if _float(errors.get(quantity)) is not None else "unavailable",
+                        "uncertainty_method": result.monte_carlo.get("method", "local_gaussian") if errors else "unavailable",
+                        "uncertainty_interval": result.monte_carlo.get("percentiles", {}).get(
+                            f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
+                        "valid_uncertainty_trials": result.monte_carlo.get("valid_trial_counts", {}).get(
+                            f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
+                        "uncertainty_conditioning": "fixed_host" if section == "continuum_parameter" else "see_scope_covariance_block",
+                        **((metadata_by_quantity or {}).get(str(quantity), {})),
+                    }),
                 }
             )
 
@@ -382,7 +389,7 @@ def _measurement_rows(
             recipe_id,
             fit.metrics,
             fit.metric_errors,
-            "covariance",
+            fit.metadata.get("measurement_uncertainty_method", "covariance"),
         )
     host_strategy = result.metadata.get("host_strategy_used")
     continuum_samples = result.metadata.get("continuum_samples", {})
@@ -396,7 +403,7 @@ def _measurement_rows(
             "continuum_sample",
             None,
             {quantity: value},
-            {},
+            result.metadata.get("continuum_sample_errors", {}),
             descriptor["method"] if descriptor else "interpolation",
             units=(
                 {quantity: descriptor["unit"]}
@@ -685,7 +692,13 @@ def _model_row(
     object_key: str,
     object_id: str,
 ) -> dict[str, Any]:
+    from ..uncertainties import covariance_block
     workflow_metadata = dict(result.metadata)
+    workflow_metadata["covariance_blocks"] = {
+        "continuum": covariance_block(result.continuum, "continuum"),
+        **{key: covariance_block(fit, key) for key, fit in result.line_complexes.items()},
+    }
+    workflow_metadata["matched_uncertainty_draws"] = result.monte_carlo
     if result.host_reconstruction_state is not None:
         workflow_metadata["host_reconstruction_state"] = dict(
             result.host_reconstruction_state
@@ -975,7 +988,7 @@ class RunStore:
     @staticmethod
     def _require_current_schema(manifest: Mapping[str, Any]) -> None:
         found = str(manifest.get("schema_version", "missing"))
-        if found != SCHEMA_VERSION:
+        if found not in ("5", SCHEMA_VERSION):
             raise ValueError(
                 "Unsupported qsospec run schema "
                 f"{found!r}; this version requires schema {SCHEMA_VERSION}. "
@@ -1531,13 +1544,16 @@ def load_model_by_key(
         _archived_host_masks(row, spectrum.wave_rest)
     )
     workflow_metadata["host_mask_provenance"] = host_mask_provenance
+    from ..uncertainties import restore_covariance
+    blocks = workflow_metadata.get("covariance_blocks", {})
+    workflow_metadata["covariance_status"] = "available" if blocks else "unavailable_legacy_run"
     continuum = GlobalContinuumResult(
         success=bool(object_row["continuum_success"]),
         status=1 if object_row["continuum_success"] else -1,
         message="Loaded from Parquet model archive.",
         param_values=continuum_values,
         param_errors=continuum_errors,
-        covariance=None,
+        covariance=restore_covariance(blocks.get("continuum"), continuum_values),
         chi2=np.nan,
         dof=0,
         reduced_chi2=float(object_row["continuum_reduced_chi2"]),
@@ -1547,7 +1563,7 @@ def load_model_by_key(
         fit_mask=np.asarray(row["continuum_fit_mask"], dtype=bool),
         clip_mask=np.asarray(row["continuum_clip_mask"], dtype=bool),
         warnings=archived_warnings("continuum"),
-        metadata=workflow_metadata,
+        metadata={**workflow_metadata, **blocks.get("continuum", {}).get("model_metadata", {})},
     )
     complex_components: Dict[str, Dict[str, np.ndarray]] = {}
     for component in row["components"]:
@@ -1577,7 +1593,7 @@ def load_model_by_key(
             selected_model=str(item["selected_model"]),
             param_values=parameters,
             param_errors=parameter_errors,
-            covariance=None,
+            covariance=restore_covariance(blocks.get(recipe_id), parameters),
             metrics=metrics,
             metric_errors=metric_errors,
             chi2=float(item["chi2"]),
@@ -1605,6 +1621,7 @@ def load_model_by_key(
     ]
     workflow = WorkflowResult(
         spectrum=spectrum,
+        monte_carlo=workflow_metadata.get("matched_uncertainty_draws", {}),
         continuum_initial=continuum,
         continuum=continuum,
         hbeta=complexes.get("hbeta_oiii"),

@@ -26,6 +26,7 @@ from .config import (
     HalphaComplexConfig,
     HbetaComplexConfig,
     IronTemplateConfig,
+    RegionalIronConfig,
     LyaNVComplexConfig,
     LineComplexConfig,
     LocalFitConfig,
@@ -345,3 +346,7 @@ __all__ = [
     "measure_broad_narrow_complexes",
     "signed_to_uint64_string",
 ]
+
+from .uncertainties import recover_uncertainties, host_agn_covariance, measure_selected_profile
+
+__all__.extend(["RegionalIronConfig", "recover_uncertainties", "host_agn_covariance", "measure_selected_profile"])

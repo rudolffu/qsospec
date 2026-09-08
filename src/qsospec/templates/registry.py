@@ -136,4 +136,6 @@ def load_iron_template(
         notes=notes,
         normalization="area",
         native_fwhm_kms=float(_NATIVE_FWHM_KMS.get(canonical, 0.0)),
+        native_width_status="known_gaussian_equivalent" if canonical == "verner09" else "mixed_empirical",
+        native_width_source="Bundled Verner09 registry assumption: 900 km/s" if canonical == "verner09" else None,
     )

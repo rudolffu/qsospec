@@ -1139,3 +1139,28 @@ def test_host_context_overview_falls_back_without_host(tmp_path):
     assert result.metadata["qa_host_context_overview_used"] is False
     assert result.metadata["qa_original_spectrum_smoothed_used"] is False
     assert result.metadata["qa_smoothing_suppressed_short_spectrum"] is True
+
+
+def test_selected_civ_profile_uses_subset_and_correlated_flux():
+    from qsospec import complex_recipes
+    from qsospec.fitting.complexes import GenericComplexContext
+    from qsospec.global_result import EmissionComplexResult
+    from qsospec.uncertainties import measure_selected_profile
+    recipe=complex_recipes.get('civ')
+    context=GenericComplexContext(recipe,['CIV_broad'],30.)
+    theta=context.initial.copy()
+    for name,index in context.index.items():
+        if name.endswith('.flux'):
+            theta[index]=10.
+    wave=np.linspace(1300.,1800.,1000)
+    components=context.components(theta,wave)
+    cov=np.eye(len(theta))*.01
+    a=context.index['CIV_broad1.flux'];b=context.index['CIV_broad2.flux']
+    cov[a,a]=1.;cov[b,b]=1.;cov[a,b]=cov[b,a]=.5
+    fit=EmissionComplexResult(True,1,'fixture','civ',dict(zip(context.names,theta)),{},cov,{}, {},0.,100,0.,0.,wave,np.zeros_like(wave),np.ones_like(wave),sum(components.values()),components,np.ones_like(wave,dtype=bool),metadata={'recipe_id':'civ','active_components':['CIV_broad']})
+    one=measure_selected_profile(fit,['CIV_broad1'])
+    two=measure_selected_profile(fit,['CIV_broad1','CIV_broad2'])
+    assert two['errors']['flux']==pytest.approx(np.sqrt(3.),rel=.002)
+    assert one['values']['fwhm_kms']!=pytest.approx(two['values']['fwhm_kms'])
+    assert one['errors']['fwhm_kms']!=pytest.approx(two['errors']['fwhm_kms'])
+    assert two['component_ids']==['CIV_broad1','CIV_broad2']

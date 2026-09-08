@@ -95,6 +95,8 @@ _DEFINITIONS = (
     _line("oii_blend", 3728.48, "[O II]", "blend", aliases=("oii", "oii3728"), blend_members=("oii_3727", "oii_3730")),
     _line("neiii_3870", 3869.86, "[Ne III] 3870", "forbidden", aliases=("neiii3869", "neiii3870")),
     _line("hdelta", 4102.93, "Hδ", "recombination", aliases=("hd", "hdelta4103"), roles=("broad", "narrow")),
+    # SDSS spectro1d vacuum line table: classic.sdss.org/dr7/algorithms/linestable.php
+    _line("oiii_4364", 4364.436, "[O III] 4363", "forbidden", aliases=("oiii4363", "oiii4364")),
     _line("hgamma", 4341.68, "Hγ", "recombination", aliases=("hg", "hgamma4342"), roles=("broad", "narrow")),
     _line("heii_4687", 4687.02, "He II", "recombination", aliases=("heii4686", "heii4687"), roles=("broad", "narrow")),
     _line("hbeta", 4862.68, "Hβ", "recombination", aliases=("hb", "hbeta4863", "hbeta4861"), roles=("broad", "narrow")),
