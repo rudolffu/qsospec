@@ -2964,7 +2964,8 @@ def _fit_separable_emission_complex(
         )
     if "qa_all_lines_covered" in coverage:
         metadata["qa_all_lines_covered"] = bool(coverage["qa_all_lines_covered"])
-    return EmissionComplexResult(
+    from ..line_peaks import profile_definitions, record_fit_peaks
+    fitted = EmissionComplexResult(
         success=bool(result.success),
         status=int(result.status),
         message=str(result.message),
@@ -2988,6 +2989,7 @@ def _fit_separable_emission_complex(
         metadata=metadata,
         optimizer_result=result,
     )
+    return record_fit_peaks(fitted, spectrum.z, definitions=profile_definitions(context), bounds=config.window)
 
 
 def fit_mgii_complex(
@@ -3153,7 +3155,8 @@ def _fit_hbeta_candidate(
             "linear_solve_count": int(getattr(result, "linear_solve_count", 0) or 0),
         }
     )
-    return HbetaComplexResult(
+    from ..line_peaks import profile_definitions, record_fit_peaks
+    fitted = HbetaComplexResult(
         success=bool(result.success),
         status=int(result.status),
         message=str(result.message),
@@ -3177,6 +3180,7 @@ def _fit_hbeta_candidate(
         metadata=metadata,
         optimizer_result=result,
     )
+    return record_fit_peaks(fitted, spectrum.z, definitions=profile_definitions(context), bounds=config.window)
 
 
 def fit_hbeta_complex(
@@ -4224,6 +4228,10 @@ def fit_global_lines(
         warnings=warnings,
         metadata=metadata,
     )
+    from ..line_peaks import record_fit_peaks
+    for fitted in workflow.line_complexes.values():
+        if fitted.success and fitted.metadata.get("peak_model"):
+            record_fit_peaks(fitted, spectrum.z)
     if uncertainty_cfg.monte_carlo_trials > 0:
         workflow.monte_carlo = _run_workflow_mc(
             spectrum,

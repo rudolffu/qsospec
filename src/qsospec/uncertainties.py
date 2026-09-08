@@ -103,7 +103,9 @@ def trial_seed(seed, object_id, trial_id):
 
 
 def workflow_measurements(result):
+    from .systemic_redshift import luminosity_1700
     values = dict(result.metadata.get("continuum_samples", {}))
+    values["ws22_log_l1700"] = luminosity_1700(result)["log_l1700"]
     values.update(result.continuum.param_values)
     for recipe, fit in result.line_complexes.items():
         if fit.success:
@@ -224,6 +226,15 @@ def apply_bootstrap_errors(result):
     for recipe,fit in result.line_complexes.items():
         fit.metric_errors={name:errors.get(f'{recipe}:{name}',errors.get(name,np.nan)) for name in fit.metrics}
         fit.metadata['measurement_uncertainty_method']=result.monte_carlo.get('method')
+        for key, peak in fit.metadata.get('line_peaks', {}).get('measurements', {}).items():
+            error = fit.metric_errors.get(f'{key}_peak_rest_angstrom', np.nan)
+            peak['peak_error_rest_angstrom'] = error
+            peak['peak_error_observed_angstrom'] = error*(1+result.spectrum.z)
+            peak['peak_velocity_error_kms'] = 299792.458*error/peak['peak_rest_angstrom']
+            peak['flux_error'] = fit.metric_errors.get(f'{key}_peak_selection_flux', np.nan)
+            peak['uncertainty_method'] = result.monte_carlo.get('method')
+            peak['uncertainty_status'] = 'available' if np.isfinite(error) and error > 0 else 'insufficient_bootstrap_trials'
+
         fit.metadata['measurement_intervals']={name:result.monte_carlo.get('percentiles',{}).get(f'{recipe}:{name}',result.monte_carlo.get('percentiles',{}).get(name)) for name in fit.metrics}
 
 

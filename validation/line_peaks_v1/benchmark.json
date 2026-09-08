@@ -1,0 +1,439 @@
+[
+  {
+    "object_id": "113506544049645456",
+    "fit_seconds": 19.932151792105287,
+    "peak_seconds": 0.1422220841050148,
+    "systemic_seconds": 0.0008687498047947884,
+    "recovery": {
+      "hbeta_oiii": "available",
+      "oii_nev_neiii_hgamma": "available",
+      "mgii": "available"
+    },
+    "diagnostic": {
+      "method": "ws22",
+      "calibration_version": "ws22-shen16-v1",
+      "sources": [
+        "https://arxiv.org/html/2209.03987#S4.SS2",
+        "https://arxiv.org/html/1602.03894#S5"
+      ],
+      "status": "available",
+      "input_redshift": 0.7521462496567684,
+      "z_sys": 0.7518668467250584,
+      "z_sys_error": 0.0003203511391022756,
+      "offset_kms": -47.805879038995876,
+      "lines": {
+        "hbeta": {
+          "recipe": "hbeta_oiii",
+          "peak_key": "hbeta_broad",
+          "calibration": {
+            "peak": "hbeta_broad",
+            "wavelength": 4862.68,
+            "offset": -109.0,
+            "scatter": 400.0
+          },
+          "peak_rest_angstrom": 4863.364878390433,
+          "component_ids": [
+            "Hb_broad1",
+            "Hb_broad2",
+            "Hb_broad3"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 0.8724703502769068,
+          "flux_snr": 15.578165191201649,
+          "z_line": 0.7523930286147231,
+          "z_sys": 0.7530304039353155,
+          "correction_kms": -109.0,
+          "measurement_error": 0.0009459345106596374,
+          "intrinsic_error": 0.0023389920021741383,
+          "total_error": 0.00252302906933144,
+          "weight": 0.01612401086812872
+        },
+        "oiii": {
+          "recipe": "hbeta_oiii",
+          "peak_key": "oiii_5008_full",
+          "calibration": {
+            "peak": "oiii_5008_full",
+            "wavelength": 5008.24,
+            "offset": -48.0,
+            "scatter": 56.0
+          },
+          "peak_rest_angstrom": 5006.092890888952,
+          "component_ids": [
+            "OIII5007_core"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 0.8724703502769068,
+          "flux_snr": 19.36730527384289,
+          "z_line": 0.7513950777527609,
+          "z_sys": 0.7516755398646979,
+          "correction_kms": -48.0,
+          "measurement_error": 6.453332776762888e-05,
+          "intrinsic_error": 0.00032720579725999344,
+          "total_error": 0.00033350889666291085,
+          "weight": 0.922789711117401
+        },
+        "caii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "oii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "mgii": {
+          "recipe": "mgii",
+          "peak_key": "mgii_blend_full_ws22",
+          "calibration": {
+            "peak": "mgii_blend_full_ws22",
+            "wavelength": 2798.75,
+            "offset": -57.0,
+            "scatter": 205.0
+          },
+          "peak_rest_angstrom": 2801.8964776584567,
+          "component_ids": [
+            "MgII_broad1",
+            "MgII_broad2"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 0.9999165311364686,
+          "flux_snr": 30.0950390012187,
+          "z_line": 0.7541160894169803,
+          "z_sys": 0.7544496656236928,
+          "correction_kms": -57.0,
+          "measurement_error": 0.0004908774141378452,
+          "intrinsic_error": 0.0011997039013331584,
+          "total_error": 0.0012962446090860544,
+          "weight": 0.06108627801447018
+        },
+        "ciii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "civ": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "siiv": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        }
+      },
+      "luminosity": {
+        "status": "unavailable",
+        "log_l1700": NaN,
+        "error_dex": NaN,
+        "source": "saved_power_law_plus_polynomial",
+        "cosmology": "FlatLambdaCDM(H0=70, Om0=0.3)",
+        "parameter_names": [],
+        "gradient": []
+      },
+      "uncertainty_assumptions": [
+        "conditional_on_fitted_model_and_input_frame",
+        "intrinsic_line_scatters_independent",
+        "unavailable_cross_fit_correlations_assumed_zero"
+      ],
+      "clipping": "one_pass_3_unscaled_MAD_about_initial_weighted_mean",
+      "adopted": false,
+      "uncertainty_method": "local_covariance",
+      "line_order": [
+        "hbeta",
+        "oiii",
+        "mgii"
+      ],
+      "redshift_covariance": [
+        [
+          6.365675684691471e-06,
+          -5.165510158685971e-10,
+          0.0
+        ],
+        [
+          -5.165510158685971e-10,
+          1.1122818415331216e-07,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.6802500865846582e-06
+        ]
+      ]
+    },
+    "input_redshift_unchanged": true,
+    "spectral_optimizer_calls_during_postprocessing": 0
+  },
+  {
+    "object_id": "1480622244667403470",
+    "fit_seconds": 13.924084041733295,
+    "peak_seconds": 0.2033644998446107,
+    "systemic_seconds": 0.0005612918175756931,
+    "recovery": {
+      "oii_nev_neiii_hgamma": "available",
+      "mgii": "available"
+    },
+    "diagnostic": {
+      "method": "ws22",
+      "calibration_version": "ws22-shen16-v1",
+      "sources": [
+        "https://arxiv.org/html/2209.03987#S4.SS2",
+        "https://arxiv.org/html/1602.03894#S5"
+      ],
+      "status": "available",
+      "input_redshift": 0.9659902964227808,
+      "z_sys": 0.9670995058784211,
+      "z_sys_error": 0.0013892046269309516,
+      "offset_kms": 169.14255871369684,
+      "lines": {
+        "hbeta": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "oiii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "caii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "oii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "mgii": {
+          "recipe": "mgii",
+          "peak_key": "mgii_blend_full_ws22",
+          "calibration": {
+            "peak": "mgii_blend_full_ws22",
+            "wavelength": 2798.75,
+            "offset": -57.0,
+            "scatter": 205.0
+          },
+          "peak_rest_angstrom": 2799.7966206600286,
+          "component_ids": [
+            "MgII_broad1",
+            "MgII_broad2"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 0.9989876367009879,
+          "flux_snr": 39.9465500528676,
+          "z_line": 0.9667254982313209,
+          "z_sys": 0.9670995058784211,
+          "correction_kms": -57.0,
+          "measurement_error": 0.0003472096412171647,
+          "intrinsic_error": 0.0013451152220282886,
+          "total_error": 0.0013892046269309516,
+          "weight": 1.0
+        },
+        "ciii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "civ": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "siiv": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        }
+      },
+      "luminosity": {
+        "status": "unavailable",
+        "log_l1700": NaN,
+        "error_dex": NaN,
+        "source": "saved_power_law_plus_polynomial",
+        "cosmology": "FlatLambdaCDM(H0=70, Om0=0.3)",
+        "parameter_names": [],
+        "gradient": []
+      },
+      "uncertainty_assumptions": [
+        "conditional_on_fitted_model_and_input_frame",
+        "intrinsic_line_scatters_independent",
+        "unavailable_cross_fit_correlations_assumed_zero"
+      ],
+      "clipping": "one_pass_3_unscaled_MAD_about_initial_weighted_mean",
+      "adopted": false,
+      "uncertainty_method": "local_covariance",
+      "line_order": [
+        "mgii"
+      ],
+      "redshift_covariance": [
+        [
+          1.9298894954863643e-06
+        ]
+      ]
+    },
+    "input_redshift_unchanged": true,
+    "spectral_optimizer_calls_during_postprocessing": 0
+  },
+  {
+    "object_id": "2779599899604114953",
+    "fit_seconds": 22.599399292375892,
+    "peak_seconds": 0.17027654079720378,
+    "systemic_seconds": 0.00025295792147517204,
+    "recovery": {
+      "hbeta_oiii": "available",
+      "oii_nev_neiii_hgamma": "available",
+      "mgii": "available"
+    },
+    "diagnostic": {
+      "method": "ws22",
+      "calibration_version": "ws22-shen16-v1",
+      "sources": [
+        "https://arxiv.org/html/2209.03987#S4.SS2",
+        "https://arxiv.org/html/1602.03894#S5"
+      ],
+      "status": "available",
+      "input_redshift": 0.887511212160674,
+      "z_sys": 0.8859658863575905,
+      "z_sys_error": 0.0005635404788257877,
+      "offset_kms": -245.44332130715097,
+      "lines": {
+        "hbeta": {
+          "recipe": "hbeta_oiii",
+          "peak_key": "hbeta_broad",
+          "calibration": {
+            "peak": "hbeta_broad",
+            "wavelength": 4862.68,
+            "offset": -109.0,
+            "scatter": 400.0
+          },
+          "peak_rest_angstrom": 4870.447291023301,
+          "component_ids": [
+            "Hb_broad1",
+            "Hb_broad2",
+            "Hb_broad3"
+          ],
+          "status": "excluded",
+          "reason": "redshift_outlier",
+          "coverage_fraction": 0.8799256685292776,
+          "flux_snr": 3.1245060983705577,
+          "z_line": 0.8905261851579911,
+          "z_sys": 0.8912138018704967,
+          "correction_kms": -109.0,
+          "measurement_error": 0.0034882381585331634,
+          "intrinsic_error": 0.002523364082588758,
+          "total_error": 0.004305249324248927,
+          "weight": 0.0
+        },
+        "oiii": {
+          "recipe": "hbeta_oiii",
+          "peak_key": "oiii_5008_full",
+          "calibration": {
+            "peak": "oiii_5008_full",
+            "wavelength": 5008.24,
+            "offset": -48.0,
+            "scatter": 56.0
+          },
+          "peak_rest_angstrom": 5002.860423074405,
+          "component_ids": [
+            "OIII5007_core"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 0.8799256685292776,
+          "flux_snr": 5.921329414233391,
+          "z_line": 0.8854837510638134,
+          "z_sys": 0.8857856856538804,
+          "correction_kms": -48.0,
+          "measurement_error": 0.0005020827774766489,
+          "intrinsic_error": 0.0003522570217447475,
+          "total_error": 0.0006133287249160483,
+          "weight": 0.8442355249954061
+        },
+        "caii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "oii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "mgii": {
+          "recipe": "mgii",
+          "peak_key": "mgii_blend_full_ws22",
+          "calibration": {
+            "peak": "mgii_blend_full_ws22",
+            "wavelength": 2798.75,
+            "offset": -57.0,
+            "scatter": 205.0
+          },
+          "peak_rest_angstrom": 2797.3748552230963,
+          "component_ids": [
+            "MgII_broad1",
+            "MgII_broad2",
+            "MgII_narrow"
+          ],
+          "status": "used",
+          "reason": null,
+          "coverage_fraction": 1.0,
+          "flux_snr": 51.73448247810908,
+          "z_line": 0.8865837977132422,
+          "z_sys": 0.886942564998191,
+          "correction_kms": -57.0,
+          "measurement_error": 0.0006115152655430616,
+          "intrinsic_error": 0.0012903033932382287,
+          "total_error": 0.00142787736398974,
+          "weight": 0.1557644750045939
+        },
+        "ciii": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "civ": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        },
+        "siiv": {
+          "status": "excluded",
+          "reason": "compatible_peak_unavailable"
+        }
+      },
+      "luminosity": {
+        "status": "unavailable",
+        "log_l1700": NaN,
+        "error_dex": NaN,
+        "source": "saved_power_law_plus_polynomial",
+        "cosmology": "FlatLambdaCDM(H0=70, Om0=0.3)",
+        "parameter_names": [],
+        "gradient": []
+      },
+      "uncertainty_assumptions": [
+        "conditional_on_fitted_model_and_input_frame",
+        "intrinsic_line_scatters_independent",
+        "unavailable_cross_fit_correlations_assumed_zero"
+      ],
+      "clipping": "one_pass_3_unscaled_MAD_about_initial_weighted_mean",
+      "adopted": false,
+      "uncertainty_method": "local_covariance",
+      "line_order": [
+        "hbeta",
+        "oiii",
+        "mgii"
+      ],
+      "redshift_covariance": [
+        [
+          1.8535171743945838e-05,
+          9.021600021921464e-07,
+          0.0
+        ],
+        [
+          9.021600021921464e-07,
+          3.761721248071456e-07,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          2.0388337665942882e-06
+        ]
+      ]
+    },
+    "input_redshift_unchanged": true,
+    "spectral_optimizer_calls_during_postprocessing": 0
+  }
+]

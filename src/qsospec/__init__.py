@@ -350,3 +350,7 @@ __all__ = [
 from .uncertainties import recover_uncertainties, host_agn_covariance, measure_selected_profile
 
 __all__.extend(["RegionalIronConfig", "recover_uncertainties", "host_agn_covariance", "measure_selected_profile"])
+
+from .line_peaks import recover_line_peaks
+from .systemic_redshift import estimate_systemic_redshift
+__all__ += ["recover_line_peaks", "estimate_systemic_redshift"]

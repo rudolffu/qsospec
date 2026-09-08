@@ -289,7 +289,7 @@ def _float(value: Any) -> Optional[float]:
 
 def _feature_and_role(name: str) -> tuple[Optional[str], Optional[str]]:
     lowered = name.lower()
-    roles = ("very_broad", "broad", "narrow", "wing", "blend")
+    roles = ("very_broad", "broad", "narrow", "wing", "full", "blend")
     for role in roles:
         token = f"_{role}_"
         if token in lowered:
@@ -384,12 +384,28 @@ def _measurement_rows(
             fit.param_errors,
             "covariance",
         )
+        peak_units, peak_metadata = {}, {}
+        for key, peak in fit.metadata.get("line_peaks", {}).get("measurements", {}).items():
+            for suffix, unit in (("rest_angstrom", "Angstrom"), ("observed_angstrom", "Angstrom"),
+                                 ("velocity_kms", "km/s"), ("selection_flux", "input_flux")):
+                quantity = f"{key}_peak_{suffix}"
+                peak_units[quantity] = unit
+                peak_metadata[quantity] = {
+                    "peak_status": peak["status"],
+                    "uncertainty_status": peak["uncertainty_status"],
+                    "uncertainty_method": peak["uncertainty_method"],
+                    "component_ids": peak["component_ids"],
+                    "vacuum_wavelength": True,
+                    "reference_wave": peak["reference_wave"],
+                }
         add(
             "complex_metric",
             recipe_id,
             fit.metrics,
             fit.metric_errors,
             fit.metadata.get("measurement_uncertainty_method", "covariance"),
+            units=peak_units,
+            metadata_by_quantity=peak_metadata,
         )
     host_strategy = result.metadata.get("host_strategy_used")
     continuum_samples = result.metadata.get("continuum_samples", {})

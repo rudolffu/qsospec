@@ -913,7 +913,8 @@ def fit_generic_complex(
         "decomposition_dependent": recipe.id == "paschen_nir",
         "optional_component_selection": selection_metadata,
     })
-    return EmissionComplexResult(
+    from ..line_peaks import profile_definitions, record_fit_peaks
+    fitted = EmissionComplexResult(
         bool(result.success), int(result.status), str(result.message), recipe.id,
         {name: float(result.x[index]) for index, name in enumerate(context.names)},
         errors, covariance, metric_values, metric_errors, chi2, dof, float(reduced),
@@ -922,6 +923,8 @@ def fit_generic_complex(
         context.components(result.x, spectrum.wave_rest), mask, fit_warnings, metadata,
         result,
     )
+    return record_fit_peaks(fitted, spectrum.z, definitions=profile_definitions(context),
+        bounds=(min(w[0] for w in coverage.fit_windows), max(w[1] for w in coverage.fit_windows)))
 
 
 def _lya_skipped_result(

@@ -105,4 +105,6 @@ workflows, model definitions, examples, and API reference.
 Regional VW01/Verner09/Park22 iron, soft Hγ refinement, and native covariance /
 matched-bootstrap products are described in
 [the iron, Balmer and uncertainty guide](docs/iron-balmer-uncertainties.md).
+
+Line peaks are recorded automatically. See [line peaks and optional systemic redshifts](docs/line-peaks-systemic-redshift.md) for the opt-in `ws22` diagnostic, including use with an externally supplied DR20Q `z_sys`.
 A compact comparison is available in `examples/iron_balmer_uncertainty.py`.
