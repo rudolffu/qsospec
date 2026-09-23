@@ -396,3 +396,194 @@ def test_soft_width_prior_yields_to_strong_spectral_information():
     assert result.success
     assert result.param_values['uv_iron.fwhm_kms']/result.param_values['optical_iron.fwhm_kms']==pytest.approx(.3,rel=.03)
     assert result.metadata['prior_penalty']>1.
+
+
+def _direct_broadened(template, fwhm_kms, velocity_step=25.0):
+    """Reference implementation of the pre-optimization convolution path."""
+    from qsospec.templates.iron import (
+        C_KMS,
+        FWHM_TO_SIGMA,
+        _log_grid,
+        resolve_iron_width,
+    )
+
+    resolved = resolve_iron_width(template, fwhm_kms, "legacy")
+    convolution_fwhm = float(resolved["kernel_fwhm_kms"])
+    native_fwhm = (
+        template.native_fwhm_kms
+        if resolved["requested_width_mode"] == "target"
+        else 0.0
+    )
+    grid = _log_grid(
+        float(template.wave_rest.min()), float(template.wave_rest.max()), velocity_step
+    )
+    sampled = np.interp(grid, template.wave_rest, template.flux, left=0.0, right=0.0)
+    if convolution_fwhm == 0:
+        return grid, sampled, np.zeros_like(sampled)
+    sigma_pix = (convolution_fwhm / FWHM_TO_SIGMA) / float(velocity_step)
+    half = max(1, int(np.ceil(4.0 * sigma_pix)))
+    x = np.arange(-half, half + 1, dtype=float)
+    raw_kernel = np.exp(-0.5 * (x / sigma_pix) ** 2)
+    raw_derivative = raw_kernel * x**2 / sigma_pix**3
+    kernel_sum = raw_kernel.sum()
+    kernel = raw_kernel / kernel_sum
+    kernel_derivative_sigma = (
+        raw_derivative * kernel_sum - raw_kernel * raw_derivative.sum()
+    ) / kernel_sum**2
+    chain = float(fwhm_kms) / convolution_fwhm if native_fwhm > 0 else 1.0
+    kernel_derivative_fwhm = kernel_derivative_sigma * chain / (
+        FWHM_TO_SIGMA * float(velocity_step)
+    )
+    return (
+        grid,
+        np.convolve(np.pad(sampled, half), kernel, mode="same")[half:-half],
+        np.convolve(np.pad(sampled, half), kernel_derivative_fwhm, mode="same")[
+            half:-half
+        ],
+    )
+
+
+@pytest.mark.parametrize("template_name", ["vw01", "park22", "verner09", "bg92"])
+def test_optimized_iron_convolution_matches_direct_reference(template_name):
+    from qsospec.templates.iron import (
+        _broaden_template_with_derivative,
+        clear_iron_caches,
+    )
+
+    template = load_iron_template(template_name)
+    native = template.native_fwhm_kms
+    for fwhm in (0.0, 900.0, 3000.0, 12000.0):
+        if native > 0 and fwhm < native:
+            continue
+        clear_iron_caches()
+        reference_grid, reference_flux, reference_derivative = _direct_broadened(
+            template, fwhm
+        )
+        grid, flux, derivative = _broaden_template_with_derivative(template, fwhm)
+        np.testing.assert_allclose(grid, reference_grid, rtol=0.0, atol=0.0)
+        scale = max(float(np.max(np.abs(reference_flux))), 1.0e-30)
+        np.testing.assert_allclose(flux, reference_flux, rtol=1.0e-10, atol=1.0e-12 * scale)
+        derivative_scale = max(float(np.max(np.abs(reference_derivative))), 1.0e-30)
+        np.testing.assert_allclose(
+            derivative,
+            reference_derivative,
+            rtol=1.0e-10,
+            atol=1.0e-12 * derivative_scale,
+        )
+
+
+def test_optimized_iron_convolution_matches_direct_reference_external(tmp_path):
+    from qsospec.templates.iron import (
+        _broaden_template_with_derivative,
+        clear_iron_caches,
+    )
+
+    path = _write_template(
+        tmp_path / "external_iron.txt",
+        np.linspace(2900.0, 3600.0, 501),
+        np.exp(-0.5 * ((np.linspace(2900.0, 3600.0, 501) - 3200.0) / 40.0) ** 2),
+    )
+    template = load_iron_template("external", template_path=str(path))
+    for fwhm in (0.0, 1500.0, 9000.0):
+        clear_iron_caches()
+        reference = _direct_broadened(template, fwhm)
+        optimized = _broaden_template_with_derivative(template, fwhm)
+        for expected, observed in zip(reference, optimized):
+            scale = max(float(np.max(np.abs(expected))), 1.0e-30)
+            np.testing.assert_allclose(
+                observed, expected, rtol=1.0e-10, atol=1.0e-12 * scale
+            )
+
+
+def test_iron_cache_reuse_and_returned_array_immutability(monkeypatch):
+    import qsospec.templates.iron as iron_module
+    from qsospec.templates.iron import clear_iron_caches
+
+    clear_iron_caches()
+    calls = []
+    original = iron_module._linear_convolve
+
+    def counting(padded, kernel):
+        calls.append(1)
+        return original(padded, kernel)
+
+    monkeypatch.setattr(iron_module, "_linear_convolve", counting)
+    template = load_iron_template("park22")
+    wave = np.linspace(4000.0, 5500.0, 500)
+    first = evaluate_iron_basis(template, wave, 3000.0)
+    assert len(calls) == 1
+    first += 1234.0
+    second = evaluate_iron_basis(template, wave, 3000.0)
+    assert len(calls) == 1
+    assert not np.allclose(first, second)
+    expected = _direct_broadened(template, 3000.0)
+    from qsospec.templates.iron import _apply_coverage_taper
+
+    reference = _apply_coverage_taper(
+        template, wave, np.interp(wave, expected[0], expected[1], left=0.0, right=0.0)
+    )
+    np.testing.assert_allclose(second, reference, rtol=1.0e-10, atol=1.0e-12)
+
+
+def test_flux_only_iron_evaluation_skips_derivative_convolutions(monkeypatch):
+    import qsospec.templates.iron as iron_module
+    from qsospec.templates.iron import clear_iron_caches
+
+    template = load_iron_template("vw01")
+    wave = np.linspace(2200.0, 3100.0, 400)
+    clear_iron_caches()
+    derivative_calls = []
+    original = iron_module._broadened_derivative
+
+    def counting(*args, **kwargs):
+        derivative_calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(iron_module, "_broadened_derivative", counting)
+    evaluate_iron_basis(template, wave, 2600.0)
+    assert derivative_calls == []
+    evaluate_iron_basis_with_derivative(template, wave, 2600.0)
+    assert len(derivative_calls) == 1
+
+
+def test_regional_bridge_value_only_design_convolves_once_per_template(monkeypatch):
+    import qsospec.templates.iron as iron_module
+    from qsospec.fitting.global_fit import _ContinuumContext
+    from qsospec.templates.iron import clear_iron_caches
+
+    wave = np.linspace(3300.0, 5500.0, 400)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        2.0 * (wave / 4000.0) ** -1.0,
+        err=np.full_like(wave, 0.05),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    clear_iron_caches()
+    calls = []
+    original = iron_module._linear_convolve
+
+    def counting(padded, kernel):
+        calls.append(1)
+        return original(padded, kernel)
+
+    monkeypatch.setattr(iron_module, "_linear_convolve", counting)
+    context = _ContinuumContext(spectrum, qsospec.GlobalContinuumConfig())
+    nonlinear = np.array(
+        [context.initial[context.index[name]] for name in context.nonlinear_names]
+    )
+    context.separable_design(nonlinear, wave, False)
+    # One convolution for uv_iron, optical_iron, and the regional middle
+    # template; the legacy outer taper reuses the same broadened arrays and
+    # the repeated value-only design is served from the cache.
+    assert len(calls) == 3
+
+
+def test_iron_basis_is_zero_beyond_template_coverage():
+    template = load_iron_template("park22")
+    coverage = template.coverage
+    wave = np.linspace(coverage[0] - 40.0, coverage[1] + 40.0, 500)
+    basis = evaluate_iron_basis(template, wave, 3000.0)
+    assert np.all(basis[(wave < coverage[0]) | (wave > coverage[1])] == 0.0)
+    assert np.all(basis >= 0.0)
+    assert np.any(basis > 0.0)

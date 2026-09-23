@@ -2,16 +2,65 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import List, Optional, Tuple
 
 import numpy as np
+from scipy import signal
 
 from ..warnings import FitWarning
 
 
 C_KMS = 299792.458
 FWHM_TO_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
+
+# Bounded per-worker caches: immutable template preparation, broadened arrays,
+# and their FWHM derivatives. Keys are exact (no width rounding).
+_CACHE_LIMIT = 64
+_PREPARED_CACHE: "OrderedDict[Tuple[str, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
+_BROADENED_CACHE: "OrderedDict[Tuple[str, float, float], np.ndarray]" = OrderedDict()
+_DERIVATIVE_CACHE: "OrderedDict[Tuple[str, float, float, float], np.ndarray]" = OrderedDict()
+
+
+def _cache_store(cache: OrderedDict, key, value):
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _CACHE_LIMIT:
+        cache.popitem(last=False)
+    return value
+
+
+def _cache_fetch(cache: OrderedDict, key):
+    value = cache.get(key)
+    if value is not None:
+        cache.move_to_end(key)
+    return value
+
+
+def _template_token(template: IronTemplate) -> str:
+    token = getattr(template, "_cache_token", None)
+    if isinstance(token, str):
+        return token
+    values = np.ascontiguousarray(
+        np.column_stack([template.wave_rest, template.flux]),
+        dtype=np.float64,
+    )
+    token = sha256(values.view(np.uint8)).hexdigest()
+    try:
+        template._cache_token = token
+    except Exception:
+        pass
+    return token
+
+
+def clear_iron_caches() -> None:
+    """Drop cached template preparation and broadened arrays (tests/benchmarks)."""
+
+    _PREPARED_CACHE.clear()
+    _BROADENED_CACHE.clear()
+    _DERIVATIVE_CACHE.clear()
 
 
 class IronTemplateError(ValueError):
@@ -72,50 +121,133 @@ def _log_grid(wave_min: float, wave_max: float, velocity_step_kms: float) -> np.
     return np.exp(np.arange(np.log(wave_min), np.log(wave_max) + 0.5 * dlog, dlog))
 
 
+def _prepared_sampling(
+    template: IronTemplate,
+    velocity_step_kms: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return the immutable log grid and the template resampled onto it."""
+
+    key = (_template_token(template), float(velocity_step_kms))
+    cached = _cache_fetch(_PREPARED_CACHE, key)
+    if cached is not None:
+        return cached
+    wave = template.wave_rest
+    # Keep the original sampling phase; explicit zero padding prevents the
+    # convolution output from exceeding the input for very broad kernels.
+    grid = _log_grid(float(wave.min()), float(wave.max()), velocity_step_kms)
+    sampled = np.interp(grid, wave, template.flux, left=0.0, right=0.0)
+    return _cache_store(_PREPARED_CACHE, key, (grid, sampled))
+
+
+def _linear_convolve(padded: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    return signal.convolve(padded, kernel, mode="same", method="auto")
+
+
+def _broadened_flux(
+    template: IronTemplate,
+    convolution_fwhm: float,
+    velocity_step_kms: float,
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Return (grid, broadened flux, kernel half width) with one convolution."""
+
+    token = _template_token(template)
+    key = (token, float(convolution_fwhm), float(velocity_step_kms))
+    cached = _cache_fetch(_BROADENED_CACHE, key)
+    grid, sampled = _prepared_sampling(template, velocity_step_kms)
+    sigma_pix = (float(convolution_fwhm) / FWHM_TO_SIGMA) / float(velocity_step_kms)
+    half = max(1, int(np.ceil(4.0 * sigma_pix)))
+    if cached is not None:
+        return grid, cached, half
+    x = np.arange(-half, half + 1, dtype=float)
+    raw_kernel = np.exp(-0.5 * (x / sigma_pix) ** 2)
+    kernel = raw_kernel / raw_kernel.sum()
+    broadened = _linear_convolve(np.pad(sampled, half), kernel)[half:-half]
+    return grid, _cache_store(_BROADENED_CACHE, key, broadened), half
+
+
+def _broadened_derivative(
+    template: IronTemplate,
+    convolution_fwhm: float,
+    velocity_step_kms: float,
+    fwhm_kms: float,
+    native_fwhm: float,
+) -> Tuple[np.ndarray, int]:
+    """Return (d(broadened)/d(requested FWHM), kernel half width)."""
+
+    if native_fwhm > 0:
+        chain = float(fwhm_kms) / float(convolution_fwhm)
+    else:
+        chain = 1.0
+    token = _template_token(template)
+    key = (
+        token,
+        float(convolution_fwhm),
+        float(velocity_step_kms),
+        float(chain),
+    )
+    cached = _cache_fetch(_DERIVATIVE_CACHE, key)
+    _, sampled = _prepared_sampling(template, velocity_step_kms)
+    sigma_pix = (float(convolution_fwhm) / FWHM_TO_SIGMA) / float(velocity_step_kms)
+    half = max(1, int(np.ceil(4.0 * sigma_pix)))
+    if cached is not None:
+        return cached, half
+    x = np.arange(-half, half + 1, dtype=float)
+    raw_kernel = np.exp(-0.5 * (x / sigma_pix) ** 2)
+    raw_derivative = raw_kernel * x**2 / sigma_pix**3
+    kernel_sum = raw_kernel.sum()
+    kernel_derivative_sigma = (
+        raw_derivative * kernel_sum - raw_kernel * raw_derivative.sum()
+    ) / kernel_sum**2
+    sigma_derivative_fwhm = chain / (FWHM_TO_SIGMA * float(velocity_step_kms))
+    kernel_derivative_fwhm = kernel_derivative_sigma * sigma_derivative_fwhm
+    derivative = _linear_convolve(
+        np.pad(sampled, half), kernel_derivative_fwhm
+    )[half:-half]
+    return _cache_store(_DERIVATIVE_CACHE, key, derivative), half
+
+
 def _broaden_template_with_derivative(
     template: IronTemplate,
     fwhm_kms: float,
     velocity_step_kms: float = 25.0,
     width_mode: str = "legacy",
+    need_derivative: bool = True,
 ):
     resolved = resolve_iron_width(template, fwhm_kms, width_mode)
-    convolution_fwhm = resolved["kernel_fwhm_kms"]
-    native_fwhm = template.native_fwhm_kms if resolved["requested_width_mode"] == "target" else 0.0
-    wave = template.wave_rest
-    flux = template.flux
-    # Keep the original sampling phase; explicit zero padding prevents the
-    # convolution output from exceeding the input for very broad kernels.
-    grid = _log_grid(float(wave.min()), float(wave.max()), velocity_step_kms)
-    sampled = np.interp(grid, wave, flux, left=0.0, right=0.0)
+    convolution_fwhm = float(resolved["kernel_fwhm_kms"])
+    native_fwhm = (
+        float(template.native_fwhm_kms)
+        if resolved["requested_width_mode"] == "target"
+        else 0.0
+    )
     if convolution_fwhm == 0:
-        return grid, sampled, np.zeros_like(sampled)
-    sigma_pix = (convolution_fwhm / FWHM_TO_SIGMA) / float(velocity_step_kms)
-    half = max(1, int(np.ceil(4.0 * sigma_pix)))
-    x = np.arange(-half, half + 1, dtype=float)
-    raw_kernel = np.exp(-0.5 * (x / sigma_pix) ** 2)
-    raw_derivative = raw_kernel * x**2 / sigma_pix**3
-    kernel_sum = raw_kernel.sum()
-    kernel = raw_kernel / kernel_sum
-    kernel_derivative_sigma = (
-        raw_derivative * kernel_sum - raw_kernel * raw_derivative.sum()
-    ) / kernel_sum**2
-    convolution_derivative = (
-        float(fwhm_kms) / convolution_fwhm if native_fwhm > 0 else 1.0
+        grid, sampled = _prepared_sampling(template, velocity_step_kms)
+        return grid, sampled, np.zeros_like(sampled) if need_derivative else None
+    grid, broadened, _ = _broadened_flux(
+        template, convolution_fwhm, velocity_step_kms
     )
-    sigma_derivative_fwhm = convolution_derivative / (
-        FWHM_TO_SIGMA * float(velocity_step_kms)
+    if not need_derivative:
+        return grid, broadened, None
+    derivative, _ = _broadened_derivative(
+        template,
+        convolution_fwhm,
+        velocity_step_kms,
+        float(fwhm_kms),
+        native_fwhm,
     )
-    kernel_derivative_fwhm = kernel_derivative_sigma * sigma_derivative_fwhm
-    return (
-        grid,
-        np.convolve(np.pad(sampled, half), kernel, mode="same")[half:-half],
-        np.convolve(np.pad(sampled, half), kernel_derivative_fwhm, mode="same")[half:-half],
-    )
+    return grid, broadened, derivative
 
 
-def _broaden_template(template: IronTemplate, fwhm_kms: float, velocity_step_kms: float = 25.0):
+def _broaden_template(
+    template: IronTemplate,
+    fwhm_kms: float,
+    velocity_step_kms: float = 25.0,
+):
     grid, broadened, _ = _broaden_template_with_derivative(
-        template, fwhm_kms, velocity_step_kms
+        template,
+        fwhm_kms,
+        velocity_step_kms,
+        need_derivative=False,
     )
     return grid, broadened
 
@@ -251,12 +383,35 @@ def resolve_iron_width(template, value, mode="legacy"):
             "effective_width_status": "gaussian_equivalent" if known else "unavailable"}
 
 
-def evaluate_iron_kernel(template, wave, kernel_fwhm_kms, *, taper=True):
+def evaluate_iron_kernel(
+    template,
+    wave,
+    kernel_fwhm_kms,
+    *,
+    taper=True,
+    need_derivative=True,
+):
     """Evaluate full-template convolution and derivative in kernel coordinates."""
     grid, flux, derivative = _broaden_template_with_derivative(
-        template, kernel_fwhm_kms, width_mode="kernel")
-    values = tuple(np.interp(wave, grid, item, left=0., right=0.) for item in (flux, derivative))
-    return tuple(_apply_coverage_taper(template, np.asarray(wave), item) for item in values) if taper else values
+        template,
+        kernel_fwhm_kms,
+        width_mode="kernel",
+        need_derivative=need_derivative,
+    )
+    values = (
+        np.interp(wave, grid, flux, left=0.0, right=0.0),
+        None
+        if derivative is None
+        else np.interp(wave, grid, derivative, left=0.0, right=0.0),
+    )
+    if not taper:
+        return values
+    return (
+        _apply_coverage_taper(template, np.asarray(wave), values[0]),
+        None
+        if values[1] is None
+        else _apply_coverage_taper(template, np.asarray(wave), values[1]),
+    )
 
 
 def regional_weights(wave, uv_interval, optical_interval):

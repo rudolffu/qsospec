@@ -259,18 +259,25 @@ def build_host_agn_template_bundle(
         )
         if not np.any(support):
             return
-        raw = (evaluate_iron_kernel(template,wave,selected_fwhm_kms,taper=False)[0]
-            if hybrid and template_name == "verner09" else _cached_iron_basis(
-                template_name,float(selected_fwhm_kms),wave_size,wave_bytes))
         if hybrid:
             index = {"vw01":0,"verner09":1,"park22":2}[template_name]
             weights = regional_weights(wave,*intervals)[index]
-            untapered = evaluate_iron_kernel(template,wave,selected_fwhm_kms,taper=False)[0]
-            outer = wave < intervals[0][0] if index == 0 else wave > intervals[1][1] if index == 2 else np.zeros_like(wave,dtype=bool)
-            raw = np.where(outer,raw,untapered)*weights
+            untapered = evaluate_iron_kernel(
+                template,wave,selected_fwhm_kms,taper=False
+            )[0]
+            if template_name == "verner09":
+                raw = untapered*weights
+            else:
+                tapered = _cached_iron_basis(
+                    template_name,float(selected_fwhm_kms),wave_size,wave_bytes)
+                outer = wave < intervals[0][0] if index == 0 else wave > intervals[1][1]
+                raw = np.where(outer,tapered,untapered)*weights
             support &= weights > 0
             if not np.any(support):
                 return
+        else:
+            raw = _cached_iron_basis(
+                template_name,float(selected_fwhm_kms),wave_size,wave_bytes)
         values, normalization = _normalize(raw, support)
         normalization_interval = _normalization_interval(wave, support)
         native_fwhm = float(template.native_fwhm_kms)

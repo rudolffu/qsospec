@@ -230,3 +230,105 @@ def test_full_doublet_has_explicit_effective_reference():
     assert peak['reference_wave']==3728.48
     assert peak['peak_velocity_kms']==pytest.approx(C_KMS*np.log(peak['peak_rest_angstrom']/3728.48))
     assert estimate_systemic_redshift(workflow(fit))['lines']['oii']['reason']=='compatible_peak_unavailable'
+
+
+def test_exact_single_profile_peak_matches_general_search_off_grid():
+    from qsospec.line_peaks import _peak
+    fit, rows = fixture(velocity=137.4)
+    exact = measure_peak(fit, rows, .7, (4950., 5050.))
+    general, status = _peak(fit.param_values, rows, (4950., 5050.))
+    assert status == 'available'
+    assert exact['peak_rest_angstrom'] == pytest.approx(general, abs=1.e-9)
+    velocity_index = exact['parameter_names'].index('line.velocity_kms')
+    for index, value in enumerate(exact['peak_gradient']):
+        if index == velocity_index:
+            assert value == pytest.approx(
+                exact['peak_rest_angstrom']/C_KMS, rel=1.e-12)
+        else:
+            assert value == 0.0
+
+
+def test_exact_single_profile_avoids_repeated_peak_searches(monkeypatch):
+    import qsospec.line_peaks as line_peaks
+    fit, rows = fixture()
+    def fail(*args, **kwargs):
+        raise AssertionError('general peak search used for one symmetric profile')
+    monkeypatch.setattr(line_peaks, '_peak', fail)
+    measurement = measure_peak(fit, rows, .7, (4950., 5050.))
+    assert measurement['status'] == 'available'
+    assert measurement['uncertainty_status'] == 'available'
+    assert measurement['profile_support_status'] == 'supported'
+
+
+def test_exact_single_profile_statuses_and_blend_fallback(monkeypatch):
+    import qsospec.line_peaks as line_peaks
+    fit, rows = fixture()
+    fit.param_values['line.flux'] = 0.0
+    assert measure_peak(fit, rows, .7, (4950., 5050.))['status'] == 'absent_line'
+    fit.param_values['line.flux'] = -5.0
+    assert measure_peak(fit, rows, .7, (4950., 5050.))['status'] == 'absent_line'
+    fit.param_values['line.flux'] = 100.0
+    fit.param_values['line.velocity_kms'] = 4000.0
+    boundary = measure_peak(fit, rows, .7, (4950., 5050.))
+    assert boundary['status'] == 'boundary_peak'
+    assert boundary['uncertainty_status'] == 'boundary_peak'
+    assert np.isnan(boundary['peak_error_rest_angstrom'])
+    fit.param_values['line.velocity_kms'] = 0.0
+
+    calls = []
+    original = line_peaks._peak
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(line_peaks, '_peak', counting)
+    second = dict(rows[0], component_id='second', flux_parameter='line2.flux',
+        velocity_parameter='line2.velocity_kms', width_parameter='line2.fwhm_kms')
+    fit.param_values.update({'line2.flux': 100.0, 'line2.velocity_kms': 800.0,
+        'line2.fwhm_kms': 300.0})
+    fit.param_errors.update({'line2.flux': 1.0, 'line2.velocity_kms': 10.0,
+        'line2.fwhm_kms': 5.0})
+    fit.covariance = np.diag([1., 100., 25., 1., 100., 25.])
+    blended = measure_peak(fit, rows + [second], .7, (4950., 5050.))
+    assert calls
+    assert blended['status'] in ('available', 'ambiguous_peak')
+
+
+def test_half_max_support_requires_pixels_beyond_crossings():
+    fit, rows = fixture()
+    truncated_wave = np.linspace(5007.0, 5009.0, 200)
+    fit.wave_rest = truncated_wave
+    fit.fit_mask = np.ones(len(truncated_wave), bool)
+    measurement = measure_peak(fit, rows, .7, (5005.0, 5011.0))
+    assert measurement['half_max_crossings_supported'] is False
+    assert measurement['profile_support_status'] == 'truncated_or_unresolved'
+
+
+def test_deferred_peak_recording_measures_on_the_final_pass():
+    fit, rows = fixture()
+    fit.metadata.pop('line_peaks', None)
+    fit.metadata.pop('_peak_parameter_state', None)
+    record_fit_peaks(fit, .7, definitions=rows, bounds=(4950., 5050.), measure=False)
+    assert fit.metadata['peak_recovery_status'] == 'deferred'
+    assert 'line_peaks' not in fit.metadata
+    record_fit_peaks(fit, .7)
+    assert fit.metadata['peak_recovery_status'] == 'available'
+    assert 'line_peaks' in fit.metadata
+
+
+def test_repeated_peak_recording_skips_unchanged_state(monkeypatch):
+    import qsospec.line_peaks as line_peaks
+    fit, rows = fixture()
+    calls = []
+    original = line_peaks.measure_peak
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(line_peaks, 'measure_peak', counting)
+    record_fit_peaks(fit, .7)
+    assert calls == []
+    fit.param_values = dict(fit.param_values)
+    fit.param_values['line.flux'] = 90.0
+    record_fit_peaks(fit, .7)
+    assert calls
