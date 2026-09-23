@@ -11,12 +11,28 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from qsospec import finalize_run, fit_batch, open_run
+from qsospec import finalize_run, fit_batch, open_run, recipes
 from qsospec.euclid_rgs import (
     config_manifest,
     scientific_configuration,
     validate_sample_manifest,
 )
+
+COMPLEX_PRESETS = ("standard", "nir_complete_v1")
+
+
+def _resolve_complexes(preset: str):
+    """Return the fit complex selection for a named preset.
+
+    ``standard`` keeps the historical auto-enabled recipe set (``None``);
+    ``nir_complete_v1`` returns the versioned NIR-complete recipe tuple.
+    """
+
+    if preset == "standard":
+        return None
+    if preset == "nir_complete_v1":
+        return recipes.nir_complete()
+    raise ValueError(f"Unknown complex preset: {preset}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +52,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--reference-bytes-per-object", type=float)
     parser.add_argument("--disk-headroom", type=float, default=1.3)
+    parser.add_argument(
+        "--complex-preset",
+        choices=COMPLEX_PRESETS,
+        default="standard",
+        help="Emission-line recipe preset; 'standard' preserves the historical auto-enabled set.",
+    )
     return parser.parse_args()
 
 
@@ -81,6 +103,7 @@ def main() -> None:
     row_indices = _smoke_rows(args.input) if args.mode == "smoke" else None
     progress_total = len(row_indices) if row_indices is not None else validation["input_rows"]
     args.run_directory.mkdir(parents=True, exist_ok=True)
+    complexes = _resolve_complexes(args.complex_preset)
     invocation = {
         "mode": args.mode,
         "input": str(args.input.resolve()),
@@ -92,6 +115,7 @@ def main() -> None:
         "task_size": args.task_size,
         "resume": args.resume,
         "retry_failures": args.retry_failures,
+        "complex_preset": args.complex_preset,
         "scientific_configuration": config_manifest(str(args.dustmaps_data_dir)),
     }
     (args.run_directory / "invocation.json").write_text(
@@ -113,7 +137,7 @@ def main() -> None:
         galactic_extinction_config=config["galactic_extinction_config"],
         global_config=config["global_config"],
         uncertainty_config=config["uncertainty_config"],
-        complexes=None,
+        complexes=complexes,
         resume=args.resume,
         retry_failures=args.retry_failures,
         finalize=True,
@@ -126,6 +150,7 @@ def main() -> None:
     store = open_run(str(args.run_directory))
     store.manifest["sample_manifest"] = validation
     store.manifest["sample_manifest_path"] = str(args.sample_manifest.resolve())
+    store.manifest["complex_preset"] = args.complex_preset
     store._write_manifest(reconcile=False)
     payload = vars(result)
     payload["sample_validation"] = validation
