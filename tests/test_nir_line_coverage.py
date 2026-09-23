@@ -1,4 +1,4 @@
-"""Q1-complete preset, local coverage, and newly activated Q1 lines."""
+"""NIR-complete preset, local coverage, and newly activated lines."""
 
 import numpy as np
 import pytest
@@ -13,7 +13,7 @@ from qsospec.global_result import GlobalContinuumResult
 C_KMS = 299792.458
 
 # Canonical line ID -> recipe that must provide an enabled fitting path.
-Q1_FEATURES = {
+INVENTORY_FEATURES = {
     "mgii_blend": "mgii",
     "oii_3727": "oii_nev_neiii_hgamma",
     "oii_3730": "oii_nev_neiii_hgamma",
@@ -84,9 +84,9 @@ def _flat_config():
     )
 
 
-def test_q1_complete_preset_has_an_enabled_path_for_each_table_feature():
-    preset = {recipe.id: recipe for recipe in qsospec.recipes.q1_complete()}
-    assert qsospec.recipes.Q1_COMPLETE_PRESET_ID == "q1_complete_v1"
+def test_nir_complete_preset_has_an_enabled_path_for_each_table_feature():
+    preset = {recipe.id: recipe for recipe in qsospec.recipes.nir_complete()}
+    assert qsospec.recipes.NIR_COMPLETE_PRESET_ID == "nir_complete_v1"
     assert "paschen_nir" not in preset
     assert {
         "padelta",
@@ -94,7 +94,7 @@ def test_q1_complete_preset_has_an_enabled_path_for_each_table_feature():
         "oi11290",
         "pabeta",
     } <= set(preset)
-    for line_id, recipe_id in Q1_FEATURES.items():
+    for line_id, recipe_id in INVENTORY_FEATURES.items():
         assert recipe_id in preset
         enabled_lines = {
             member
@@ -103,8 +103,8 @@ def test_q1_complete_preset_has_an_enabled_path_for_each_table_feature():
             for member in component.line_ids
         }
         assert line_id in enabled_lines
-    assert len({recipe for recipe in Q1_FEATURES.values()}) == 11
-    assert {recipe.id for recipe in qsospec.recipes.q1_complete()} == set(preset)
+    assert len({recipe for recipe in INVENTORY_FEATURES.values()}) == 11
+    assert {recipe.id for recipe in qsospec.recipes.nir_complete()} == set(preset)
 
 
 @pytest.mark.parametrize(
@@ -116,7 +116,7 @@ def test_q1_complete_preset_has_an_enabled_path_for_each_table_feature():
         ("siii_9533", "siii_nir", "SIII9533_narrow", 360.0, (9390.0, 9680.0)),
     ],
 )
-def test_newly_activated_q1_lines_are_really_measured(
+def test_newly_activated_nir_lines_are_really_measured(
     line_id, recipe_id, component, fwhm_kms, window
 ):
     center = qsospec.lines.get(line_id).vacuum_wavelength
@@ -187,7 +187,7 @@ def test_siii_shared_kinematics_and_independent_fluxes():
     second = result.metrics["siii_9533_narrow_flux_input"]
     assert first == pytest.approx(40.0, rel=3.0e-3)
     assert second == pytest.approx(15.0, rel=5.0e-3)
-    # The measured Q1 doublet ratio is not imposed.
+    # The measured doublet ratio is not imposed.
     assert second / first == pytest.approx(15.0 / 40.0, rel=1.0e-2)
 
 
@@ -319,7 +319,7 @@ def test_hei_pgamma_narrow_broad_components_and_noise_rejection():
     assert all(status != "detected" for status in detection.values())
 
 
-def test_q1_compact_measurements_survive_run_store_reload(tmp_path):
+def test_nir_compact_measurements_survive_run_store_reload(tmp_path):
     wave = np.linspace(8900.0, 9750.0, 800)
     continuum = np.full_like(wave, 5.0)
     line = _gaussian_area_profile(wave, 38.0, 9071.1, 330.0)
@@ -333,8 +333,8 @@ def test_q1_compact_measurements_survive_run_store_reload(tmp_path):
         flux=continuum + line,
         error=np.full_like(wave, 0.03),
         redshift=0.0,
-        object_id="q1-siii",
-        metadata={"input_file": "memory-q1-siii"},
+        object_id="nir-siii",
+        metadata={"input_file": "memory-nir-siii"},
     )
     result = qsospec.fit_object_to_store(
         data,
@@ -349,7 +349,7 @@ def test_q1_compact_measurements_survive_run_store_reload(tmp_path):
     assert fit.metrics["siii_9071_narrow_flux_input"] == pytest.approx(38.0, rel=5.0e-3)
     assert fit.metrics["siii_9533_narrow_flux_input"] == pytest.approx(22.0, rel=8.0e-3)
 
-    loaded = qsospec.load_model(str(tmp_path / "run"), "q1-siii")
+    loaded = qsospec.load_model(str(tmp_path / "run"), "nir-siii")
     loaded_fit = loaded.line_complexes["siii_nir"]
     assert loaded_fit.metrics["siii_9071_narrow_flux_input"] == pytest.approx(
         fit.metrics["siii_9071_narrow_flux_input"], rel=1.0e-9

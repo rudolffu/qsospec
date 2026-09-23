@@ -42,11 +42,11 @@ Dedicated recipes fit Mg II, Hβ/[O III], and Hα/[N II]/[S II]. The
 optical-blue and Paschen/NIR recipes are component-adaptive after the full
 window passes its minimum coverage requirement.
 
-The :doc:`q1_line_coverage` preset (``q1_complete_v1``) adds compact He I
+The :doc:`nir_line_coverage` preset (``nir_complete_v1``) adds compact He I
 5877, O I 8449, and [S III] NIR recipes and replaces the umbrella NIR
 recipe with four locally covered compact recipes. Local-support recipes
 decide coverage from the actual valid pixels of each local window, so a
-distant unobserved line cannot disable a covered one. The [Ne III] Q1
+distant unobserved line cannot disable a covered one. The [Ne III]
 label 3868.58 Å is documented as a referencing difference from the
 registry's SDSS MaNGA vacuum value 3869.86 Å.
 

@@ -4306,9 +4306,9 @@ def fit_global_lines(
         "requested_complex_recipes": tuple(recipe.id for recipe in requested_recipes),
         "selected_complex_recipes": tuple(recipe.id for recipe in selected_recipes),
         "complex_preset_id": (
-            complex_recipes.Q1_COMPLETE_PRESET_ID
+            complex_recipes.NIR_COMPLETE_PRESET_ID
             if {recipe.id for recipe in requested_recipes}
-            == complex_recipes.Q1_COMPLETE_RECIPE_IDS
+            == complex_recipes.NIR_COMPLETE_RECIPE_IDS
             else None
         ),
         "complex_preset_configuration": (
@@ -4317,7 +4317,7 @@ def fit_global_lines(
                 for recipe in requested_recipes
             )
             if {recipe.id for recipe in requested_recipes}
-            == complex_recipes.Q1_COMPLETE_RECIPE_IDS
+            == complex_recipes.NIR_COMPLETE_RECIPE_IDS
             else None
         ),
         "continuum_preset": (
@@ -4511,7 +4511,7 @@ def _resolve_requested_recipes(
             selected.append(recipe)
     selected_ids = {recipe.id for recipe in selected}
     compact_umbrella_conflicts = selected_ids & set(
-        complex_recipes.Q1_COMPLETE_COMPACT_NIR_IDS
+        complex_recipes.NIR_COMPLETE_COMPACT_IDS
     )
     if "paschen_nir" in selected_ids and compact_umbrella_conflicts:
         raise ValueError(

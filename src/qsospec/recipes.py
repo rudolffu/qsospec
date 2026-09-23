@@ -6,21 +6,21 @@ from typing import Iterable, List, Optional, Tuple
 
 from .config import GaussianComponent, IronTemplateConfig, LineComplexConfig, LocalFitConfig, LorentzianComponent
 from .complex_recipes import (
-    Q1_COMPLETE_PRESET_ID,
-    Q1_COMPLETE_RECIPE_IDS,
+    NIR_COMPLETE_PRESET_ID,
+    NIR_COMPLETE_RECIPE_IDS,
     ComponentRecipe,
     ComplexRecipe,
     describe,
     generic_narrow_lines,
     get,
     list_complexes,
-    q1_complete_recipes,
+    nir_complete_recipes,
     resolve,
 )
 
 __all__ = [
-    "Q1_COMPLETE_PRESET_ID",
-    "Q1_COMPLETE_RECIPE_IDS",
+    "NIR_COMPLETE_PRESET_ID",
+    "NIR_COMPLETE_RECIPE_IDS",
     "ComponentRecipe",
     "ComplexRecipe",
     "describe",
@@ -31,19 +31,19 @@ __all__ = [
     "local_halpha",
     "local_hbeta",
     "local_mgii",
-    "q1_complete",
+    "nir_complete",
     "resolve",
 ]
 
 
-def q1_complete() -> Tuple[ComplexRecipe, ...]:
-    """Return the versioned Q1-complete emission-line recipe preset.
+def nir_complete() -> Tuple[ComplexRecipe, ...]:
+    """Return the versioned NIR-complete emission-line recipe preset.
 
     The returned tuple is directly accepted by
     :func:`qsospec.fit_global_lines` through its ``complexes`` argument.
     """
 
-    return q1_complete_recipes()
+    return nir_complete_recipes()
 
 
 def _iron_config(

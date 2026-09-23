@@ -1,4 +1,4 @@
-"""Staged timing benchmark for the Q1/performance changes.
+"""Staged timing benchmark for the NIR/performance changes.
 
 Deterministic synthetic spectra only. The script reports medians over repeats,
 cold/warm iron-cache timings, objective and convolution counts, and separates

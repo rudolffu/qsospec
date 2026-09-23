@@ -51,11 +51,11 @@ Built-in auto-enabled recipes
 ``generic_narrow_lines`` is available for custom construction but is not
 auto-enabled.
 
-Q1-complete preset
-------------------
+NIR-complete preset
+-------------------
 
-``qsospec.recipes.q1_complete()`` returns the versioned ``q1_complete_v1``
-recipe set (all 17 Q1 Table 3 features). It adds these compact recipes and
+``qsospec.recipes.nir_complete()`` returns the versioned ``nir_complete_v1``
+recipe set (the full 17-feature emission-line inventory). It adds these compact recipes and
 replaces ``paschen_nir`` with the compact NIR set:
 
 .. list-table::
@@ -88,7 +88,7 @@ replaces ``paschen_nir`` with the compact NIR set:
 .. code-block:: python
 
    result = qsospec.fit_global_lines(
-       spectrum, complexes=qsospec.recipes.q1_complete()
+       spectrum, complexes=qsospec.recipes.nir_complete()
    )
 
 The historical ``paschen_nir`` umbrella is unchanged for
@@ -102,12 +102,12 @@ General recipes require at least 80% total-window overlap, enough valid
 pixels, and safe required-line centers. Component-adaptive recipes choose
 covered components only after the total window passes.
 
-Recipes with ``local_support=True`` (the Q1 compact set) instead evaluate
+Recipes with ``local_support=True`` (the compact set) instead evaluate
 each local window against the actual valid pixels, center/core margin,
 and minimum pixel count. A missing distant window cannot reject a locally
 covered line; masked line cores are detected, and per-component status
 (``observed``, ``truncated``, ``masked_core``, ``not_observed``) is
-recorded in result metadata. See :doc:`../science/q1_line_coverage`.
+recorded in result metadata. See :doc:`../science/nir_line_coverage`.
 
 Lyα fits full and red-side-only coverage. Red-side-only measurements are
 limited and never reliable; edge-truncated and not-covered cases are skipped.

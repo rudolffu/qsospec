@@ -1,17 +1,17 @@
-Q1 line coverage
-================
+NIR line coverage
+=================
 
-The ``q1_complete_v1`` preset makes every emission feature of the Q1 Table 3
-inventory available through a documented, versioned recipe set:
+The ``nir_complete_v1`` preset makes the complete emission-line inventory
+available through a documented, versioned recipe set:
 
 .. code-block:: python
 
    import qsospec
 
-   complexes = qsospec.recipes.q1_complete()
+   complexes = qsospec.recipes.nir_complete()
    result = qsospec.fit_global_lines(spectrum, complexes=complexes)
 
-   assert result.metadata["complex_preset_id"] == "q1_complete_v1"
+   assert result.metadata["complex_preset_id"] == "nir_complete_v1"
 
 The preset keeps the standard auto-enabled UV/optical recipes, adds compact
 recipes for He I 5877, O I 8449, and the [S III] NIR doublet, and replaces the
@@ -26,9 +26,9 @@ Feature coverage
    :header-rows: 1
    :widths: 22 24 54
 
-   * - Q1 feature
+   * - Feature
      - Canonical line IDs
-     - Recipe in ``q1_complete_v1``
+     - Recipe in ``nir_complete_v1``
    * - Mg II
      - ``mgii_blend``
      - ``mgii``
@@ -79,13 +79,13 @@ Laboratory wavelengths
 ----------------------
 
 The recipes use numerical vacuum wavelengths, not the measured
-``lambda_obs`` values of the Q1 table, which are object-specific. The
+object-specific measured ``lambda_obs`` values. The
 newly activated transitions are He I 5877.25 Å, O I 8448.68 Å,
 [S III] 9071.1 Å and 9533.2 Å, Paη (n=10→3) 9017.384 Å, and
 Paε (n=8→3) 9548.588 Å. Repeated 1200 km/s FWHM entries in the table are
 not a universal width prescription and are not imposed.
 
-The [Ne III] line is labeled 3868.58 Å in the Q1 table while the registry
+The [Ne III] line is labeled 3868.58 Å in the originating line table while the registry
 uses 3869.86 Å, the SDSS MaNGA vacuum wavelength. The offset is a
 documented referencing difference, not a second transition; the registry
 value is retained.
@@ -104,7 +104,7 @@ the recipe records a possible broad-wing contamination warning. The
 [ S III ] 9533 / Paε decomposition is a genuine blend at low resolution:
 the fit persists the full covariance and a blend-quality flag, and
 individual deblended errors are withheld when the two components are
-unresolved or unreliable. The Q1 measured doublet ratio is not imposed.
+unresolved or unreliable. The measured doublet ratio is not imposed.
 
 Local versus envelope coverage
 ------------------------------
