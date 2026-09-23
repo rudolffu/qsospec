@@ -4115,6 +4115,21 @@ def fit_global_lines(
         "line_complex_status": dict(complex_statuses),
         "requested_complex_recipes": tuple(recipe.id for recipe in requested_recipes),
         "selected_complex_recipes": tuple(recipe.id for recipe in selected_recipes),
+        "complex_preset_id": (
+            complex_recipes.Q1_COMPLETE_PRESET_ID
+            if {recipe.id for recipe in requested_recipes}
+            == complex_recipes.Q1_COMPLETE_RECIPE_IDS
+            else None
+        ),
+        "complex_preset_configuration": (
+            tuple(
+                complex_recipes.describe(recipe.id)
+                for recipe in requested_recipes
+            )
+            if {recipe.id for recipe in requested_recipes}
+            == complex_recipes.Q1_COMPLETE_RECIPE_IDS
+            else None
+        ),
         "continuum_preset": (
             "lya_safe"
             if global_config is None
@@ -4304,6 +4319,16 @@ def _resolve_requested_recipes(
             selected.remove(previous)
             groups[group] = recipe
             selected.append(recipe)
+    selected_ids = {recipe.id for recipe in selected}
+    compact_umbrella_conflicts = selected_ids & set(
+        complex_recipes.Q1_COMPLETE_COMPACT_NIR_IDS
+    )
+    if "paschen_nir" in selected_ids and compact_umbrella_conflicts:
+        raise ValueError(
+            "overlapping_complex_recipes: 'paschen_nir' and "
+            f"{sorted(compact_umbrella_conflicts)} model the same NIR emission; "
+            "select either the umbrella recipe or the compact NIR recipes."
+        )
     return selected
 
 

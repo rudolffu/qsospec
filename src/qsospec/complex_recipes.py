@@ -65,6 +65,9 @@ class ComplexRecipe:
     min_coverage_fraction: float = 0.8
     min_valid_pixels: int = 30
     edge_margin_kms: float = 1000.0
+    local_support: bool = False
+    core_margin_kms: float = 500.0
+    min_core_pixels: int = 3
     continuum_mode: str = "fixed_global"
     qa_labels: Tuple[str, ...] = ()
     auto_enabled: bool = False
@@ -316,6 +319,179 @@ _RECIPES = (
         auto_enabled=True, priority=40, backend="generic", exclusive_group="paschen_nir",
     ),
     ComplexRecipe(
+        id="hei5877", aliases=("hei_5877", "hei5876"), label="He I 5877",
+        fit_window=(5700.0, 6050.0), fit_windows=((5700.0, 6050.0),), mask_windows=(),
+        components=(
+            _component(
+                "HeI5877_narrow", ("hei_5877",), "narrow",
+                kinematic_group="hei5877_narrow",
+            ),
+            _component(
+                "HeI5877_broad", ("hei_5877",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="hei5877_broad",
+            ),
+        ),
+        required_line_ids=("hei_5877",), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=15,
+        local_support=True, qa_labels=("hei_5877",),
+        auto_enabled=False, priority=45, backend="generic", exclusive_group="hei5877",
+    ),
+    ComplexRecipe(
+        id="oi8449", aliases=("oi_8449", "oi8446"), label="O I 8449",
+        fit_window=(8200.0, 8700.0), fit_windows=((8200.0, 8700.0),), mask_windows=(),
+        components=(
+            _component(
+                "OI8449_narrow", ("oi_8449",), "narrow", enabled=False,
+                kinematic_group="oi8449_narrow",
+            ),
+            _component(
+                "OI8449_broad", ("oi_8449",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="oi8449_broad",
+            ),
+        ),
+        required_line_ids=("oi_8449",), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=15,
+        local_support=True, qa_labels=("oi_8449",),
+        auto_enabled=False, priority=45, backend="generic", exclusive_group="oi8449",
+    ),
+    ComplexRecipe(
+        id="siii_nir", aliases=("siii", "siii_doublet"), label="[S III] NIR doublet",
+        fit_window=(8950.0, 9680.0),
+        fit_windows=((8950.0, 9180.0), (9390.0, 9680.0)),
+        mask_windows=(),
+        components=(
+            _component(
+                "SIII9071_narrow", ("siii_9071",), "narrow",
+                kinematic_group="siii_nir_narrow",
+            ),
+            _component(
+                "SIII9533_narrow", ("siii_9533",), "narrow",
+                kinematic_group="siii_nir_narrow",
+            ),
+            _component(
+                "PaEta_narrow", ("paeta_9017",), "narrow",
+                kinematic_group="siii_hydrogen_narrow",
+            ),
+            _component(
+                "PaEpsilon_narrow", ("paepsilon_9549",), "narrow",
+                kinematic_group="siii_hydrogen_narrow",
+            ),
+            _component(
+                "PaEta_broad", ("paeta_9017",), "broad", enabled=False,
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="siii_hydrogen_broad",
+            ),
+            _component(
+                "PaEpsilon_broad", ("paepsilon_9549",), "broad", enabled=False,
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="siii_hydrogen_broad",
+            ),
+        ),
+        required_line_ids=(), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.5, min_valid_pixels=20,
+        local_support=True,
+        qa_labels=("siii_9071", "siii_9533", "paeta_9017", "paepsilon_9549"),
+        auto_enabled=False, priority=45, backend="generic", exclusive_group="siii_nir",
+    ),
+    ComplexRecipe(
+        id="padelta", aliases=("pa_delta",), label="Paδ",
+        fit_window=(9900.0, 10120.0), fit_windows=((9900.0, 10120.0),), mask_windows=(),
+        components=(
+            _component(
+                "Padelta_broad", ("padelta",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),), kinematic_group="padelta_broad",
+            ),
+            _component(
+                "Padelta_narrow", ("padelta",), "narrow",
+                kinematic_group="padelta_narrow",
+            ),
+        ),
+        required_line_ids=("padelta",), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=20,
+        local_support=True, qa_labels=("padelta",),
+        auto_enabled=False, priority=45, backend="generic",
+        exclusive_group="padelta",
+    ),
+    ComplexRecipe(
+        id="hei10833_pgamma", aliases=("hei_pgamma",), label="He I 10833 / Paγ",
+        fit_window=(10720.0, 11040.0), fit_windows=((10720.0, 11040.0),), mask_windows=(),
+        components=(
+            _component(
+                "HeI10833_broad", ("hei_10833",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="hei_pgamma_broad",
+            ),
+            _component(
+                "Pagamma_broad", ("pagamma",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="hei_pgamma_broad",
+            ),
+            _component(
+                "HeI10833_narrow", ("hei_10833",), "narrow",
+                kinematic_group="hei_pgamma_narrow",
+            ),
+            _component(
+                "Pagamma_narrow", ("pagamma",), "narrow",
+                kinematic_group="hei_pgamma_narrow",
+            ),
+        ),
+        required_line_ids=(), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=20,
+        local_support=True, qa_labels=("hei_10833", "pagamma"),
+        auto_enabled=False, priority=45, backend="generic",
+        exclusive_group="hei10833_pgamma",
+    ),
+    ComplexRecipe(
+        id="oi11290", aliases=("oi_11290",), label="O I 11290",
+        fit_window=(11180.0, 11380.0), fit_windows=((11180.0, 11380.0),), mask_windows=(),
+        components=(
+            _component(
+                "OI11290_broad", ("oi_11290",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),),
+                kinematic_group="oi11290_broad",
+            ),
+            _component(
+                "OI11290_narrow", ("oi_11290",), "narrow",
+                kinematic_group="oi11290_narrow",
+            ),
+        ),
+        required_line_ids=("oi_11290",), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=20,
+        local_support=True, qa_labels=("oi_11290",),
+        auto_enabled=False, priority=45, backend="generic",
+        exclusive_group="oi11290",
+    ),
+    ComplexRecipe(
+        id="pabeta", aliases=("pa_beta",), label="Paβ",
+        fit_window=(12650.0, 13050.0), fit_windows=((12650.0, 13050.0),), mask_windows=(),
+        components=(
+            _component(
+                "Pabeta_broad", ("pabeta",), "broad",
+                velocity_bounds_kms=(-2000.0, 2000.0),
+                fwhm_bands_kms=((900.0, 15000.0),), kinematic_group="pabeta_broad",
+            ),
+            _component(
+                "Pabeta_narrow", ("pabeta",), "narrow",
+                kinematic_group="pabeta_narrow",
+            ),
+        ),
+        required_line_ids=("pabeta",), coverage_mode="component_adaptive",
+        min_coverage_fraction=0.6, min_valid_pixels=20,
+        local_support=True, qa_labels=("pabeta",),
+        auto_enabled=False, priority=45, backend="generic",
+        exclusive_group="pabeta",
+    ),
+    ComplexRecipe(
         id="generic_narrow_lines", aliases=("narrow_lines",), label="Generic narrow lines",
         fit_window=(0.0, 1.0), fit_windows=(), mask_windows=(), components=(),
         required_line_ids=(), coverage_mode="component_adaptive", auto_enabled=False,
@@ -391,6 +567,37 @@ def describe(value: str) -> Dict[str, Any]:
         "priority": recipe.priority,
         "backend": recipe.backend,
     }
+
+
+Q1_COMPLETE_PRESET_ID = "q1_complete_v1"
+Q1_COMPLETE_COMPACT_NIR_IDS: Tuple[str, ...] = (
+    "padelta",
+    "hei10833_pgamma",
+    "oi11290",
+    "pabeta",
+)
+Q1_COMPLETE_ADDED_IDS: Tuple[str, ...] = ("hei5877", "oi8449", "siii_nir")
+
+
+def q1_complete_recipes() -> Tuple[ComplexRecipe, ...]:
+    """Return the versioned Q1-complete recipe set (``q1_complete_v1``).
+
+    The preset keeps every standard auto-enabled recipe but replaces the
+    umbrella ``paschen_nir`` complex with four compact local NIR recipes and
+    adds the newly activated Q1 lines (He I 5877, O I 8449, [S III] NIR).
+    """
+
+    selected = [
+        recipe
+        for recipe in _RECIPES
+        if recipe.auto_enabled and recipe.id != "paschen_nir"
+    ]
+    for recipe_id in (*Q1_COMPLETE_ADDED_IDS, *Q1_COMPLETE_COMPACT_NIR_IDS):
+        selected.append(_BY_ID[recipe_id])
+    return tuple(selected)
+
+
+Q1_COMPLETE_RECIPE_IDS = frozenset(recipe.id for recipe in q1_complete_recipes())
 
 
 def generic_narrow_lines(line_ids: Iterable[str], **changes: Any) -> ComplexRecipe:

@@ -14,6 +14,9 @@ def _normalize(value: str) -> str:
         "β": "beta",
         "γ": "gamma",
         "δ": "delta",
+        "ε": "epsilon",
+        "ζ": "zeta",
+        "η": "eta",
         "λ": "",
         "å": "a",
     }
@@ -38,6 +41,10 @@ class LineDefinition:
 
 _NIST = "NIST Atomic Spectra Database (vacuum wavelength)"
 _NIST_APPROX = "NIST Atomic Spectra Database; rounded vacuum wavelength"
+_MANGA = (
+    "SDSS MaNGA DAP emission-line table (NIST vacuum wavelength); "
+    "https://sdss-mangadap.readthedocs.io/en/4.0.2/emissionlines.html"
+)
 
 
 def _line(
@@ -112,6 +119,9 @@ _DEFINITIONS = (
     _line("siii_9071", 9071.1, "[S III] 9071", "forbidden", aliases=("siii9069", "siii9071"), reference=_NIST_APPROX),
     _line("siii_9533", 9533.2, "[S III] 9533", "forbidden", aliases=("siii9531", "siii9533"), reference=_NIST_APPROX),
     _line("padelta", 10052.1, "Paδ", "recombination", aliases=("pad", "padelta10052"), roles=("broad", "narrow"), reference=_NIST_APPROX),
+    _line("paeta_9017", 9017.384, "Paη", "recombination", aliases=("paeta", "paeta9017", "pa10"), roles=("broad", "narrow"), reference=_MANGA),
+    _line("pazeta_9232", 9231.546, "Paζ", "recombination", aliases=("pazeta", "pazeta9232", "pa9"), roles=("broad", "narrow"), reference=_MANGA),
+    _line("paepsilon_9549", 9548.588, "Paε", "recombination", aliases=("paepsilon", "paepsilon9549", "pa8"), roles=("broad", "narrow"), reference=_MANGA),
     _line("hei_10833", 10833.3, "He I", "permitted", aliases=("hei10830", "hei10833"), roles=("broad", "narrow"), reference=_NIST_APPROX),
     _line("pagamma", 10941.1, "Paγ", "recombination", aliases=("pag", "pagamma10941"), roles=("broad", "narrow"), reference=_NIST_APPROX),
     _line("oi_11290", 11290.0, "O I", "permitted", aliases=("oi11287", "oi11290"), roles=("broad", "narrow"), reference=_NIST_APPROX),

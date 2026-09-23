@@ -114,50 +114,126 @@ def _covariance_for(fit, names):
     return cov
 
 
+def _single_profile_peak(parameters, row, bounds):
+    """Exact peak of one positive symmetric Gaussian/Lorentzian component.
+
+    Its amplitude and width derivatives vanish; only the shared line-of-sight
+    velocity shifts the peak.
+    """
+    lo, hi = bounds
+    velocity = parameters[row['velocity_parameter']]
+    if not np.isfinite(velocity) or not np.isfinite(row['reference_wave']):
+        return np.nan, 'invalid_window'
+    flux = parameters[row['flux_parameter']] / row['flux_divisor']
+    center = row['reference_wave'] * np.exp(velocity / C_KMS)
+    if not np.isfinite(flux) or flux <= 0:
+        return np.nan, 'absent_line'
+    if not (lo < center < hi):
+        return float(center), 'boundary_peak'
+    return float(center), 'available'
+
+
+def _half_max_support(parameters, rows, bounds, valid_wave):
+    """Report whether the peak and both half-maximum crossings are supported."""
+    lo, hi = bounds
+    if not np.isfinite([lo, hi]).all() or hi <= lo or valid_wave.size < 2:
+        return False
+    grid = np.linspace(lo, hi, 2049)
+    values = evaluate_profile(grid, parameters, rows)
+    if not np.isfinite(values).all() or np.max(values) <= 0:
+        return False
+    half = 0.5 * float(np.max(values))
+    crossings = []
+    for index in range(1, grid.size):
+        left, right = values[index - 1] - half, values[index] - half
+        if left * right < 0:
+            fraction = -left / (right - left)
+            crossings.append(grid[index - 1] + fraction * (grid[index] - grid[index - 1]))
+    if len(crossings) < 2:
+        return False
+    return bool(
+        valid_wave.min() <= crossings[0]
+        and valid_wave.max() >= crossings[-1]
+    )
+
+
 def measure_peak(fit, rows, z, bounds):
     """Measure a fixed selection; covariance is conditional on that selection."""
     parameters = fit.param_values
-    peak, status = _peak(parameters, rows, bounds)
     names = sorted({r[k] for r in rows for k in ('flux_parameter', 'velocity_parameter', 'width_parameter')})
     covariance = _covariance_for(fit, names)
     gradient = np.zeros(len(names))
     error = np.nan
     uncertainty_status = 'missing_or_nonidentifiable_covariance'
+    exact_single = len(rows) == 1 and rows[0]['profile'] in ('gaussian', 'lorentzian')
+    if exact_single:
+        row = rows[0]
+        peak, status = _single_profile_peak(parameters, row, bounds)
+        if status == 'available':
+            gradient[names.index(row['velocity_parameter'])] = peak / C_KMS
+    else:
+        peak, status = _peak(parameters, rows, bounds)
     if status == 'available' and covariance is not None:
-        stable = True
-        for i, name in enumerate(names):
-            # Enough displacement to exceed the peak optimizer's tolerance.
-            step = max(abs(parameters[name])*1.e-4, 1.e-3 if name.endswith('kms') else 1.e-6)
-            estimates = []
-            for factor in (1., 2.):
-                plus, minus = dict(parameters), dict(parameters)
-                plus[name] += factor*step; minus[name] -= factor*step
-                p, ps = _peak(plus, rows, bounds); m, ms = _peak(minus, rows, bounds)
-                estimates.append((p-m)/(2*factor*step))
-                stable &= ps == ms == 'available'
-            gradient[i] = estimates[0]
-            stable &= np.isclose(*estimates, rtol=.05, atol=1.e-5)
-        variance = float(gradient @ covariance @ gradient)
-        if stable and variance > 0 and np.isfinite(variance):
-            error = float(np.sqrt(variance)); uncertainty_status = 'available'
+        if exact_single:
+            variance = float(gradient @ covariance @ gradient)
+            if variance > 0 and np.isfinite(variance):
+                error = float(np.sqrt(variance)); uncertainty_status = 'available'
+                if not np.isfinite(peak):
+                    uncertainty_status = 'invalid_window'
+                    error = np.nan
+            else:
+                uncertainty_status = 'unstable_or_zero_peak_derivative'
         else:
-            uncertainty_status = 'unstable_or_zero_peak_derivative'
+            stable = True
+            for i, name in enumerate(names):
+                # Enough displacement to exceed the peak optimizer's tolerance.
+                step = max(abs(parameters[name])*1.e-4, 1.e-3 if name.endswith('kms') else 1.e-6)
+                estimates = []
+                for factor in (1., 2.):
+                    plus, minus = dict(parameters), dict(parameters)
+                    plus[name] += factor*step; minus[name] -= factor*step
+                    p, ps = _peak(plus, rows, bounds); m, ms = _peak(minus, rows, bounds)
+                    estimates.append((p-m)/(2*factor*step))
+                    stable &= ps == ms == 'available'
+                gradient[i] = estimates[0]
+                stable &= np.isclose(*estimates, rtol=.05, atol=1.e-5)
+            variance = float(gradient @ covariance @ gradient)
+            if stable and variance > 0 and np.isfinite(variance):
+                error = float(np.sqrt(variance)); uncertainty_status = 'available'
+            else:
+                uncertainty_status = 'unstable_or_zero_peak_derivative'
     elif status != 'available':
         uncertainty_status = status
     flux_gradient = np.array([sum(1/r['flux_divisor'] for r in rows if r['flux_parameter'] == name) for name in names])
     flux = float(sum(parameters[r['flux_parameter']]/r['flux_divisor'] for r in rows))
     flux_var = float(flux_gradient @ covariance @ flux_gradient) if covariance is not None else np.nan
+    valid_wave = np.asarray(fit.wave_rest)[np.asarray(fit.fit_mask, dtype=bool)]
+    supported = _half_max_support(parameters, rows, bounds, valid_wave)
+    half_max_status = (
+        'supported'
+        if supported and status not in ('boundary_peak', 'ambiguous_peak')
+        else 'ambiguous_peak'
+        if status == 'ambiguous_peak'
+        else 'boundary_peak'
+        if status == 'boundary_peak'
+        else 'truncated_or_unresolved'
+    )
     return dict(peak_rest_angstrom=float(peak), peak_observed_angstrom=float(peak*(1+z)),
         peak_error_rest_angstrom=error, peak_error_observed_angstrom=error*(1+z),
         status=status, uncertainty_status=uncertainty_status, flux=flux,
         flux_error=float(np.sqrt(flux_var)) if flux_var > 0 else np.nan,
+        half_max_crossings_supported=bool(supported), profile_support_status=half_max_status,
         parameter_names=names, peak_gradient=gradient.tolist(), component_ids=[r['component_id'] for r in rows],
         definitions=rows, bounds=list(bounds), uncertainty_method='local_covariance',
         conditioning='fixed_profile_selection_host_continuum_and_input_redshift')
 
 
-def record_fit_peaks(fit, z, *, definitions=None, bounds=None):
-    """Attach additive native measurements; no fitting or change to redshift."""
+def record_fit_peaks(fit, z, *, definitions=None, bounds=None, measure=True):
+    """Attach additive native measurements; no fitting or change to redshift.
+
+    Intermediate refinement passes can defer the peak table (``measure=False``)
+    and retain the reconstruction metadata for the accepted final state.
+    """
     if not fit.success:
         return fit
     if definitions is not None:
@@ -165,6 +241,9 @@ def record_fit_peaks(fit, z, *, definitions=None, bounds=None):
     model = fit.metadata.get('peak_model')
     if not model:
         fit.metadata['peak_recovery_status'] = 'unsupported_profile_reconstruction'
+        return fit
+    if not measure:
+        fit.metadata['peak_recovery_status'] = 'deferred'
         return fit
     signature = sha256(json.dumps([fit.param_values, fit.param_errors, model, None if fit.covariance is None else np.asarray(fit.covariance).tolist()], sort_keys=True).encode()).hexdigest()
     if fit.metadata.get('_peak_parameter_state') == signature and 'line_peaks' in fit.metadata:

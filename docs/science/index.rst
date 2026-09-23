@@ -10,6 +10,7 @@ and reliability flags should be interpreted.
    continuum_model
    emission_line_models
    coverage_reliability
+   q1_line_coverage
    measurements
    ../iron-balmer-uncertainties
    ../line-peaks-systemic-redshift
