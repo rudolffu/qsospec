@@ -11,4 +11,6 @@ and reliability flags should be interpreted.
    emission_line_models
    coverage_reliability
    measurements
+   ../iron-balmer-uncertainties
+   ../line-peaks-systemic-redshift
    references
