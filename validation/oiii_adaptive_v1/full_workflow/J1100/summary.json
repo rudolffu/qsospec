@@ -1,0 +1,17 @@
+{
+  "name": "J1100",
+  "z": 0.10043156892061234,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "three_component",
+  "adequate": true,
+  "runtime_s": 107.9323688329896,
+  "w80_fixed": 1174.3313839103582,
+  "w80_full": 1172.664535293452,
+  "local_continuum_fixed": 0.5002336072196266,
+  "local_continuum_full": 0.7340822510145533,
+  "host_global_relative_rms": 7.517433382607781e-13,
+  "continuum_relative_rms": 0.0434093846289866,
+  "core_reference_reliable": true,
+  "w80_fractional_change": -0.001419402257100466
+}

@@ -1,0 +1,17 @@
+{
+  "name": "J1455+32",
+  "z": 0.0873643308877945,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "three_component",
+  "adequate": true,
+  "runtime_s": 168.08956599992234,
+  "w80_fixed": 852.9601304775988,
+  "w80_full": 852.5666100400783,
+  "local_continuum_fixed": -0.1900887778000643,
+  "local_continuum_full": -0.020326330608838428,
+  "host_global_relative_rms": 0.03964495062207326,
+  "continuum_relative_rms": 0.08441213108877056,
+  "core_reference_reliable": true,
+  "w80_fractional_change": -0.00046135853653572756
+}

@@ -16,6 +16,8 @@ Short, task-oriented recipes with one canonical path each.
    inspect_run
    render_qa
    custom_recipes
+   adaptive_oiii
+   custom_kinematics
    signed_line_diagnostics
    euclid_dr1_catalog_measurements
    euclid_dr1_full_rgs_run

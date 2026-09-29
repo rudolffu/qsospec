@@ -1,0 +1,3 @@
+# Keep generated validation figures locally; track scripts and concise reports.
+*.png
+*.pdf

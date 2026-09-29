@@ -1635,6 +1635,7 @@ def _fit_global_continuum_with_fixed_balmer_amplitude(
         err=spectrum.err.copy(),
         z=spectrum.z,
         metadata=replace(spectrum.metadata),
+        resolution=spectrum.resolution,
         mask=None if spectrum.mask is None else spectrum.mask.copy(),
     )
     disabled_config = replace(
@@ -2099,7 +2100,7 @@ class _HbetaContext:
 
     def components(self, theta, wave):
         out = {}
-        for i in range(1, 4):
+        for i in range(1, len(self.config.broad_fwhm_bands_kms) + 1):
             prefix = f"Hb_broad{i}"
             center = self.shifted(HBETA_WAVE, self.get(theta, f"{prefix}.velocity_kms"))
             out[prefix] = _gaussian_area_profile(
@@ -2150,7 +2151,7 @@ class _HbetaContext:
 
     def broad_profile(self, theta, wave):
         components = self.components(theta, wave)
-        return components["Hb_broad1"] + components["Hb_broad2"] + components["Hb_broad3"]
+        return sum((components[f"Hb_broad{i}"] for i in range(1, len(self.config.broad_fwhm_bands_kms) + 1)), np.zeros_like(wave))
 
     @property
     def linear_names(self) -> List[str]:
@@ -2185,7 +2186,7 @@ class _HbetaContext:
                     np.asarray(derivatives.get(name, np.zeros_like(wave)), dtype=float)
                 )
 
-        for index in range(1, 4):
+        for index in range(1, len(self.config.broad_fwhm_bands_kms) + 1):
             prefix = f"Hb_broad{index}"
             velocity_name = f"{prefix}.velocity_kms"
             width_name = f"{prefix}.fwhm_kms"
@@ -3363,6 +3364,11 @@ def fit_hbeta_complex(
 
     require_rest_frame_flux(spectrum)
     cfg = config or HbetaComplexConfig()
+    if cfg.oiii_profile_mode == "adaptive":
+        from .adaptive_oiii import fit_adaptive_hbeta
+        return fit_adaptive_hbeta(spectrum, continuum_result, cfg,
+                                 compute_covariance=compute_covariance,
+                                 defer_peaks=defer_peaks)
     candidate_covariance = compute_covariance or cfg.fit_oiii_wings
     core = _fit_hbeta_candidate(
         spectrum,

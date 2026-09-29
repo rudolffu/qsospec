@@ -1,0 +1,17 @@
+{
+  "name": "J1713+57",
+  "z": 0.11275865882635117,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "wing",
+  "adequate": false,
+  "runtime_s": 45.0552797090495,
+  "w80_fixed": 1460.5942695915996,
+  "w80_full": 1460.5022991797928,
+  "local_continuum_fixed": 1.2821948058154466,
+  "local_continuum_full": 1.251329422385989,
+  "host_global_relative_rms": 2.7181518886652437e-14,
+  "continuum_relative_rms": 0.04282812835169206,
+  "core_reference_reliable": true,
+  "w80_fractional_change": -6.29678027098679e-05
+}

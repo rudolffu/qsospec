@@ -166,13 +166,22 @@ def measure_selected_profile(fit, component_ids, *, parameter_draws=None, contin
         raise ValueError("Supply distinct retained component IDs")
     if not set(selected).issubset(fit.component_models):
         raise ValueError("Selected component IDs are absent from this fit")
-    recipe = complex_recipes.get(fit.metadata["recipe_id"])
+    if fit.metadata.get("model_definition"):
+        from .complex_recipes import ComponentRecipe, ComplexRecipe
+        definition = dict(fit.metadata["model_definition"])
+        definition["components"] = tuple(ComponentRecipe(**c) for c in definition["components"])
+        recipe = ComplexRecipe(**definition)
+    else:
+        recipe = complex_recipes.get(fit.metadata["recipe_id"])
     if recipe.backend != "generic":
         raise ValueError("Selected-profile reconstruction currently requires a generic complex")
     context = GenericComplexContext(recipe, fit.metadata.get("active_components", [c.id for c in recipe.components]), 1.)
     if not set(context.names).issubset(fit.param_values):
         context = GenericComplexContext(replace(recipe, continuum_mode="fixed_global"),
             fit.metadata.get("active_components", [c.id for c in recipe.components]), 1.)
+    if fit.metadata.get("line_lsf", {}).get("status") == "forward_modeled":
+        from .fitting.line_lsf import GaussianLineLSF
+        context.line_lsf = GaussianLineLSF(fit.metadata["line_lsf"]["descriptor"], fit.wave_rest)
     names = list(fit.param_values)
     theta = np.array([fit.param_values[name] for name in names])
     wave = np.linspace(float(fit.wave_rest.min()), float(fit.wave_rest.max()), max(4096, len(fit.wave_rest)))

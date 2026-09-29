@@ -14,7 +14,11 @@ _C_KMS = 299792.458
 
 @dataclass(frozen=True)
 class SpectralResolution:
-    """Generic spectral-resolution description on an optional wavelength grid."""
+    """Spectral resolution on an optional observed-vacuum-Angstrom grid.
+
+    Wavelength widths (sigma_lambda and fwhm_lambda) are observed Angstrom;
+    sigma_kms is in km/s and resolving power is dimensionless.
+    """
 
     mode: str = "missing"
     values: np.ndarray | None = None

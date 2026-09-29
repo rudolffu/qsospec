@@ -6,9 +6,8 @@ Recipes
 
 Each emission complex is an immutable recipe containing its fit window,
 components, line IDs, roles, profile multiplicities, kinematic bounds,
-coverage rules, and QA labels. Dedicated adapters implement Hβ/[O III],
-Mg II, Hα, and Lyα/N V; generic variable projection handles the remaining
-recipes.
+coverage rules, and QA labels. Adaptive Hβ/[O III] and generic recipes use shared variable projection.
+Dedicated adapters retain the legacy Hβ/[O III], Mg II, Hα, and Lyα/N V models.
 
 Profiles and roles
 ------------------
@@ -16,14 +15,20 @@ Profiles and roles
 - Broad components represent the summed broad-line profile used for flux,
   centroid, dispersion, numerical FWHM, and EW.
 - Narrow components use narrower FWHM and velocity bounds.
-- Wing components are optional outflow-like profiles selected only when the
-  relevant recipe supports them.
+- Additional components (legacy ``wing`` keys) describe profile structure;
+  selection does not classify a physical outflow.
 - Fixed ratios and shared kinematics are encoded in recipe metadata.
 
-For [O III], the default wing candidate must improve BIC by at least 20, have
-flux S/N of at least 5, be at least twice as broad as the narrow core, and
-have a centroid separated from the core by at least 150 km/s. The candidate
-diagnostics and rejection reasons are retained in result metadata.
+Adaptive [O III] fitting is the default. Added components require convergence,
+ΔBIC ≥20 and flux S/N ≥5. Centroid separation and width contrast are diagnostic;
+a third component requires matched doublet residual structure and improvement
+in both lines. Narrow Hβ is independent of [O III], and a residual linear
+continuum is fitted jointly. See :doc:`../how_to/adaptive_oiii` for resolution,
+multistart, adequacy and uncertainty definitions.
+
+``HbetaComplexConfig(oiii_profile_mode="legacy")`` retains the former tied
+Hβ/[O III] model, initialization and rejection rules, including a factor-of-two
+width contrast and centroid separation of at least 150 km/s.
 
 Current UV defaults
 -------------------

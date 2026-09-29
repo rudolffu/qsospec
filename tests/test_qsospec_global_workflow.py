@@ -365,7 +365,7 @@ def test_hbeta_core_ties_oiii_ratio_and_narrow_kinematics():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", fit_oiii_wings=False),
     )
 
     assert result.success
@@ -392,7 +392,7 @@ def test_hbeta_wing_selection_accepts_strong_broad_wing():
     err = np.full_like(wave, 0.02)
     spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", flux_unit="relative")
 
-    result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum))
+    result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum), qsospec.HbetaComplexConfig(oiii_profile_mode="legacy"))
 
     assert result.success
     assert result.selected_model == "wing"
@@ -436,6 +436,7 @@ def test_hbeta_wing_selection_rejects_modest_width_contrast():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy"),
     )
 
     candidate = result.metadata["wing_candidate"]
@@ -464,7 +465,7 @@ def test_hbeta_wing_selection_rejects_absent_wing_and_can_fit_heii():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        qsospec.HbetaComplexConfig(heii_enabled=True),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True),
     )
 
     assert result.success
@@ -805,9 +806,7 @@ def test_deferred_peaks_do_not_change_hbeta_model_selection():
     assert eager.selected_model == deferred.selected_model
     assert eager.param_values == pytest.approx(deferred.param_values)
     assert eager.bic == pytest.approx(deferred.bic)
-    assert eager.metadata["wing_candidate"]["accepted"] == deferred.metadata[
-        "wing_candidate"
-    ]["accepted"]
+    assert [x["accepted"] for x in eager.metadata["candidate_selection"]] == [x["accepted"] for x in deferred.metadata["candidate_selection"]]
     assert "line_peaks" in eager.metadata
     assert "line_peaks" not in deferred.metadata
     assert deferred.metadata["peak_recovery_status"] == "deferred"

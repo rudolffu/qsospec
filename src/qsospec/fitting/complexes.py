@@ -735,6 +735,7 @@ class GenericComplexContext:
 
     def __init__(self, recipe: ComplexRecipe, component_ids: Sequence[str], flux_scale: float):
         self.recipe = recipe
+        self.line_lsf = None
         selected = set(component_ids)
         self.components_config = tuple(
             item for item in recipe.components if item.enabled and item.id in selected
@@ -841,6 +842,15 @@ class GenericComplexContext:
     def _value(self, theta, name):
         return float(theta[self.index[name]])
 
+    def profile(self, wave, rest_center, velocity, width, profile, *, integrated=None):
+        if self.line_lsf is None:
+            return _profile(wave, rest_center, velocity, width, profile)
+        native = self.line_lsf.native_wave
+        ids = np.searchsorted(native, wave)
+        if integrated is None:
+            integrated = np.all(ids < len(native)) and np.array_equal(native[np.minimum(ids,len(native)-1)], wave)
+        return self.line_lsf.profile(wave, rest_center, velocity, width, profile, integrated=integrated)
+
     def _instance_basis(self, instance, nonlinear_values, wave):
         _, component, line_ids, velocity_group, width_group = instance
         velocity_name = f"{velocity_group}.velocity_kms"
@@ -850,7 +860,7 @@ class GenericComplexContext:
         d_width = np.zeros_like(wave)
         for line_id in line_ids:
             line = lines.get(line_id)
-            values = _profile(
+            values = self.profile(
                 wave, line.vacuum_wavelength,
                 nonlinear_values[velocity_name], nonlinear_values[width_name],
                 component.profile,
@@ -975,6 +985,15 @@ def fit_generic_complex(
     coverage_override: Optional[RecipeCoverage] = None,
     fit_mask_override: Optional[np.ndarray] = None,
     defer_peaks: bool = False,
+    initial_values: Optional[Dict[str, float]] = None,
+    n_starts: int = 1,
+    random_seed: int = 1729,
+    start_values=None,
+    max_starts=None,
+    expand_search=None,
+    optimizer_config=None,
+    forward_resolution=False,
+    measure_metrics=True,
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
@@ -1011,16 +1030,23 @@ def fit_generic_complex(
         fit_flux = spectrum.flux
     scale = _contiguous_masked_flux(spectrum.wave_rest, line_flux, mask)
     context = GenericComplexContext(recipe, coverage.active_component_ids, scale)
-    optimizer_config = SimpleNamespace(
+    optimizer_config = optimizer_config or SimpleNamespace(
         optimizer_method="auto", jacobian_method="semi_analytic", max_nfev=1500
     )
-    result, optimizer_used, fallback_reason = _solve_once_with_fallback(
-        context,
-        spectrum.wave_rest[mask],
-        fit_flux[mask],
-        spectrum.err[mask],
-        context.initial,
-        optimizer_config,
+    lsf_metadata = {}
+    if forward_resolution:
+        from .line_lsf import build_line_lsf
+        minimum_width = min(b[0] for c in context.components_config for b in c.fwhm_bands_kms)
+        context.line_lsf, lsf_metadata = build_line_lsf(spectrum, recipe.fit_window, min_fwhm_kms=minimum_width)
+    if n_starts > 1 and any(c.selection_rule for c in context.components_config):
+        raise ValueError("Multistart selection requires explicit candidate recipes")
+    from .multistart import solve_multistart
+    result, optimizer_used, fallback_reason, multistart = solve_multistart(
+        context, spectrum.wave_rest[mask], fit_flux[mask], spectrum.err[mask],
+        optimizer_config, n_starts=n_starts, max_starts=max_starts,
+        seed=random_seed, initial_values=initial_values, start_values=start_values,
+        expand_search=(lambda solution, starts: expand_search(context, solution, starts, mask))
+            if expand_search else None,
     )
     residual = (
         fit_flux[mask] - context.model(result.x, spectrum.wave_rest[mask])
@@ -1193,8 +1219,8 @@ def fit_generic_complex(
     def metrics(theta):
         return generic_complex_metrics(context, theta, continuum, spectrum)
 
-    metric_values = metrics(result.x)
-    metric_errors = _metric_errors(result.x, covariance, metrics)
+    metric_values = metrics(result.x) if measure_metrics else {}
+    metric_errors = _metric_errors(result.x, covariance, metrics) if measure_metrics else {}
 
     component_flux_names = {}
     for (
@@ -1271,6 +1297,8 @@ def fit_generic_complex(
             )
     metadata = spectrum.metadata.to_dict()
     metadata.update({
+        "multistart": multistart,
+        "line_lsf": lsf_metadata,
         "recipe_id": recipe.id,
         "recipe_label": recipe.label,
         "recipe_backend": recipe.backend,
@@ -1621,12 +1649,13 @@ def generic_complex_metrics(context, theta, continuum, spectrum):
         )
         profile = np.zeros_like(grid)
         for flux, velocity, width, profile_name in entries:
-            basis, _, _ = _profile(
+            basis, _, _ = context.profile(
                 grid,
                 reference_wave,
                 velocity,
                 width,
                 profile_name,
+                integrated=False,
             )
             profile += flux * basis
         # Gaussian/Lorentzian bases integrate to one over the full domain, so

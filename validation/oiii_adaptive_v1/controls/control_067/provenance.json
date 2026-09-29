@@ -1,0 +1,12 @@
+{
+  "source": "/Users/yuming/tools/qsospec/validation/oiii_adaptive_v1/control_inputs/desi/runs/shard-002",
+  "object_key": "desi:coadd:39633463506111600::z_optical",
+  "frozen_arrays_sha256": {
+    "flux": "e0dfc16c35b9c562bd16aa4618de27f13e39f57dd80a899af6478ae7eeddc0f5",
+    "continuum": "bdc76930b552ff337146fa6bc0038f87e1ed3c47c28f87ee85aeeb6bf4c48e69",
+    "line_model": "df6e6c02c02a14adc1f160d0476edf5ec4e09151a6fd1c25354e9c843a2f904c"
+  },
+  "seed": 1729,
+  "redshift_unchanged": true,
+  "host_continuum_fixed": true
+}

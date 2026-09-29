@@ -1,0 +1,17 @@
+{
+  "name": "J1743",
+  "z": 0.21490281574268627,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "wing",
+  "adequate": false,
+  "runtime_s": 20.794925541966222,
+  "w80_fixed": 2979.8678614888345,
+  "w80_full": 2979.9893316691605,
+  "local_continuum_fixed": -0.05864743988239407,
+  "local_continuum_full": -0.08361738192623219,
+  "host_global_relative_rms": 1.7437108178504562e-14,
+  "continuum_relative_rms": 0.021930269503436687,
+  "core_reference_reliable": true,
+  "w80_fractional_change": 4.0763613009753286e-05
+}

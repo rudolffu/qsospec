@@ -23,6 +23,8 @@ def profile_definitions(context):
                     flux_parameter=f'{component.fixed_ratio_to or ident}.flux',
                     flux_divisor=component.fixed_ratio if component.fixed_ratio_to else 1.,
                     velocity_parameter=f'{velocity}.velocity_kms', width_parameter=f'{width}.fwhm_kms'))
+                if getattr(context, 'line_lsf', None) is not None:
+                    rows[-1]['line_lsf'] = context.line_lsf.descriptor
         return rows
     # Built-in adapters use Gaussian area profiles with explicit shared groups.
     mapping = {'Hb': 'hbeta', 'Ha': 'halpha', 'MgII': 'mgii_blend',
@@ -56,7 +58,11 @@ def evaluate_profile(wave, parameters, definitions):
         width = parameters[row['width_parameter']]
         if width <= 0:
             return np.full_like(wave, np.nan)
-        output += parameters[row['flux_parameter']] / row['flux_divisor'] * _profile(
+        function = _profile
+        if row.get('line_lsf'):
+            from .fitting.line_lsf import saved_lsf
+            function = saved_lsf(row['line_lsf']).profile
+        output += parameters[row['flux_parameter']] / row['flux_divisor'] * function(
             wave, row['reference_wave'], parameters[row['velocity_parameter']], width, row['profile'])[0]
     return output
 
@@ -165,7 +171,7 @@ def measure_peak(fit, rows, z, bounds):
     gradient = np.zeros(len(names))
     error = np.nan
     uncertainty_status = 'missing_or_nonidentifiable_covariance'
-    exact_single = len(rows) == 1 and rows[0]['profile'] in ('gaussian', 'lorentzian')
+    exact_single = len(rows) == 1 and not rows[0].get('line_lsf') and rows[0]['profile'] in ('gaussian', 'lorentzian')
     if exact_single:
         row = rows[0]
         peak, status = _single_profile_peak(parameters, row, bounds)
@@ -253,6 +259,9 @@ def record_fit_peaks(fit, z, *, definitions=None, bounds=None, measure=True):
     for row in rows:
         groups[row['feature']+'_'+row['role']].append(row)
         groups[row['feature']+'_full'].append(row)
+        if row.get('line_lsf'):
+            groups[row['feature']+'_full_intrinsic'].append(
+                {k:v for k,v in row.items() if k != 'line_lsf'})
     # Distinct full-profile blends, never mixing the C III] neighboring lines.
     for feature, members in [('siiv_oiv', {'siiv_1394','siiv_1403','oiv_1401'}),
                              ('civ_doublet', {'civ_1548','civ_1551'}),
@@ -268,7 +277,7 @@ def record_fit_peaks(fit, z, *, definitions=None, bounds=None, measure=True):
             groups[key+'_ws22'] = [r for r, area in zip(original, areas) if area >= .05*sum(areas) and area > 0]
     measurements, cache = {}, {}
     for key, selected in groups.items():
-        identity = tuple((r['component_id'], r['feature']) for r in selected)
+        identity = tuple((r['component_id'], r['feature'], bool(r.get('line_lsf'))) for r in selected)
         if not selected:
             continue
         if identity not in cache:
@@ -324,10 +333,19 @@ def _recover_native_definitions(fit):
     from .fitting.complexes import GenericComplexContext
     recipe_id = fit.metadata.get('recipe_id')
     try:
-        recipe = complex_recipes.get(recipe_id) if recipe_id else None
+        saved_definition = fit.metadata.get('model_definition')
+        recipe = complex_recipes.get(recipe_id) if recipe_id and not saved_definition else None
+        if saved_definition:
+            from .complex_recipes import ComponentRecipe, ComplexRecipe
+            data = dict(saved_definition)
+            data['components'] = tuple(ComponentRecipe(**row) for row in data['components'])
+            recipe = ComplexRecipe(**data)
         if recipe is not None and recipe.backend == 'generic':
             context = GenericComplexContext(replace(recipe, continuum_mode='fixed_global'),
                 fit.metadata.get('active_components', ()), 1.)
+            if fit.metadata.get('line_lsf', {}).get('status') == 'forward_modeled':
+                from .fitting.line_lsf import GaussianLineLSF
+                context.line_lsf = GaussianLineLSF(fit.metadata['line_lsf']['descriptor'], fit.wave_rest)
             rows = profile_definitions(context)
             bounds = (min(w[0] for w in recipe.fit_windows), max(w[1] for w in recipe.fit_windows))
         else:
@@ -346,7 +364,10 @@ def _recover_native_definitions(fit):
         if not by_component or set(by_component) != {name for name in fit.component_models if not name.startswith('local_continuum_')}:
             return None
         for ident, entries in by_component.items():
-            rendered = evaluate_profile(fit.wave_rest, fit.param_values, entries)
+            if saved_definition:
+                rendered = context.components(np.array([fit.param_values[k] for k in context.names]), fit.wave_rest)[ident]
+            else:
+                rendered = evaluate_profile(fit.wave_rest, fit.param_values, entries)
             archived = fit.component_models[ident]
             if not np.allclose(rendered, archived, rtol=2.e-6, atol=max(float(np.max(np.abs(archived)))*1.e-8, 1.e-12)):
                 return None

@@ -1,0 +1,12 @@
+{
+  "source": "/Users/yuming/astro/ml_projects/dr1agn/mlspecz_data/outputs/oiii_hbeta_diagnostics/nonparametric_kinematics/top_tens_spectra/j1242_vi_nobalmer_5500/run",
+  "object_key": "desi:coadd:39633524751336740::z_vi_nobalmer_5500",
+  "frozen_arrays_sha256": {
+    "flux": "ea68dd09263f1d442eec48a653c07a08fd7a15d6f3eaafec5b0ef3e4dfb3a43e",
+    "continuum": "d7e0380fad29420c6ddcf06ec2ec554fb416efb3e1a4ef309183837b80623237",
+    "line_model": "3846bb85e428e07489b7bbed12bdef260470165874a0dc234d18019064685630"
+  },
+  "seed": 1729,
+  "redshift_unchanged": true,
+  "host_continuum_fixed": true
+}

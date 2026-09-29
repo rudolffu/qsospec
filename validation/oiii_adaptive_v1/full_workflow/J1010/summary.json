@@ -1,0 +1,17 @@
+{
+  "name": "J1010",
+  "z": 0.0977487564086914,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "wing",
+  "adequate": true,
+  "runtime_s": 72.65052691695746,
+  "w80_fixed": 1359.1857185224346,
+  "w80_full": 1361.6920806874814,
+  "local_continuum_fixed": 1.1300786740587891,
+  "local_continuum_full": 0.7839064468054895,
+  "host_global_relative_rms": 4.4912040744794485e-14,
+  "continuum_relative_rms": 0.06255790061525111,
+  "core_reference_reliable": true,
+  "w80_fractional_change": 0.0018440174369780404
+}

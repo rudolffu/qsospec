@@ -1,0 +1,17 @@
+{
+  "name": "J0802+25",
+  "z": 0.08092690259218216,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "three_component",
+  "adequate": false,
+  "runtime_s": 128.84025954199024,
+  "w80_fixed": 1023.2106807844295,
+  "w80_full": 1023.6985817268674,
+  "local_continuum_fixed": -1.1041673447791336,
+  "local_continuum_full": -0.9464973006579918,
+  "host_global_relative_rms": 0.035609751712145345,
+  "continuum_relative_rms": 0.05793468403676369,
+  "core_reference_reliable": true,
+  "w80_fractional_change": 0.0004768333165401373
+}

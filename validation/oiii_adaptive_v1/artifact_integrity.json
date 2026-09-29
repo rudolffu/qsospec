@@ -1,0 +1,17 @@
+{
+  "counts": {
+    "fixed_continuum": 13,
+    "controls": 100,
+    "full_workflow": 13
+  },
+  "source_hashes_verified": 39,
+  "target_input_redshifts_preserved": 13,
+  "implementation_source_hashes_verified": 73,
+  "pdf_pages": {
+    "fixed_continuum_comparisons": 13,
+    "control_comparisons": 100,
+    "full_workflow_qa": 13
+  },
+  "failures": [],
+  "additional_final_reconstruction_test": "1 passed in 31.51s"
+}

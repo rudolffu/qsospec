@@ -1,0 +1,17 @@
+{
+  "name": "J1356",
+  "z": 0.12313397973775864,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "three_component",
+  "adequate": true,
+  "runtime_s": 188.72622795798816,
+  "w80_fixed": 882.0123390475646,
+  "w80_full": 882.0072762797853,
+  "local_continuum_fixed": 0.3832524298841555,
+  "local_continuum_full": 0.616310853831544,
+  "host_global_relative_rms": 5.861334156580696e-14,
+  "continuum_relative_rms": 0.15922946460002674,
+  "core_reference_reliable": true,
+  "w80_fractional_change": -5.7400192210455e-06
+}

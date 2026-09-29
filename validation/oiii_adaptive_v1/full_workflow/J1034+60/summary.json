@@ -1,0 +1,17 @@
+{
+  "name": "J1034+60",
+  "z": 0.05095258355140686,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "three_component",
+  "adequate": false,
+  "runtime_s": 182.5382934580557,
+  "w80_fixed": 765.1726080843523,
+  "w80_full": 766.0853216775714,
+  "local_continuum_fixed": 2.8827257622398816,
+  "local_continuum_full": 2.0602498216682292,
+  "host_global_relative_rms": 0.1852441757620181,
+  "continuum_relative_rms": 0.23959501559353802,
+  "core_reference_reliable": false,
+  "w80_fractional_change": 0.001192820526474625
+}

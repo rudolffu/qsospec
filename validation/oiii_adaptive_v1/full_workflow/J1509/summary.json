@@ -1,0 +1,17 @@
+{
+  "name": "J1509",
+  "z": 0.11146681010723114,
+  "continuum_success": true,
+  "host_refitted": true,
+  "selected": "wing",
+  "adequate": true,
+  "runtime_s": 47.31498729099985,
+  "w80_fixed": 1363.4926435263574,
+  "w80_full": 1363.4908045869627,
+  "local_continuum_fixed": -0.33917570810408243,
+  "local_continuum_full": -0.2977221565015502,
+  "host_global_relative_rms": 6.548256984592678e-14,
+  "continuum_relative_rms": 0.023442087839994824,
+  "core_reference_reliable": true,
+  "w80_fractional_change": -1.3486977017418411e-06
+}

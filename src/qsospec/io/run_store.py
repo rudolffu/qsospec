@@ -28,6 +28,7 @@ from ..global_result import (
     WorkflowResult,
 )
 from ..metadata import resolve_spectrum_metadata
+from ..fitting.line_lsf import resolution_to_dict, resolution_from_dict
 from ..measurement_vocabulary import (
     HOST_FRACTION_DELTA_DEFINITION_ID,
     MEASUREMENT_VOCABULARY_VERSION,
@@ -696,6 +697,8 @@ def _warning_rows(
 
 def _component_role(name: str) -> str:
     lowered = name.lower()
+    if lowered.endswith("_core"):
+        return "narrow"
     for role in ("very_broad", "broad", "narrow", "wing", "blend"):
         if role in lowered:
             return role
@@ -809,7 +812,8 @@ def _model_row(
         ).tolist(),
         "components": components,
         "complexes": complexes,
-        "spectrum_metadata": _key_values(result.spectrum.metadata.to_dict()),
+        "spectrum_metadata": _key_values({**result.spectrum.metadata.to_dict(),
+            "spectral_resolution": resolution_to_dict(result.spectrum.resolution)}),
         "workflow_metadata": _key_values(workflow_metadata),
     }
 
@@ -1494,6 +1498,7 @@ def load_model_by_key(
     spectrum_metadata = resolve_spectrum_metadata(
         metadata=spectrum_metadata_values
     )
+    resolution = resolution_from_dict(spectrum_metadata_values.get("spectral_resolution"))
     spectrum = Spectrum.from_arrays(
         np.asarray(row["wave_rest"], dtype=float),
         np.asarray(row["flux"], dtype=float),
@@ -1505,6 +1510,7 @@ def load_model_by_key(
             if row["input_mask"] is not None else None
         ),
         metadata=spectrum_metadata,
+        resolution=resolution,
     )
     total_spectrum = None
     if row["total_flux"] is not None:
@@ -1519,6 +1525,7 @@ def load_model_by_key(
                 if row["input_mask"] is not None else None
             ),
             metadata=spectrum_metadata,
+            resolution=resolution,
         )
     continuum_components = {
         item["name"]: np.asarray(item["values"], dtype=float)

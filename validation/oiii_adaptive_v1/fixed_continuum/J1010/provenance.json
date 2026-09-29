@@ -1,0 +1,12 @@
+{
+  "source": "/Users/yuming/astro/prpsl_sched/jwstc6/targets/qsofeed/qsospec/run",
+  "object_key": "sdss:1121435384186693632::qsofeed",
+  "frozen_arrays_sha256": {
+    "flux": "4fd9a5a0e265301146a58aacf40c0e8cba82584349f08123fc2a6fffda8679a6",
+    "continuum": "68d81c37a27ed7a3b8da87c0c62ab587e7e1bbd540743cf87bc523b6fcd2bc02",
+    "line_model": "21e66c5f734198d11d2e248113f2f59182c72ec032d0573235cacb90957a2a51"
+  },
+  "seed": 1729,
+  "redshift_unchanged": true,
+  "host_continuum_fixed": true
+}

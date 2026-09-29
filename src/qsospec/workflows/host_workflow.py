@@ -180,6 +180,7 @@ def _spectrum_from_arrays(
         ),
         galactic_extinction=extinction,
         metadata=base_metadata,
+        resolution=getattr(spectrum_data, "resolution", None),
     )
 
 

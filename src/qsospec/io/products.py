@@ -457,7 +457,7 @@ def _line_groups(name: str, fit) -> Tuple[Tuple[str, np.ndarray, str, str], ...]
         species = _species_from_component(broad_names[0])
         groups.append((label, broad_sum, species, "broad"))
     for component_name, component in fit.component_models.items():
-        if component_name in broad_names:
+        if component_name in broad_names or component_name.startswith("local_continuum_"):
             continue
         kind = "wing" if "wing" in component_name else "narrow"
         groups.append(
@@ -1444,7 +1444,7 @@ def _plot_qa(
                 continue
             style = _WING_STYLE if kind == "wing" else _NARROW_STYLE
             if kind == "wing":
-                legend_label = "outflow wing" if not wing_label_used else "_nolegend_"
+                legend_label = "additional component" if not wing_label_used else "_nolegend_"
                 wing_label_used = True
             else:
                 legend_label = "narrow-line model" if not narrow_label_used else "_nolegend_"
@@ -1777,6 +1777,8 @@ def _plot_qa(
         broad_component_label_used = False
         broad_names = set(_broad_component_names(fit))
         for component_name, component in fit.component_models.items():
+            if component_name.startswith("local_continuum_"):
+                continue
             if component_name in broad_names:
                 if complex_name == "lya_nv":
                     component_label = (
@@ -1804,7 +1806,7 @@ def _plot_qa(
                 wave[panel_mask],
                 display_scale * component[panel_mask],
                 label=(
-                    "outflow wing"
+                    "additional component"
                     if kind == "wing"
                     else "narrow lines"
                 ),
@@ -1850,7 +1852,7 @@ def _plot_qa(
         allowed = {
             "broad components",
             "narrow lines",
-            "outflow wing",
+            "additional component",
             "Lyα component",
             "N V component",
             "masked absorption",
@@ -1945,13 +1947,15 @@ def _plot_hbeta(
     narrow_label_used = False
     wing_label_used = False
     for name, component in fit.component_models.items():
+        if name.startswith("local_continuum_"):
+            continue
         if "broad" in name and "wing" not in name:
             style = _BROAD_COMPONENT_STYLE
             label = "broad components" if not broad_label_used else "_nolegend_"
             broad_label_used = True
         elif "wing" in name:
             style = _WING_STYLE
-            label = "outflow wing" if not wing_label_used else "_nolegend_"
+            label = "additional component" if not wing_label_used else "_nolegend_"
             wing_label_used = True
         else:
             style = _NARROW_STYLE

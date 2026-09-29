@@ -687,6 +687,8 @@ class HbetaComplexConfig:
     narrow_fwhm_bounds_kms: Tuple[float, float] = (70.0, 1200.0)
     narrow_velocity_bounds_kms: Tuple[float, float] = (-1000.0, 1000.0)
     oiii_ratio_5007_4959: float = 2.98
+    oiii_profile_mode: str = "adaptive"
+    oiii_random_seed: int = 1729
     fit_oiii_wings: bool = True
     wing_bic_delta: float = 20.0
     wing_min_snr: float = 5.0
@@ -699,6 +701,8 @@ class HbetaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
+        if self.oiii_profile_mode not in ("adaptive", "legacy"):
+            raise ValueError("oiii_profile_mode must be 'adaptive' or 'legacy'.")
         for value, name in (
             (self.wing_bic_delta, "wing_bic_delta"),
             (self.wing_min_snr, "wing_min_snr"),

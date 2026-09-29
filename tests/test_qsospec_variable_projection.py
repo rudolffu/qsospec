@@ -142,7 +142,7 @@ def test_continuum_design_derivatives_match_centered_differences():
 
 def test_hbeta_design_derivatives_match_centered_differences():
     wave = np.linspace(4640.0, 5100.0, 900)
-    context = _HbetaContext(qsospec.HbetaComplexConfig(), include_wing=True, flux_scale=100.0)
+    context = _HbetaContext(qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", ), include_wing=True, flux_scale=100.0)
     _, _, nonlinear, _ = context.separable_initial_and_bounds()
     design, derivatives = context.separable_design(nonlinear, wave, True)
     assert design.shape[1] == len(context.linear_names)
@@ -289,12 +289,12 @@ def test_hbeta_variable_projection_matches_legacy_wing_selection():
     optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(optimizer_method="variable_projection"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", optimizer_method="variable_projection"),
     )
     legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(optimizer_method="legacy_joint"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "wing"
@@ -322,12 +322,12 @@ def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
     optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="variable_projection"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True, optimizer_method="variable_projection"),
     )
     legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="legacy_joint"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True, optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "core"

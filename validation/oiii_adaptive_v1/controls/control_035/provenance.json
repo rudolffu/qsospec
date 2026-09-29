@@ -1,0 +1,12 @@
+{
+  "source": "/Users/yuming/tools/qsospec/validation/oiii_adaptive_v1/control_inputs/sdss_dr20q/runs/shard-031",
+  "object_key": "sdss:DR20:v6_2_1:allepoch:lco:60640:63050396697276991::z_optical",
+  "frozen_arrays_sha256": {
+    "flux": "f8cf94699fb797af49efc48d7fa16b62c1625b5531cc95d73924b9436a615240",
+    "continuum": "49baef40144d29cc32acda7a1f82c291ed9c7dd154deb026ccc155ad575f5724",
+    "line_model": "6e7f15148f0939f3663e9ba6dd2b60ff50375baa5b65fbf684388b813baff553"
+  },
+  "seed": 1729,
+  "redshift_unchanged": true,
+  "host_continuum_fixed": true
+}

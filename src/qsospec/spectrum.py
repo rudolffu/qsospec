@@ -8,6 +8,7 @@ from typing import Mapping, Any, Optional
 import numpy as np
 
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
+from .resolution import SpectralResolution
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class Spectrum:
     z: float
     metadata: SpectrumMetadata = field(default_factory=SpectrumMetadata)
     mask: Optional[np.ndarray] = None
+    resolution: Optional[SpectralResolution] = None
 
     @classmethod
     def from_arrays(
@@ -41,12 +43,15 @@ class Spectrum:
         galactic_extinction_corrected: bool = False,
         galactic_extinction: Optional[Mapping[str, Any]] = None,
         metadata: Optional[SpectrumMetadata] = None,
+        resolution: Optional[SpectralResolution] = None,
     ) -> "Spectrum":
         """Build a spectrum from plain arrays.
 
         ``wave_frame`` may be ``"observed"`` or ``"rest"`` and declares the
         frame of both wavelength and F_lambda. Internally the observed
         wavelength is stored and rest wavelength is derived from ``z``.
+        ``resolution`` wavelengths and wavelength widths always use the
+        observed frame, including when ``wave_frame="rest"``.
         """
 
         wave = np.asarray(wave, dtype=float)
@@ -131,6 +136,7 @@ class Spectrum:
                 metadata=metadata,
             ),
             mask=None if mask_arr is None else mask_arr.copy(),
+            resolution=resolution,
         )
 
     @property
