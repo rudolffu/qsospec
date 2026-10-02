@@ -559,9 +559,9 @@ def test_global_monte_carlo_includes_covered_optional_complexes():
     percentiles = result.monte_carlo["percentiles"]
     assert result.monte_carlo["continuum_success_count"] == 1
     assert result.monte_carlo["complex_success_counts"]["hbeta_oiii"] == 1
-    assert "MgII_broad_fwhm_kms" in percentiles
-    assert "Hb_broad_fwhm_kms" in percentiles
-    assert "Ha_broad_fwhm_kms" in percentiles
+    assert "line:mgii:MgII_broad_fwhm_kms" in percentiles
+    assert "line:hbeta_oiii:Hb_broad_fwhm_kms" in percentiles
+    assert "line:halpha_nii_sii:Ha_broad_fwhm_kms" in percentiles
 
 
 def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
@@ -614,8 +614,8 @@ def test_host_refit_monte_carlo_includes_optional_complexes(monkeypatch):
     )
     assert result["continuum_success_count"] == 1
     assert result["complex_success_counts"]["hbeta_oiii"] == 1
-    assert "MgII_broad_fwhm_kms" in result["percentiles"]
-    assert "Ha_broad_fwhm_kms" in result["percentiles"]
+    assert "line:mgii:MgII_broad_fwhm_kms" in result["percentiles"]
+    assert "line:halpha_nii_sii:Ha_broad_fwhm_kms" in result["percentiles"]
 
 
 def test_qa_applies_display_scale_without_mutating_fit_arrays(

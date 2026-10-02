@@ -1,4 +1,5 @@
 from __future__ import annotations
+import qsospec.signed_lines
 
 import sys
 
@@ -40,7 +41,7 @@ def _spectrum(
 def test_signed_amplitude_recovers_positive_and_negative_flux(injected_flux: float) -> None:
     wave = np.linspace(4930.0, 4990.0, 241)
     profile = _profile(wave, 4960.30, 900.0)
-    result = qsospec.measure_signed_line_amplitude(
+    result = qsospec.signed_lines.measure_signed_line_amplitude(
         _spectrum(injected_flux * profile, wave=wave, err=np.full(wave.size, 0.05)),
         np.zeros(wave.size),
         4960.30,
@@ -58,7 +59,7 @@ def test_noise_amplitudes_are_not_positive_clipped() -> None:
     fluxes = []
     for _ in range(120):
         noise = rng.normal(0.0, 0.2, wave.size)
-        result = qsospec.measure_signed_line_amplitude(
+        result = qsospec.signed_lines.measure_signed_line_amplitude(
             _spectrum(noise, wave=wave),
             np.zeros(wave.size),
             4960.30,
@@ -78,7 +79,7 @@ def test_uncertainty_matches_weighted_design_matrix() -> None:
     profile = _profile(wave, 4960.30, 900.0)
     design = np.column_stack([profile, np.ones(wave.size), (wave - wave.mean()) / np.ptp(wave)])
     expected = np.sqrt(np.linalg.inv((design / err[:, None]).T @ (design / err[:, None]))[0, 0])
-    result = qsospec.measure_signed_line_amplitude(
+    result = qsospec.signed_lines.measure_signed_line_amplitude(
         _spectrum(4.0 * profile, wave=wave, err=err),
         np.zeros(wave.size),
         4960.30,
@@ -92,7 +93,7 @@ def test_linear_baseline_is_fitted_without_line_bias() -> None:
     wave = np.linspace(4930.0, 4990.0, 181)
     profile = _profile(wave, 4960.30, 900.0)
     baseline = 2.5 + 0.012 * (wave - 4960.0)
-    result = qsospec.measure_signed_line_amplitude(
+    result = qsospec.signed_lines.measure_signed_line_amplitude(
         _spectrum(baseline + 8.0 * profile, wave=wave, err=np.full(wave.size, 0.1)),
         np.zeros(wave.size),
         4960.30,
@@ -114,7 +115,7 @@ def test_masked_invalid_and_excluded_pixels_are_not_used() -> None:
     err[42] = -1.0
     excluded = np.zeros(wave.size, dtype=bool)
     excluded[43] = True
-    result = qsospec.measure_signed_line_amplitude(
+    result = qsospec.signed_lines.measure_signed_line_amplitude(
         _spectrum(flux, wave=wave, err=err, mask=mask),
         np.zeros(wave.size),
         4960.30,
@@ -130,13 +131,13 @@ def test_masked_invalid_and_excluded_pixels_are_not_used() -> None:
 def test_absent_and_partial_coverage_have_structured_statuses() -> None:
     wave = np.linspace(4950.0, 4970.0, 81)
     spectrum = _spectrum(np.zeros(wave.size), wave=wave)
-    absent = qsospec.measure_signed_line_amplitude(
+    absent = qsospec.signed_lines.measure_signed_line_amplitude(
         spectrum, np.zeros(wave.size), 5008.24, 900.0, fit_window=(4990.0, 5020.0)
     )
     assert not absent.success
     assert absent.status == "not_covered"
 
-    partial = qsospec.measure_signed_line_amplitude(
+    partial = qsospec.signed_lines.measure_signed_line_amplitude(
         spectrum, np.zeros(wave.size), 4960.30, 900.0, fit_window=(4940.0, 4965.0)
     )
     assert partial.success
@@ -151,10 +152,10 @@ def test_independent_oiii_doublet_recovers_ratio() -> None:
     flux = main_flux * _profile(wave, 5008.24, 800.0)
     flux += companion_flux * _profile(wave, 4960.30, 800.0)
     components = (
-        qsospec.SignedLineComponent("main", line_id="oiii_5008"),
-        qsospec.SignedLineComponent("companion", line_id="oiii_4960"),
+        qsospec.signed_lines.SignedLineComponent("main", line_id="oiii_5008"),
+        qsospec.signed_lines.SignedLineComponent("companion", line_id="oiii_4960"),
     )
-    result = qsospec.fit_local_line_pattern(
+    result = qsospec.signed_lines.fit_local_line_pattern(
         _spectrum(flux, wave=wave, err=np.full(wave.size, 0.05)),
         np.zeros(wave.size),
         components,
@@ -167,4 +168,4 @@ def test_independent_oiii_doublet_recovers_ratio() -> None:
 
 def test_qsospec_import_does_not_import_mlspecz() -> None:
     assert "mlspecz" not in sys.modules
-    assert callable(qsospec.measure_signed_line_amplitude)
+    assert callable(qsospec.signed_lines.measure_signed_line_amplitude)

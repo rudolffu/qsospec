@@ -285,7 +285,7 @@ def test_single_verner09_global_fit_uses_one_iron_component():
             fwhm_kms=3000.0,
         ),
         power_law=qsospec.PowerLawConfig(norm=2.0, slope=-1.0),
-        polynomial=qsospec.PolynomialContinuumConfig(enabled=False),
+        polynomial=qsospec.PolynomialContinuumConfig(mode="off"),
         balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
             enabled=False
         ),

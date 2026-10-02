@@ -1,4 +1,5 @@
 from __future__ import annotations
+import qsospec.io.readers
 
 from pathlib import Path
 
@@ -53,7 +54,7 @@ def test_identity_scanner_matches_full_scanner_across_batches_and_files(tmp_path
     _write_spectra(first, 5, prefix="first")
     _write_spectra(second, 4, prefix="second")
     rows = {str(first): [1, 4], str(second): [0, 3]}
-    lightweight = list(qsospec.scan_parquet_spectrum_inputs(
+    lightweight = list(qsospec.io.readers.scan_parquet_spectrum_inputs(
         [str(first), str(second)], row_indices=rows, batch_size=2
     ))
     full = [item for item, _ in qsospec.scan_parquet_spectra(
@@ -148,7 +149,7 @@ def test_scalar_scanner_rejects_duplicate_explicit_keys(tmp_path):
     frame.loc[1, "qsospec_object_key"] = frame.loc[0, "qsospec_object_key"]
     frame.to_parquet(source, index=False)
     with pytest.raises(ValueError, match="Duplicate explicit object key"):
-        list(qsospec.scan_parquet_spectrum_inputs(str(source)))
+        list(qsospec.io.readers.scan_parquet_spectrum_inputs(str(source)))
 
 
 def test_legacy_resume_mode_remains_vector_first(tmp_path, monkeypatch):

@@ -71,12 +71,12 @@ assessed unless requested. To opt into BIC-gated SDSS assessment:
 
    config = replace(
        config,
-       polynomial=qsospec.PolynomialContinuumConfig(enabled=None),
+       polynomial=qsospec.PolynomialContinuumConfig(mode="auto"),
    )
 
 This assesses a small quadratic after the polynomial-free baseline and retains
 it only if it passes improvement and safety checks. Its baseline slopes are
-preserved exactly. Use ``enabled=True`` to attempt correction for any survey
+preserved exactly. Use ``mode="on"`` to attempt correction for any survey
 without the improvement-score gate (safety checks still apply), or
-``enabled=False`` to keep the baseline only.
+``mode="off"`` to keep the baseline only.
 The default correction and normalization-change limits are both 10%.

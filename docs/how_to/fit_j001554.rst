@@ -56,7 +56,7 @@ foreground Galactic extinction.
            power_law=qsospec.PowerLawConfig(mode="auto")
        ),
        run_host_decomp=True,
-       template_root="~/tools/ppxf_data",
+       template_root="/path/to/ppxf_data",
        template_file="spectra_emiles_9.0.npz",
        write_qa=True,
    )

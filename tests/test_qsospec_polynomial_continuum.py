@@ -8,14 +8,14 @@ import pytest
 import qsospec
 
 
-def _config(enabled=None, *, degree=2):
+def _config(mode="auto", *, degree=2):
     # These correction tests explicitly opt into SDSS assessment by default.
     return qsospec.GlobalContinuumConfig(
         power_law=qsospec.PowerLawConfig(norm=2.0, slope=-1.0),
         uv_iron=None,
         optical_iron=None,
         polynomial=qsospec.PolynomialContinuumConfig(
-            enabled=enabled,
+            mode=mode,
             degree=degree,
         ),
         balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
@@ -52,10 +52,10 @@ def _spectrum(*, survey=None, wave=None, corrected=False):
 def test_default_polynomial_is_disabled_for_every_survey(survey, monkeypatch):
     from qsospec.fitting import global_fit
 
-    assert qsospec.PolynomialContinuumConfig().enabled is False
-    assert qsospec.GlobalContinuumConfig().polynomial.enabled is False
-    assert qsospec.GlobalContinuumConfig.lya_safe().polynomial.enabled is False
-    assert qsospec.GlobalContinuumConfig.with_single_iron("verner09").polynomial.enabled is False
+    assert qsospec.PolynomialContinuumConfig().mode == "off"
+    assert qsospec.GlobalContinuumConfig().polynomial.mode == "off"
+    assert qsospec.GlobalContinuumConfig.lya_safe().polynomial.mode == "off"
+    assert qsospec.GlobalContinuumConfig.with_single_iron("verner09").polynomial.mode == "off"
     original = global_fit._fit_global_continuum_fixed
 
     def check_baseline_only(*args, **kwargs):
@@ -66,9 +66,9 @@ def test_default_polynomial_is_disabled_for_every_survey(survey, monkeypatch):
     spectrum = _spectrum(survey=survey)
     config = replace(_config(), polynomial=qsospec.PolynomialContinuumConfig())
     result = qsospec.fit_global_continuum(spectrum, config)
-    baseline = qsospec.fit_global_continuum(spectrum, _config(False))
+    baseline = qsospec.fit_global_continuum(spectrum, _config("off"))
     assert result.metadata["polynomial_effective"] is False
-    assert result.metadata["polynomial_requested"] == "disabled"
+    assert result.metadata["polynomial_mode_requested"] == "off"
     assert "polynomial" not in result.component_models
     assert not any(name.startswith("polynomial.") for name in result.param_values)
     np.testing.assert_array_equal(result.model, baseline.model)
@@ -93,16 +93,16 @@ def test_explicit_auto_setting_activates_only_for_sdss_survey():
     unspecified = qsospec.fit_global_continuum(_spectrum(), _config())
 
     assert sdss.metadata["polynomial_effective"] is True
-    assert sdss.metadata["polynomial_activation_reason"] == "automatic_sdss"
+    assert sdss.metadata["polynomial_activation_reason"] == "eligible_sdss"
     assert "polynomial" in sdss.component_models
     assert desi.metadata["polynomial_effective"] is False
-    assert desi.metadata["polynomial_activation_reason"] == "automatic_non_sdss"
+    assert desi.metadata["polynomial_activation_reason"] == "ineligible_survey"
     assert unspecified.metadata["polynomial_effective"] is False
 
 
 def test_polynomial_preserves_baseline_slope_and_limits_correction():
     result = qsospec.fit_global_continuum(_spectrum(survey="sdss"), _config())
-    baseline = qsospec.fit_global_continuum(_spectrum(survey="sdss"), _config(False))
+    baseline = qsospec.fit_global_continuum(_spectrum(survey="sdss"), _config("off"))
 
     assert result.success
     assert result.param_values["power_law.slope"] == baseline.param_values["power_law.slope"]
@@ -122,16 +122,16 @@ def test_polynomial_preserves_baseline_slope_and_limits_correction():
 def test_explicit_polynomial_setting_overrides_survey_default():
     forced_off = qsospec.fit_global_continuum(
         _spectrum(survey="sdss"),
-        _config(False),
+        _config("off"),
     )
     forced_on = qsospec.fit_global_continuum(
         _spectrum(survey="desi"),
-        _config(True),
+        _config("on"),
     )
 
-    assert forced_off.metadata["polynomial_activation_reason"] == "explicit_disabled"
+    assert forced_off.metadata["polynomial_activation_reason"] == "explicit_off"
     assert "polynomial" not in forced_off.component_models
-    assert forced_on.metadata["polynomial_activation_reason"] == "explicit_enabled"
+    assert forced_on.metadata["polynomial_activation_reason"] == "explicit_on"
     assert "polynomial" in forced_on.component_models
 
 
@@ -154,7 +154,7 @@ def test_polynomial_is_disabled_when_wavelength_leverage_is_too_small():
 
 def test_polynomial_follows_power_law_auto_comparison():
     config = replace(
-        _config(True),
+        _config("on"),
         power_law=qsospec.PowerLawConfig(
             mode="auto",
             norm=2.0,
@@ -171,7 +171,7 @@ def test_polynomial_follows_power_law_auto_comparison():
     assert result.metadata["polynomial_effective"] is True
     assert result.metadata["power_law_mode_selected"] in {"single", "double"}
     baseline = qsospec.fit_global_continuum(
-        _spectrum(survey="sdss"), replace(config, polynomial=replace(config.polynomial, enabled=False))
+        _spectrum(survey="sdss"), replace(config, polynomial=replace(config.polynomial, mode="off"))
     )
     for name in ("power_law_mode_selected", "power_law_single_bic", "power_law_double_bic"):
         if isinstance(baseline.metadata[name], float):
@@ -197,7 +197,7 @@ def test_polynomial_component_and_selection_metadata_round_trip(tmp_path):
         result.continuum.component_models["polynomial"],
     )
     assert loaded.metadata["polynomial_effective"] is True
-    assert loaded.metadata["polynomial_activation_reason"] == "automatic_sdss"
+    assert loaded.metadata["polynomial_activation_reason"] == "eligible_sdss"
     assert loaded.metadata["polynomial_coefficients"] == pytest.approx(
         result.continuum.metadata["polynomial_coefficients"]
     )
@@ -227,7 +227,7 @@ def test_quadratic_configuration_validation(kwargs):
 def test_null_auto_case_returns_baseline_arrays_unchanged():
     spectrum = _spectrum(survey="sdss")
     spectrum = replace(spectrum, flux=2 * (spectrum.wave_rest / 3000)**-1)
-    baseline = qsospec.fit_global_continuum(spectrum, _config(False))
+    baseline = qsospec.fit_global_continuum(spectrum, _config("off"))
     result = qsospec.fit_global_continuum(spectrum, _config())
     assert result.metadata["polynomial_status"] == "bic_improvement_insufficient"
     assert "polynomial" not in result.component_models
@@ -239,8 +239,8 @@ def test_null_auto_case_returns_baseline_arrays_unchanged():
 @pytest.mark.parametrize("degree", [2, 3])
 def test_unit_scaling_solver_parity_and_fraction_envelopes(method, degree):
     spectrum = _spectrum()
-    config = replace(_config(True, degree=degree), optimizer_method=method)
-    baseline = qsospec.fit_global_continuum(spectrum, replace(config, polynomial=replace(config.polynomial, enabled=False)))
+    config = replace(_config("on", degree=degree), optimizer_method=method)
+    baseline = qsospec.fit_global_continuum(spectrum, replace(config, polynomial=replace(config.polynomial, mode="off")))
     result = qsospec.fit_global_continuum(spectrum, config)
     assert result.metadata["polynomial_effective"]
     assert result.param_values["power_law.slope"] == baseline.param_values["power_law.slope"]
@@ -255,7 +255,7 @@ def test_unit_scaling_solver_parity_and_fraction_envelopes(method, degree):
 
 def test_automatic_bic_boundary_and_explicit_bypass():
     spectrum = _spectrum(survey="sdss")
-    trial = qsospec.fit_global_continuum(spectrum, _config(True))
+    trial = qsospec.fit_global_continuum(spectrum, _config("on"))
     delta = trial.metadata["polynomial_delta_bic"]
     assert delta > 0
     config = _config()
@@ -263,7 +263,7 @@ def test_automatic_bic_boundary_and_explicit_bypass():
     rejected = qsospec.fit_global_continuum(spectrum, replace(config, polynomial=replace(config.polynomial, auto_delta_bic=delta + 0.01)))
     assert accepted.metadata["polynomial_effective"]
     assert not rejected.metadata["polynomial_effective"]
-    assert trial.metadata["polynomial_selection_reason"] == "explicit_enabled"
+    assert trial.metadata["polynomial_selection_reason"] == "explicit_on"
 
 
 def test_candidate_exception_falls_back(monkeypatch):
@@ -274,7 +274,7 @@ def test_candidate_exception_falls_back(monkeypatch):
             raise ValueError("candidate failure")
         return original(*args, **kwargs)
     monkeypatch.setattr(global_fit, "_fit_global_continuum_fixed", fail_candidate)
-    result = qsospec.fit_global_continuum(_spectrum(), _config(True))
+    result = qsospec.fit_global_continuum(_spectrum(), _config("on"))
     assert result.success
     assert result.metadata["polynomial_status"] == "candidate_failed"
     assert "candidate failure" in result.metadata["polynomial_candidate_failure"]
@@ -289,17 +289,17 @@ def test_ill_conditioned_candidate_rejected(monkeypatch):
             result.optimizer_result.jac[:, -1] = result.optimizer_result.jac[:, 0]
         return result
     monkeypatch.setattr(global_fit, "_fit_global_continuum_fixed", singular_candidate)
-    result = qsospec.fit_global_continuum(_spectrum(), _config(True))
+    result = qsospec.fit_global_continuum(_spectrum(), _config("on"))
     assert result.metadata["polynomial_status"] == "ill_conditioned"
 
 
 def test_signed_quadratic_recovery_given_independent_baseline(monkeypatch):
     from qsospec.fitting import global_fit
-    config = _config(True)
+    config = _config("on")
     spectrum = _spectrum()
     wave = spectrum.wave_rest
     pure_flux = 2 * (wave / 3000)**-1
-    baseline = qsospec.fit_global_continuum(replace(spectrum, flux=pure_flux), _config(False))
+    baseline = qsospec.fit_global_continuum(replace(spectrum, flux=pure_flux), _config("off"))
     x = (wave - 3000) / 3000
     spectrum = replace(spectrum, flux=pure_flux + 0.015 * x - 0.01 * x**2)
     baseline.chi2 = float(np.sum(((spectrum.flux - baseline.model) / spectrum.err)**2))
@@ -320,9 +320,9 @@ def test_broken_slopes_and_clipped_pixels_are_fixed():
     flux += 0.01 * x**2
     flux[30] -= 2
     spectrum = replace(spectrum, flux=flux)
-    config = replace(_config(True), power_law=qsospec.PowerLawConfig(mode="double"),
+    config = replace(_config("on"), power_law=qsospec.PowerLawConfig(mode="double"),
                      blue_absorption_clip_enabled=True)
-    baseline = qsospec.fit_global_continuum(spectrum, replace(config, polynomial=replace(config.polynomial, enabled=False)))
+    baseline = qsospec.fit_global_continuum(spectrum, replace(config, polynomial=replace(config.polynomial, mode="off")))
     result = qsospec.fit_global_continuum(spectrum, config, compute_covariance=False)
     assert result.metadata["polynomial_effective"]
     for name in ("power_law.slope", "power_law.red_slope"):
@@ -335,12 +335,12 @@ def test_broken_slopes_and_clipped_pixels_are_fixed():
 
 
 def test_missing_power_law_and_conflicting_bounds_fall_back():
-    config = replace(_config(True), power_law=qsospec.PowerLawConfig(enabled=False))
+    config = replace(_config("on"), power_law=qsospec.PowerLawConfig(enabled=False))
     # An otherwise usable baseline without a power law can be supplied by iron.
     config = replace(config, optical_iron=qsospec.IronTemplateConfig.park22())
     result = qsospec.fit_global_continuum(_spectrum(), config)
     assert result.metadata["polynomial_status"] == "baseline_power_law_unavailable"
-    config = _config(True)
+    config = _config("on")
     config = replace(config, polynomial=replace(config.polynomial, coefficient_bounds=(10, 20)))
     result = qsospec.fit_global_continuum(_spectrum(), config)
     assert result.metadata["polynomial_status"] == "incompatible_bounds"
@@ -356,7 +356,7 @@ def test_monte_carlo_refits_baseline_in_each_trial(monkeypatch):
         return result
     monkeypatch.setattr(global_fit, "_fit_global_continuum_power_law_selection", record_baseline)
     qsospec.fit_global_lines(
-        _spectrum(), _config(True), complexes=[],
+        _spectrum(), _config("on"), complexes=[],
         uncertainty_config=qsospec.UncertaintyConfig(monte_carlo_trials=3, random_seed=12),
     )
     assert len(baseline_slopes) == 4

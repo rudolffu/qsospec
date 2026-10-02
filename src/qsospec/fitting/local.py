@@ -36,6 +36,7 @@ def _prepare_iron_component(
         wave_fit,
         tuple(config.window),
         fwhm_kms=config.iron.fwhm_kms,
+        width_mode=config.iron.width_mode,
     )
     metadata = {
         "enabled": True,
@@ -185,6 +186,13 @@ def fit_line_complex(
                 "iron_flux_cgs": iron_flux_cgs,
             }
         )
+        if fwhm is not None and iron_template is not None:
+            from ..templates.iron import resolve_iron_width
+            iron_metadata.update(resolve_iron_width(iron_template, fwhm, config.iron.width_mode))
+            iron_metadata["requested_configuration"] = {
+                "width_mode": config.iron.width_mode, "fwhm_kms": config.iron.fwhm_kms,
+                "fwhm_bounds": config.iron.fwhm_bounds,
+            }
         metadata["iron"] = iron_metadata
 
     return FitResult(

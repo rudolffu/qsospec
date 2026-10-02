@@ -565,7 +565,7 @@ def test_global_workflow_monte_carlo_reports_percentiles():
     assert result.monte_carlo["n_requested"] == 2
     assert result.monte_carlo["continuum_success_count"] == 2
     assert result.monte_carlo["complex_success_counts"]["hbeta_oiii"] == 2
-    assert "Hb_broad_fwhm_kms" in result.monte_carlo["percentiles"]
+    assert "line:hbeta_oiii:Hb_broad_fwhm_kms" in result.monte_carlo["percentiles"]
 
 
 def test_covariance_propagation_off_pivot_and_host_fraction():

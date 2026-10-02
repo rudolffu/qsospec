@@ -43,7 +43,7 @@ from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -318,11 +318,14 @@ def _measurement_rows(
             Mapping[str, Mapping[str, Any]]
         ] = None,
     ) -> None:
+        from ..uncertainties import measurement_key
         for quantity, value in values.items():
             numeric = _float(value)
             if numeric is None:
                 continue
             feature_id, role = _feature_and_role(str(quantity))
+            scope = "line" if section == "complex_metric" else "continuum_sample" if section == "continuum_sample" else "derived"
+            uncertainty_key = measurement_key(scope, str(quantity), recipe_id=recipe_id if scope == "line" else None)
             rows.append(
                 {
                     "run_id": run_id,
@@ -341,9 +344,9 @@ def _measurement_rows(
                         "uncertainty_status": "available" if _float(errors.get(quantity)) is not None else "unavailable",
                         "uncertainty_method": ("local_gaussian" if section.endswith("_parameter") else (result.metadata.get("continuum_sample_uncertainty_method", "local_gaussian") if section == "continuum_sample" else method)) if _float(errors.get(quantity)) is not None else "unavailable",
                         "uncertainty_interval": ({} if section.endswith("_parameter") else result.monte_carlo.get("percentiles", {})).get(
-                            f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
+                            uncertainty_key),
                         "valid_uncertainty_trials": ({} if section.endswith("_parameter") else result.monte_carlo.get("valid_trial_counts", {})).get(
-                            f"{recipe_id}:{quantity}" if section == "complex_metric" else str(quantity)),
+                            uncertainty_key),
                         "uncertainty_conditioning": "fixed_host" if section == "continuum_parameter" else "see_scope_covariance_block",
                         **((metadata_by_quantity or {}).get(str(quantity), {})),
                     }),
@@ -1008,7 +1011,7 @@ class RunStore:
     @staticmethod
     def _require_current_schema(manifest: Mapping[str, Any]) -> None:
         found = str(manifest.get("schema_version", "missing"))
-        if found not in ("5", SCHEMA_VERSION):
+        if found not in ("5", "6", SCHEMA_VERSION):
             raise ValueError(
                 "Unsupported qsospec run schema "
                 f"{found!r}; this version requires schema {SCHEMA_VERSION}. "
@@ -1642,9 +1645,12 @@ def load_model_by_key(
         for item in warning_rows
         if item["section"] == "host"
     ]
+    from ..uncertainties import canonicalize_matched_draws
+    matched_draws = canonicalize_matched_draws(workflow_metadata.get("matched_uncertainty_draws", {}),
+                                              complexes, workflow_metadata.get("continuum_samples", {}))
     workflow = WorkflowResult(
         spectrum=spectrum,
-        monte_carlo=workflow_metadata.get("matched_uncertainty_draws", {}),
+        monte_carlo=matched_draws,
         continuum_initial=continuum,
         continuum=continuum,
         hbeta=complexes.get("hbeta_oiii"),

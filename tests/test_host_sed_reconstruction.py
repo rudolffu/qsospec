@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import qsospec.workflows.host
 
 import numpy as np
 import pytest
@@ -37,7 +38,7 @@ def test_compact_state_reconstructs_exact_stellar_host_sed(tmp_path):
     )
 
     original = qsospec.workflows.host.predict_host_sed(fit)
-    reconstructed = qsospec.reconstruct_host_sed_from_state(
+    reconstructed = qsospec.workflows.host.reconstruct_host_sed_from_state(
         fit.host_reconstruction_state,
         template_root=str(tmp_path),
     )
@@ -67,8 +68,8 @@ def test_compact_state_rejects_template_hash_mismatch(tmp_path):
     state = dict(fit.host_reconstruction_state)
     state["template_file_sha256"] = "0" * 64
 
-    with pytest.raises(qsospec.HostSEDReconstructionError) as caught:
-        qsospec.reconstruct_host_sed_from_state(
+    with pytest.raises(qsospec.workflows.host.HostSEDReconstructionError) as caught:
+        qsospec.workflows.host.reconstruct_host_sed_from_state(
             state,
             template_root=str(tmp_path),
         )
@@ -87,7 +88,7 @@ def test_reconstructed_host_sed_never_extrapolates(tmp_path):
         host_reconstruction_state={},
     )
     qsospec.workflows.host.predict_host_sed(fit)
-    sed = qsospec.reconstruct_host_sed_from_state(
+    sed = qsospec.workflows.host.reconstruct_host_sed_from_state(
         fit.host_reconstruction_state,
         template_root=str(tmp_path),
     )

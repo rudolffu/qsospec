@@ -119,6 +119,12 @@ def test_varying_lsf_and_observed_intrinsic_fit():
     assert fit.metadata['line_lsf']['status']=='forward_modeled'
     assert fit.metrics['oiii_5008_full_observed_input_frame_w80_kms']>fit.metrics['oiii_5008_full_intrinsic_input_frame_w80_kms']
     assert fit.metadata['peak_model']['components'][0]['line_lsf']['z']==s.z
+    descriptor = fit.metadata['line_lsf']['descriptor']
+    reference = fit.param_values['narrow.velocity_kms']
+    a = profile_distribution(fit.param_values, 1, reference=reference, lsf=descriptor)
+    b = profile_distribution(fit.param_values, 1, reference=reference, lsf=descriptor, line_id='oiii_4960')
+    assert a['fraction_beyond_500_kms'] != b['fraction_beyond_500_kms']
+    assert fit.metrics['oiii_doublet_full_observed_core_relative_fraction_beyond_500_kms'] == (2.98*a['fraction_beyond_500_kms']+b['fraction_beyond_500_kms'])/3.98
 
 
 def test_covariance_parameter_draws():
@@ -214,7 +220,7 @@ def test_lsf_run_store_roundtrip_and_peak_recovery(tmp_path,monkeypatch):
     del loaded.hbeta.metadata['peak_model'];del loaded.hbeta.metadata['line_peaks']
     assert recover_line_peaks(loaded)['hbeta_oiii']=='available'
     assert loaded.hbeta.metrics['oiii_5008_full_peak_rest_angstrom']==pytest.approx(fit.metrics['oiii_5008_full_peak_rest_angstrom'],abs=1e-6)
-    workflow.monte_carlo={'errors':{'hbeta_oiii:oiii_5008_full_w80_kms':17.},'percentiles':{},'valid_trial_counts':{},'n_requested':2}
+    workflow.monte_carlo={'errors':{'line:hbeta_oiii:oiii_5008_full_w80_kms':17.},'percentiles':{},'valid_trial_counts':{},'n_requested':2}
     apply_bootstrap_errors(workflow)
     assert workflow.hbeta.metric_errors['oiii_5008_full_w80_kms']==17.
 
@@ -239,3 +245,4 @@ def test_unresolved_intrinsic_width_and_doublet_equivalence():
     a=profile_distribution(fit.param_values,1,lsf=d,line_id='oiii_5008')
     b=profile_distribution(fit.param_values,1,lsf=d,line_id='oiii_4960')
     assert a['fraction_beyond_500_kms']==pytest.approx(b['fraction_beyond_500_kms'],abs=1e-8)
+    assert fit.metrics['oiii_doublet_full_observed_core_relative_fraction_beyond_500_kms'] == fit.metrics['oiii_5008_full_observed_core_relative_fraction_beyond_500_kms']

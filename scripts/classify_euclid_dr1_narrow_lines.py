@@ -34,15 +34,12 @@ for _thread_env in (
 import numpy as np
 import pandas as pd
 
-from qsospec import (
-    HalphaModelSelectionConfig,
-    HeIPagammaModelSelectionConfig,
-    LineSpreadFunctionConfig,
-    fit_halpha_model_grid,
-    fit_hei_pgamma_model_pair,
-    load_model,
-    open_run,
-)
+from qsospec import load_model, open_run
+from qsospec.halpha_classification import HalphaModelSelectionConfig
+from qsospec.hei_pgamma_classification import HeIPagammaModelSelectionConfig
+from qsospec.halpha_classification import LineSpreadFunctionConfig
+from qsospec.halpha_classification import fit_halpha_model_grid
+from qsospec.hei_pgamma_classification import fit_hei_pgamma_model_pair
 from qsospec.narrow_line_evidence import (
     BROAD_DELTA_BIC_THRESHOLD,
     BROAD_SNR_THRESHOLD,

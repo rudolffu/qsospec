@@ -39,7 +39,7 @@ def run(trials=0):
         'real_data_status':'Synthetic-only execution; real comparisons are produced separately by compare_archived_iron_balmer.py.'}
     for label,bridge,soft in [('legacy',False,False),('bridge_only',True,False),('soft_hgamma_only',False,True),('combined',True,True)]:
         config=replace(base,regional_iron=replace(base.regional_iron,enabled=bridge),
-            balmer_pseudocontinuum=replace(base.balmer_pseudocontinuum,sync_with_hgamma='soft' if soft else 'hard_legacy'))
+            balmer_pseudocontinuum=replace(base.balmer_pseudocontinuum,sync_with_hgamma='soft' if soft else 'hard'))
         start=perf_counter()
         result=qsospec.fit_global_lines(spectrum,config,complexes=('oii_nev_neiii_hgamma',),
             uncertainty_config=qsospec.UncertaintyConfig(monte_carlo_trials=trials,random_seed=21))

@@ -4,6 +4,7 @@ Use extract_archived_comparison.py to prepare the input JSONL. The archived
 host is held fixed. This does not update the source run or adopted redshift.
 """
 import argparse
+import qsospec.systemic_redshift
 import json
 from pathlib import Path
 from time import perf_counter
@@ -33,7 +34,7 @@ def main():
         with patch('qsospec.fitting.global_fit._solve_once_with_fallback',side_effect=AssertionError('Unexpected fit')), \
              patch('qsospec.fitting.global_fit.least_squares',side_effect=AssertionError('Unexpected optimizer')):
             start=perf_counter();statuses=recover_line_peaks(result);peak_seconds=perf_counter()-start
-            start=perf_counter();diagnostic=qsospec.estimate_systemic_redshift(result);systemic_seconds=perf_counter()-start
+            start=perf_counter();diagnostic=qsospec.systemic_redshift.estimate_systemic_redshift(result);systemic_seconds=perf_counter()-start
         assert result.spectrum.z==row['z']
         report=dict(object_id=row['object_id'],fit_seconds=fit_seconds,peak_seconds=peak_seconds,
             systemic_seconds=systemic_seconds,recovery=statuses,diagnostic=diagnostic,

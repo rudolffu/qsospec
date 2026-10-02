@@ -18,20 +18,20 @@ from qsospec.euclid_rgs import (
     validate_sample_manifest,
 )
 
-COMPLEX_PRESETS = ("standard", "nir_complete_v1")
+COMPLEX_PRESETS = ("standard", "extended_quasar_v1")
 
 
 def _resolve_complexes(preset: str):
     """Return the fit complex selection for a named preset.
 
     ``standard`` keeps the historical auto-enabled recipe set (``None``);
-    ``nir_complete_v1`` returns the versioned NIR-complete recipe tuple.
+    ``extended_quasar_v1`` returns the versioned extended-quasar recipe tuple.
     """
 
     if preset == "standard":
         return None
-    if preset == "nir_complete_v1":
-        return recipes.nir_complete()
+    if preset == "extended_quasar_v1":
+        return recipes.extended_quasar()
     raise ValueError(f"Unknown complex preset: {preset}")
 
 

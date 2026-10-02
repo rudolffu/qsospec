@@ -1,4 +1,6 @@
 import json
+import qsospec.io.run_store
+import qsospec.uncertainties
 import os
 from pathlib import Path
 
@@ -90,6 +92,9 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert "wave_rest" in model_table.column_names
     assert "wave_obs" not in model_table.column_names
     assert loaded.spectrum.flux_frame == "rest"
+    assert loaded.continuum.metadata["global_model_id"] == "global_v2"
+    assert loaded.metadata["global_model_id"] == "global_v2"
+    assert store.manifest["configuration"]["global_model_id"] == "global_v2"
     assert sorted(loaded.warning_codes()) == sorted(result.warning_codes())
     assert store.read_table("objects").num_rows == 1
     assert store.read_table("models").num_rows == 1
@@ -360,7 +365,7 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
         "preconvolution_validation_status"
     ] == "preconvolved_exact"
     assert loaded.host_reconstruction_state == result.host_reconstruction_state
-    assert qsospec.load_host_reconstruction_state(
+    assert qsospec.io.run_store.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
     original_read_object_table = store.read_object_table
@@ -373,7 +378,7 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
         )
 
     store.read_object_table = record_projected_read
-    assert qsospec.load_host_reconstruction_state(
+    assert qsospec.io.run_store.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
     assert projected_reads == [
@@ -384,21 +389,21 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
         )
     ]
     with pytest.raises(KeyError, match="Object not found in models"):
-        qsospec.load_host_reconstruction_state(store, "missing-object")
+        qsospec.io.run_store.load_host_reconstruction_state(store, "missing-object")
     store.read_table = lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("host-state accessor must not scan a full table")
     )
-    assert qsospec.load_host_reconstruction_state(
+    assert qsospec.io.run_store.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
-    assert store.manifest["schema_version"] == "6"
+    assert store.manifest["schema_version"] == "7"
 
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["schema_version"] = "4"
     manifest_path.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="requires schema 6"):
+    with pytest.raises(ValueError, match="requires schema 7"):
         qsospec.open_run(str(run_path))
 
 
@@ -757,10 +762,21 @@ def test_covariance_order_and_matched_draw_round_trip(tmp_path):
     assert list(loaded.continuum.param_values)==list(result.continuum.param_values)
     np.testing.assert_allclose(loaded.continuum.covariance,result.continuum.covariance)
     assert loaded.monte_carlo['covariance_trial_ids']==result.monte_carlo['covariance_trial_ids']
+    assert loaded.monte_carlo['measurement_key_schema'] == 'qualified_v1'
+    manifest_path = tmp_path / 'run' / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    for schema in ('5', '6'):
+        manifest['schema_version'] = schema
+        manifest_path.write_text(json.dumps(manifest))
+        older = qsospec.load_model(str(tmp_path/'run'), 'covariance-roundtrip')
+        np.testing.assert_allclose(older.continuum.model, loaded.continuum.model)
+        assert older.monte_carlo['measurement_key_schema'] == 'qualified_v1'
+    assert all(name.startswith(('continuum_sample:', 'continuum_param:', 'derived:', 'line:'))
+               for name in loaded.monte_carlo['measurement_names'])
     rows=qsospec.open_run(str(tmp_path/'run')).read_table('measurements').to_pandas()
     samples=rows[rows.section=='continuum_sample']
     assert samples.error.notna().any()
     report=tmp_path/'recovery.json'
-    qsospec.recover_uncertainties(loaded,report)
+    qsospec.uncertainties.recover_uncertainties(loaded,report)
     with pytest.raises(FileExistsError):
-        qsospec.recover_uncertainties(loaded,report)
+        qsospec.uncertainties.recover_uncertainties(loaded,report)

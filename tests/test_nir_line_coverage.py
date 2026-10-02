@@ -1,4 +1,4 @@
-"""NIR-complete preset, local coverage, and newly activated lines."""
+"""extended-quasar preset, local coverage, and newly activated lines."""
 
 import numpy as np
 import pytest
@@ -84,9 +84,9 @@ def _flat_config():
     )
 
 
-def test_nir_complete_preset_has_an_enabled_path_for_each_table_feature():
-    preset = {recipe.id: recipe for recipe in qsospec.recipes.nir_complete()}
-    assert qsospec.recipes.NIR_COMPLETE_PRESET_ID == "nir_complete_v1"
+def test_extended_quasar_preset_has_an_enabled_path_for_each_table_feature():
+    preset = {recipe.id: recipe for recipe in qsospec.recipes.extended_quasar()}
+    assert qsospec.recipes.EXTENDED_QUASAR_PRESET_ID == "extended_quasar_v1"
     assert "paschen_nir" not in preset
     assert {
         "padelta",
@@ -104,7 +104,7 @@ def test_nir_complete_preset_has_an_enabled_path_for_each_table_feature():
         }
         assert line_id in enabled_lines
     assert len({recipe for recipe in INVENTORY_FEATURES.values()}) == 11
-    assert {recipe.id for recipe in qsospec.recipes.nir_complete()} == set(preset)
+    assert {recipe.id for recipe in qsospec.recipes.extended_quasar()} == set(preset)
 
 
 @pytest.mark.parametrize(

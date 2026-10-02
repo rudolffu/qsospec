@@ -15,11 +15,13 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Union
 import numpy as np
 
 from .host.io import SpectrumData
+from .host.config import resolve_host_runtime_config
 
 from ..complex_recipes import ComplexRecipe
 from ..config import (
     GalacticExtinctionConfig,
     GlobalContinuumConfig,
+    DEFAULT_GLOBAL_MODEL_ID,
     HalphaComplexConfig,
     HbetaComplexConfig,
     LyaNVComplexConfig,
@@ -35,6 +37,7 @@ from ..io.products import (
 from ..global_result import WorkflowResult
 from .host_workflow import (
     _run_global_fit_with_optional_host,
+    _host_config_with_global_iron,
 )
 from ..io.readers import (
     SpectrumInput,
@@ -549,17 +552,21 @@ def _configuration(
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
+    resolved_host = _host_config_with_global_iron(
+        resolve_host_runtime_config(host_config, template_root=template_root,
+                                    template_file=template_file, host_fit_range=host_fit_range), global_config)
     return {
+        "global_model_id": global_config.model_id if global_config is not None else DEFAULT_GLOBAL_MODEL_ID,
         "run_host_decomp": bool(run_host_decomp),
-        "template_root": str(template_root),
-        "template_file": str(template_file),
-        "host_fit_range": tuple(host_fit_range),
-        "host_config": host_config,
+        "template_root": resolved_host.template_root,
+        "template_file": resolved_host.template_file,
+        "host_fit_range": resolved_host.fit_range,
+        "host_config": asdict(resolved_host),
         "galactic_extinction_config": asdict(galactic_extinction_config),
         "global_config": (
             asdict(global_config)
             if global_config is not None
-            else {"preset": "automatic_lya_safe"}
+            else {"preset": "automatic_lya_safe", "model_id": DEFAULT_GLOBAL_MODEL_ID}
         ),
         "hbeta_config": asdict(hbeta_config),
         "mgii_config": asdict(mgii_config),
@@ -576,9 +583,9 @@ def _configuration(
 def _configuration_overrides(configuration: Dict[str, Any]) -> Dict[str, Any]:
     defaults = _configuration(
         run_host_decomp=False,
-        template_root="~/tools/ppxf_data",
-        template_file="spectra_emiles_9.0.npz",
-        host_fit_range=(3600.0, 7000.0),
+        template_root=None,
+        template_file=None,
+        host_fit_range=None,
         host_config=None,
         galactic_extinction_config=GalacticExtinctionConfig(),
         global_config=None,
@@ -613,6 +620,10 @@ def _configuration_overrides(configuration: Dict[str, Any]) -> Dict[str, Any]:
             changed = diff(value, default_value)
             if changed != {}:
                 overrides[key] = changed
+    # Keep the stable model identity even when all settings are defaults.
+    overrides["global_model_id"] = configuration["global_model_id"]
+    if configuration["run_host_decomp"]:
+        overrides["host_config"] = configuration["host_config"]
     return overrides
 
 
@@ -632,11 +643,13 @@ def _fit_options(
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
+    host_config = resolve_host_runtime_config(host_config, template_root=template_root,
+                                            template_file=template_file, host_fit_range=host_fit_range)
     return {
         "run_host_decomp": bool(run_host_decomp),
-        "template_root": template_root,
-        "template_file": template_file,
-        "host_fit_range": tuple(host_fit_range),
+        "template_root": host_config.template_root,
+        "template_file": host_config.template_file,
+        "host_fit_range": host_config.fit_range,
         "host_config": host_config,
         "galactic_extinction_config": galactic_extinction_config,
         "global_config": global_config,
@@ -660,9 +673,9 @@ def fit_object_to_store(
     flux_unit: Optional[str] = None,
     flux_scale: Optional[float] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range=(3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range=None,
     host_config=None,
     galactic_extinction_config: Optional[
         GalacticExtinctionConfig
@@ -917,9 +930,9 @@ def fit_batch(
     num_shards: int = 1,
     shard_index: int = 0,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range=(3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range=None,
     host_config=None,
     galactic_extinction_config: Optional[
         GalacticExtinctionConfig

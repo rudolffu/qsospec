@@ -24,7 +24,7 @@ def compare(row):
     arrays={'wave_rest':spectrum.wave_rest,'flux':spectrum.flux,'error':spectrum.err,'valid':spectrum.valid_mask}
     for name,bridge,soft in [('legacy',False,False),('bridge_only',True,False),('soft_hgamma_only',False,True),('combined',True,True)]:
         config=replace(base,regional_iron=qsospec.RegionalIronConfig(enabled=bridge),
-            balmer_pseudocontinuum=replace(base.balmer_pseudocontinuum,sync_with_hgamma='soft' if soft else 'hard_legacy'))
+            balmer_pseudocontinuum=replace(base.balmer_pseudocontinuum,sync_with_hgamma='soft' if soft else 'hard'))
         start=perf_counter()
         result=qsospec.fit_global_lines(spectrum,config,host_model_on_grid=host,
             complexes=('mgii','hbeta_oiii','oii_nev_neiii_hgamma'))

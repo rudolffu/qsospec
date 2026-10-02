@@ -22,8 +22,8 @@ Choose a workflow
        file-based object.
    * - ``fit_object_to_store``
      - File, ``SpectrumData``, or ``Spectrum``
-     - Galactic correction except caller-preprocessed ``Spectrum``; optional
-       host; run bundle and QA. Best for reproducible single-object work.
+     - Prepares uncorrected ``Spectrum`` inputs according to configured Galactic
+       extinction rules; optional host; run bundle and QA. Best for reproducible single-object work.
    * - ``fit_batch``
      - Parquet/FITS sample
      - Galactic correction; optional host; resumable run bundle. Best for

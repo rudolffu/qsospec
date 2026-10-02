@@ -53,7 +53,7 @@ def scientific_configuration(dustmaps_data_dir: str) -> dict[str, Any]:
             enabled=False,
             fit_fwhm=False,
             sync_with_hbeta="never",
-            sync_with_hgamma="never",
+            sync_with_hgamma="off",
         ),
     )
     extinction = GalacticExtinctionConfig(

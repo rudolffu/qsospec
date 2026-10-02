@@ -127,7 +127,7 @@ def test_clipping_and_correlated_mean():
 
 def test_existing_bootstrap_reused():
     fit,_=fixture();result=workflow(fit)
-    name='test:oiii_5008_full_peak_rest_angstrom'
+    name='line:test:oiii_5008_full_peak_rest_angstrom'
     result.monte_carlo={'draws':[{'trial_id':i,'values':{name:5008.24+delta}} for i,delta in enumerate([-.1,.1,-.2,.2])]}
     output=estimate_systemic_redshift(result)
     assert output['uncertainty_method']=='matched_existing_bootstrap'

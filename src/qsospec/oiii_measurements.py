@@ -87,6 +87,10 @@ def record_oiii_measurements(fit,spectrum,continuum,recipe,*,compute_covariance=
     fit.metric_errors['Hb_broad_velocity_kms']=C*fit.metric_errors['Hb_broad_centroid']/center if center>0 else np.nan
     rows=[]
     descriptor=fit.metadata.get('line_lsf',{}).get('descriptor')
+    resolution = descriptor.get('resolution', {}) if descriptor else {}
+    resolution_values = np.asarray(resolution.get('values', []))
+    equal_velocity_lsf = (not descriptor or (resolution.get('mode') in ('resolving_power', 'sigma_kms')
+        and resolution_values.size > 0 and np.all(resolution_values == resolution_values.flat[0])))
     for i in range(count):
         group=GROUPS[i];label=LABELS[i];flux=fit.param_values[f'OIII5007_{label}.flux']
         err=fit.param_errors.get(f'OIII5007_{label}.flux',np.nan)
@@ -134,9 +138,11 @@ def record_oiii_measurements(fit,spectrum,continuum,recipe,*,compute_covariance=
                     result[name]=value if not relative or reliable else np.nan
                 if relative:
                     f5008=values['fraction_beyond_500_kms']
-                    f4960=profile_distribution(parameters,count,reference=reference,lsf=lsf,line_id='oiii_4960')['fraction_beyond_500_kms'] if lsf else f5008
+                    identical = not lsf or equal_velocity_lsf
+                    f4960=profile_distribution(parameters,count,reference=reference,lsf=lsf,line_id='oiii_4960')['fraction_beyond_500_kms'] if not identical else f5008
                     ratio=fit.metadata['oiii_ratio_5007_4959']
-                    result[f'oiii_doublet_full_{frame}_core_relative_fraction_beyond_500_kms']=(ratio*f5008+f4960)/(ratio+1) if reliable else np.nan
+                    fraction = f5008 if identical else (ratio*f5008+f4960)/(ratio+1)
+                    result[f'oiii_doublet_full_{frame}_core_relative_fraction_beyond_500_kms']=fraction if reliable else np.nan
         result['oiii_5008_full_flux_input']=sum(parameters[f'OIII5007_{LABELS[i]}.flux'] for i in range(count))
         result['oiii_doublet_full_flux_input']=result['oiii_5008_full_flux_input']*(1+1/fit.metadata['oiii_ratio_5007_4959'])
         return result

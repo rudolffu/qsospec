@@ -569,18 +569,18 @@ def describe(value: str) -> Dict[str, Any]:
     }
 
 
-NIR_COMPLETE_PRESET_ID = "nir_complete_v1"
-NIR_COMPLETE_COMPACT_IDS: Tuple[str, ...] = (
+EXTENDED_QUASAR_PRESET_ID = "extended_quasar_v1"
+EXTENDED_QUASAR_COMPACT_IDS: Tuple[str, ...] = (
     "padelta",
     "hei10833_pgamma",
     "oi11290",
     "pabeta",
 )
-NIR_COMPLETE_ADDED_IDS: Tuple[str, ...] = ("hei5877", "oi8449", "siii_nir")
+EXTENDED_QUASAR_ADDED_IDS: Tuple[str, ...] = ("hei5877", "oi8449", "siii_nir")
 
 
-def nir_complete_recipes() -> Tuple[ComplexRecipe, ...]:
-    """Return the versioned NIR-complete recipe set (``nir_complete_v1``).
+def extended_quasar_recipes() -> Tuple[ComplexRecipe, ...]:
+    """Return the versioned extended-quasar recipe set (``extended_quasar_v1``).
 
     The preset keeps every standard auto-enabled recipe but replaces the
     umbrella ``paschen_nir`` complex with four compact local NIR recipes and
@@ -592,12 +592,12 @@ def nir_complete_recipes() -> Tuple[ComplexRecipe, ...]:
         for recipe in _RECIPES
         if recipe.auto_enabled and recipe.id != "paschen_nir"
     ]
-    for recipe_id in (*NIR_COMPLETE_ADDED_IDS, *NIR_COMPLETE_COMPACT_IDS):
+    for recipe_id in (*EXTENDED_QUASAR_ADDED_IDS, *EXTENDED_QUASAR_COMPACT_IDS):
         selected.append(_BY_ID[recipe_id])
     return tuple(selected)
 
 
-NIR_COMPLETE_RECIPE_IDS = frozenset(recipe.id for recipe in nir_complete_recipes())
+EXTENDED_QUASAR_RECIPE_IDS = frozenset(recipe.id for recipe in extended_quasar_recipes())
 
 
 def generic_narrow_lines(line_ids: Iterable[str], **changes: Any) -> ComplexRecipe:

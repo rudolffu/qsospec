@@ -22,14 +22,11 @@ import traceback
 import numpy as np
 import pandas as pd
 
-from qsospec import (
-    HalphaModelSelectionConfig,
-    LineSpreadFunctionConfig,
-    diagnostic_bic_sweep,
-    fit_halpha_model_grid,
-    load_model,
-    open_run,
-)
+from qsospec import load_model, open_run
+from qsospec.halpha_classification import HalphaModelSelectionConfig
+from qsospec.halpha_classification import LineSpreadFunctionConfig
+from qsospec.halpha_classification import diagnostic_bic_sweep
+from qsospec.halpha_classification import fit_halpha_model_grid
 
 
 RUN_NAME = "production_no_balmer_no_host_v1"

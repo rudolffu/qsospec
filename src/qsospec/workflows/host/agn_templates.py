@@ -23,7 +23,7 @@ from ...templates import (
     load_iron_template,
 )
 from .config import HostAgnPseudoContinuumConfig
-from ...templates.iron import evaluate_iron_kernel, regional_weights, resolve_regional_intervals
+from ...templates.iron import evaluate_iron_kernel, regional_weights, resolve_regional_intervals, resolve_iron_width
 
 
 @lru_cache(maxsize=16)
@@ -300,8 +300,7 @@ def build_host_agn_template_bundle(
                     "native_resolution_status": (
                         "known" if native_fwhm > 0 else "mixed_empirical"
                     ),
-                    "native_fwhm_kms": native_fwhm if native_fwhm>0 else None,
-                    "kernel_fwhm_kms": float(selected_fwhm_kms) if hybrid or native_fwhm == 0 else float(np.sqrt(selected_fwhm_kms**2-native_fwhm**2)),
+                    **resolve_iron_width(template, selected_fwhm_kms, "kernel" if hybrid else "legacy"),
                     "source_sha256": _template_hash(
                         np.column_stack([template.wave_rest, template.flux])
                     ),

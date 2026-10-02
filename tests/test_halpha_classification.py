@@ -1,6 +1,7 @@
 """Tests for the opt-in, RGS-aware H-alpha model comparison."""
 
 from dataclasses import replace
+import qsospec.halpha_classification
 
 import numpy as np
 import pandas as pd
@@ -55,19 +56,19 @@ def _synthetic_halpha(*, broad_flux=0.0, narrow_fwhm=700.0):
 
 
 def test_r480_width_conversion_and_unresolved_behavior():
-    lsf = qsospec.LineSpreadFunctionConfig(resolving_power=480.0)
+    lsf = qsospec.halpha_classification.LineSpreadFunctionConfig(resolving_power=480.0)
     instrumental = C_KMS / 480.0
     assert lsf.instrumental_fwhm_kms == pytest.approx(instrumental)
-    observed = qsospec.observed_fwhm_kms(1200.0, instrumental)
+    observed = qsospec.halpha_classification.observed_fwhm_kms(1200.0, instrumental)
     assert observed == pytest.approx(1352.80623630785)
-    assert qsospec.intrinsic_fwhm_kms(observed, instrumental) == pytest.approx(1200.0)
-    assert qsospec.intrinsic_fwhm_kms(instrumental - 1.0, instrumental) == 0.0
+    assert qsospec.halpha_classification.intrinsic_fwhm_kms(observed, instrumental) == pytest.approx(1200.0)
+    assert qsospec.halpha_classification.intrinsic_fwhm_kms(instrumental - 1.0, instrumental) == 0.0
 
 
 def test_model_grid_bounds_put_intrinsic_1200_at_exact_observed_boundary():
-    config = qsospec.HalphaModelSelectionConfig()
-    narrow, broad = qsospec.observed_halpha_width_bounds(config, 3)
-    boundary = qsospec.observed_fwhm_kms(
+    config = qsospec.halpha_classification.HalphaModelSelectionConfig()
+    narrow, broad = qsospec.halpha_classification.observed_halpha_width_bounds(config, 3)
+    boundary = qsospec.halpha_classification.observed_fwhm_kms(
         1200.0, config.lsf.instrumental_fwhm_kms
     )
     assert narrow[1] == pytest.approx(boundary)
@@ -78,8 +79,8 @@ def test_model_grid_bounds_put_intrinsic_1200_at_exact_observed_boundary():
 
 @pytest.mark.parametrize("count", (0, 1, 2, 3))
 def test_halpha_context_supports_zero_through_three_broad_components(count):
-    selection = qsospec.HalphaModelSelectionConfig()
-    narrow, broad = qsospec.observed_halpha_width_bounds(selection, count)
+    selection = qsospec.halpha_classification.HalphaModelSelectionConfig()
+    narrow, broad = qsospec.halpha_classification.observed_halpha_width_bounds(selection, count)
     config = replace(
         qsospec.HalphaComplexConfig(),
         narrow_fwhm_bounds_kms=narrow,
@@ -111,7 +112,7 @@ def test_legacy_halpha_default_still_uses_three_broad_components():
 
 def test_narrow_spectrum_prefers_n0_and_never_assigns_physical_class():
     spectrum, continuum = _synthetic_halpha()
-    result = qsospec.fit_halpha_model_grid(
+    result = qsospec.halpha_classification.fit_halpha_model_grid(
         spectrum, continuum, compute_covariance=False
     )
     assert set(result.candidates) == {"N0", "B1"}
@@ -127,7 +128,7 @@ def test_narrow_spectrum_prefers_n0_and_never_assigns_physical_class():
 
 def test_strong_broad_spectrum_favors_a_broad_model():
     spectrum, continuum = _synthetic_halpha(broad_flux=150.0)
-    result = qsospec.fit_halpha_model_grid(
+    result = qsospec.halpha_classification.fit_halpha_model_grid(
         spectrum, continuum, compute_covariance=False
     )
     assert result.minimum_bic_model == "B1"
@@ -140,10 +141,10 @@ def test_strong_broad_spectrum_favors_a_broad_model():
 
 def test_extended_broad_grid_is_opt_in_for_targeted_diagnostics():
     spectrum, continuum = _synthetic_halpha(broad_flux=150.0)
-    config = qsospec.HalphaModelSelectionConfig(
+    config = qsospec.halpha_classification.HalphaModelSelectionConfig(
         intrinsic_broad_component_counts=(1, 2, 3)
     )
-    result = qsospec.fit_halpha_model_grid(
+    result = qsospec.halpha_classification.fit_halpha_model_grid(
         spectrum,
         continuum,
         selection_config=config,
@@ -159,7 +160,7 @@ def test_diagnostic_sweep_is_strict_and_explicitly_uncalibrated():
             "narrow_width_secure_below_boundary": [True, True, False, True],
         }
     )
-    sweep = qsospec.diagnostic_bic_sweep(frame, anchors=(10.0,))
+    sweep = qsospec.halpha_classification.diagnostic_bic_sweep(frame, anchors=(10.0,))
     row = sweep.iloc[0]
     assert row["n_finite"] == 3
     assert row["n_broad_favored_above_threshold"] == 1

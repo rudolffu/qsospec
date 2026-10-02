@@ -119,8 +119,10 @@ def estimate_systemic_redshift(result, method='ws22'):
     z = float(result.spectrum.z)
     luminosity = luminosity_1700(result)
     mc = getattr(result, 'monte_carlo', {})
-    if np.isfinite(mc.get('errors', {}).get('ws22_log_l1700', np.nan)):
-        luminosity['error_dex'] = mc['errors']['ws22_log_l1700']
+    from .uncertainties import measurement_key
+    luminosity_key = measurement_key('derived', 'ws22_log_l1700')
+    if np.isfinite(mc.get('errors', {}).get(luminosity_key, np.nan)):
+        luminosity['error_dex'] = mc['errors'][luminosity_key]
     output = dict(method=method, calibration_version=WS22_CALIBRATION['version'],
         sources=WS22_CALIBRATION['sources'], status='unavailable', input_redshift=z,
         z_sys=None, z_sys_error=None, offset_kms=None, lines={}, luminosity=luminosity,
@@ -200,8 +202,8 @@ def estimate_systemic_redshift(result, method='ws22'):
             vector = []
             for line, fit, peak, derivative, dl, _ in candidates:
                 record = output['lines'][line]
-                wavelength = trial['values'].get(f"{record['recipe']}:{record['peak_key']}_peak_rest_angstrom", np.nan)
-                offset, _ = velocity_correction(line, trial['values'].get('ws22_log_l1700', np.nan))
+                wavelength = trial['values'].get(measurement_key('line', record['peak_key']+'_peak_rest_angstrom', recipe_id=record['recipe']), np.nan)
+                offset, _ = velocity_correction(line, trial['values'].get(luminosity_key, np.nan))
                 vector.append((1+z)*wavelength/record['calibration']['wavelength']/(1+offset/C_KMS)-1)
             if np.isfinite(vector).all():
                 draw_vectors.append(vector)

@@ -8,6 +8,8 @@ Existing centroid measurements are unchanged.
 ```python
 import qsospec
 
+import qsospec.line_peaks
+import qsospec.systemic_redshift
 # Pass the catalog's adopted systemic redshift as the ordinary input redshift.
 spectrum = qsospec.Spectrum.from_arrays(
     wave_obs, flux_obs, err=error_obs, z=dr20q_z_sys,
@@ -20,7 +22,7 @@ peak = fit.metrics["hbeta_broad_peak_observed_angstrom"]
 error = fit.metric_errors["hbeta_broad_peak_observed_angstrom"]
 
 # Optional post-processing; never alters spectrum.z or refits the spectrum.
-diagnostic = qsospec.estimate_systemic_redshift(result, method="ws22")
+diagnostic = qsospec.systemic_redshift.estimate_systemic_redshift(result, method="ws22")
 if diagnostic["status"] == "available":
     print(diagnostic["z_sys"], diagnostic["z_sys_error"])
 ```
@@ -114,8 +116,8 @@ presented as a measured systemic redshift.
 
 ```python
 loaded = qsospec.load_model(store, object_id)
-statuses = qsospec.recover_line_peaks(loaded)  # Explicit, no fit.
-diagnostic = qsospec.estimate_systemic_redshift(loaded)
+statuses = qsospec.line_peaks.recover_line_peaks(loaded)  # Explicit, no fit.
+diagnostic = qsospec.systemic_redshift.estimate_systemic_redshift(loaded)
 ```
 
 New runs save exact native profile definitions. For older native runs, recovery

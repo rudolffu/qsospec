@@ -9,7 +9,7 @@ positive noise bias of a non-negative physical emission-line fit.
 
 .. code-block:: python
 
-   result = qsospec.measure_signed_line_amplitude(
+   result = qsospec.signed_lines.measure_signed_line_amplitude(
        spectrum,
        archived_continuum,
        rest_wavelength=4960.30,

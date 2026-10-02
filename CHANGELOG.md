@@ -1,27 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-- Disable polynomial continuum correction by default for all surveys, including
-  SDSS. Explicit `enabled=None` retains BIC-gated SDSS assessment; `enabled=True`
-  attempts correction for any survey with the existing safety checks.
-- Add the full-range Verner et al. (2009) Fe II template with native-resolution
-  broadening, an exclusive single-iron preset, and optional propagation into
-  the AGN-aware pPXF host basis.
-- Add a baseline-anchored quadratic continuum correction: preserve power-law
-  slopes, limit correction and normalization changes to 10%, and optionally assess
-  SDSS candidates with a conservative BIC improvement gate. Record selection and
-  conditional covariance provenance and show a signed QA correction strip.
-- Add a measurement-first Euclid RGS catalogue workflow with uniform
-  one-narrow plus one-broad decompositions for H-alpha, H-beta, Mg II, and
-  He I/Pa-gamma, covariance-aware continuous broad fractions, summed-profile
-  widths, resumable parts, population exploration, and selected QA.
-- Make schema-v5 archive reuse scalable with direct object-key shard loading,
-  worker-local stores, deferred manifest reconciliation, authoritative resume,
-  timing telemetry, and a read-only benchmark command.
-- Add coverage-aware Lyα/N V fitting with red-side continuum anchoring,
-  deterministic absorption masking, reliability flags, schema-v3 archival,
-  and dedicated QA rendering.
+This minor release changes the default scientific model and public APIs, and
+requires Python 3.10 or later. See the
+[0.2 migration guide](https://qsospec.readthedocs.io/en/latest/getting_started/migration_0_2.html).
+
+- Adopt the versioned `global_v2` default: VW01/Verner09/Park22 regional iron,
+  independent UV/optical widths and soft Hγ/Balmer refinement. Add the
+  `GlobalContinuumConfig.legacy_v1()` reproducibility preset.
+- Clarify iron width coordinates (`fwhm_kms` + `width_mode`), polynomial
+  modes (`off`/`auto`/`on`) and canonical Hγ policies.
+- Expand UV/optical/NIR recipes and adaptive [O III] fitting, with Gaussian
+  resolution forward modeling, line peaks and separate systemic-redshift diagnostics.
+- Add native covariance propagation and matched bootstrap products with
+  collision-free qualified keys; run schema 7 reads earlier schemas 5 and 6.
+- Improve AGN-aware host decomposition, template/resolution reliability,
+  HostSED reconstruction and explicit configuration precedence.
+- Add resumable survey-scale runs, direct model-key loading, scalar resume
+  planning, deferred reconciliation and timing diagnostics.
+- Rename the unreleased full-spectrum preset to `recipes.extended_quasar()`;
+  retain established root APIs and place new specialist utilities in their modules.
+- Restructure science/API documentation and provide portable survey-input examples.
 
 ## 0.1.0
 

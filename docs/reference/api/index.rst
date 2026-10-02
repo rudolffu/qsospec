@@ -13,3 +13,4 @@ workflow choices; these pages document exact signatures and return types.
    results
    io
    plotting
+   specialist

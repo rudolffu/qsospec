@@ -1,6 +1,7 @@
 """Tests for provisional narrow-line injection/recovery summaries."""
 
 import numpy as np
+import qsospec.narrow_line_calibration
 import pandas as pd
 
 import qsospec
@@ -30,10 +31,10 @@ def _frame():
 
 def test_recovery_metrics_and_independent_promotion_gate():
     frame = _frame()
-    provisional, broad = qsospec.narrow_line_calibration_selection_mask(frame)
+    provisional, broad = qsospec.narrow_line_calibration.selection_mask(frame)
     assert provisional.tolist() == [True, True, False, False]
     assert broad.tolist() == [False, False, False, True]
-    summary = qsospec.summarize_narrow_line_recovery(frame, provisional)
+    summary = qsospec.narrow_line_calibration.summarize_recovery(frame, provisional)
     assert summary["estimated_purity"] == 0.5
     assert summary["estimated_completeness"] == 0.5
     assert summary["broad_false_narrow_rate"] == 0.5
@@ -41,7 +42,7 @@ def test_recovery_metrics_and_independent_promotion_gate():
 
 
 def test_threshold_sweep_contains_the_preregistered_rule():
-    sweep = qsospec.narrow_line_calibration_threshold_sweep(_frame())
+    sweep = qsospec.narrow_line_calibration.threshold_sweep(_frame())
     locked = sweep[sweep["is_preregistered_rule"]]
     assert len(locked) == 1
     assert locked.iloc[0]["narrow_snr_threshold"] == 5.0
@@ -52,8 +53,8 @@ def test_threshold_sweep_contains_the_preregistered_rule():
 
 def test_stratified_metrics_cover_snr_redshift_and_resolution():
     frame = _frame()
-    provisional, _ = qsospec.narrow_line_calibration_selection_mask(frame)
-    output = qsospec.narrow_line_stratified_recovery(frame, provisional)
+    provisional, _ = qsospec.narrow_line_calibration.selection_mask(frame)
+    output = qsospec.narrow_line_calibration.stratified_recovery(frame, provisional)
     assert set(output["stratum"]) == {
         "snr_stratum",
         "redshift_stratum",

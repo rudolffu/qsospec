@@ -34,7 +34,7 @@ Setup
 
 Install ``qsospec[host]`` and obtain the external E-MILES NPZ bundle from
 `micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__. For example,
-place ``spectra_emiles_9.0.npz`` under ``~/tools/ppxf_data``. These stellar
+place ``spectra_emiles_9.0.npz`` under ``/path/to/ppxf_data``. These stellar
 templates are not included in the qsospec wheel.
 
 .. code-block:: python
@@ -48,7 +48,7 @@ templates are not included in the qsospec wheel.
    result = qsospec.fit_global_lines_workflow(
        "spectrum.fits",
        run_host_decomp=True,
-       template_root="~/tools/ppxf_data",
+       template_root="/path/to/ppxf_data",
        template_file="spectra_emiles_9.0.npz",
        host_config=host_config,
    )

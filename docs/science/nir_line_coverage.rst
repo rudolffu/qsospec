@@ -1,17 +1,17 @@
 NIR line coverage
 =================
 
-The ``nir_complete_v1`` preset makes the complete emission-line inventory
+The ``extended_quasar_v1`` preset makes the complete emission-line inventory
 available through a documented, versioned recipe set:
 
 .. code-block:: python
 
    import qsospec
 
-   complexes = qsospec.recipes.nir_complete()
+   complexes = qsospec.recipes.extended_quasar()
    result = qsospec.fit_global_lines(spectrum, complexes=complexes)
 
-   assert result.metadata["complex_preset_id"] == "nir_complete_v1"
+   assert result.metadata["complex_preset_id"] == "extended_quasar_v1"
 
 The preset keeps the standard auto-enabled UV/optical recipes, adds compact
 recipes for He I 5877, O I 8449, and the [S III] NIR doublet, and replaces the
@@ -28,7 +28,7 @@ Feature coverage
 
    * - Feature
      - Canonical line IDs
-     - Recipe in ``nir_complete_v1``
+     - Recipe in ``extended_quasar_v1``
    * - Mg II
      - ``mgii_blend``
      - ``mgii``

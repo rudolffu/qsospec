@@ -43,7 +43,7 @@ from ..templates import (
     load_iron_template,
 )
 from ..templates.iron import (evaluate_iron_basis, evaluate_iron_basis_with_derivative,
-    evaluate_iron_kernel, resolve_iron_width, regional_weights, resolve_regional_intervals)
+    evaluate_iron_kernel, resolve_iron_width, resolve_iron_bounds, regional_weights, resolve_regional_intervals)
 from ..solvers.variable_projection import (
     VariableProjectionError,
     evaluate_profile_chi2,
@@ -164,22 +164,21 @@ def _resolve_polynomial_config(
     spectrum: Spectrum,
     config: GlobalContinuumConfig,
 ) -> Tuple[GlobalContinuumConfig, Dict[str, Any]]:
-    requested = config.polynomial.enabled
+    requested = config.polynomial.mode
     survey = spectrum.metadata.survey
-    if requested is None:
+    if requested == "auto":
         effective = survey == "sdss"
-        reason = "automatic_sdss" if effective else "automatic_non_sdss"
-        requested_label = "auto"
+        reason = "eligible_sdss" if effective else "ineligible_survey"
     else:
-        effective = bool(requested)
-        reason = "explicit_enabled" if effective else "explicit_disabled"
-        requested_label = "enabled" if effective else "disabled"
+        effective = requested == "on"
+        reason = "explicit_on" if effective else "explicit_off"
     resolved = replace(
         config,
-        polynomial=replace(config.polynomial, enabled=effective),
+        polynomial=replace(config.polynomial, mode="on" if effective else "off"),
     )
     return resolved, {
-        "polynomial_requested": requested_label,
+        "polynomial_mode_requested": requested,
+        "polynomial_mode_selected": "off",
         "polynomial_survey": survey,
         "polynomial_activation_reason": reason,
     }
@@ -188,27 +187,23 @@ def _resolve_polynomial_config(
 def _iron_template_metadata(
     template,
     *,
-    target_fwhm_kms: Optional[float] = None,
+    requested_fwhm_kms: float,
+    width_mode: str = "legacy",
 ) -> Dict[str, Any]:
     values = np.ascontiguousarray(
         np.column_stack([template.wave_rest, template.flux]),
         dtype=np.float64,
     )
-    native_fwhm = float(template.native_fwhm_kms)
-    convolution_fwhm = (
-        np.sqrt(float(target_fwhm_kms) ** 2 - native_fwhm**2)
-        if target_fwhm_kms is not None and native_fwhm > 0
-        else target_fwhm_kms
-    )
+    resolved = resolve_iron_width(template, requested_fwhm_kms, width_mode)
     return {
         "template": template.name,
         "source": template.source_path,
         "reference": template.reference,
         "coverage": tuple(map(float, template.coverage)),
         "normalization": template.normalization,
-        **resolve_iron_width(template, target_fwhm_kms),
+        **resolved,
 
-        "convolution_fwhm_kms": convolution_fwhm,
+        "convolution_fwhm_kms": resolved["kernel_fwhm_kms"],
         "source_sha256": sha256(values.view(np.uint8)).hexdigest(),
     }
 
@@ -337,17 +332,7 @@ class _ContinuumContext:
             else:
                 self.full_template = template
             self._add(f"{label}.amp", iron_cfg.amp, iron_cfg.amp_bounds)
-            fwhm_bounds = iron_cfg.fwhm_bounds
-            if template.native_fwhm_kms > 0:
-                lower, upper = fwhm_bounds
-                native_floor = float(template.native_fwhm_kms)
-                lower = native_floor if lower is None else max(float(lower), native_floor)
-                if upper is not None and float(upper) <= lower:
-                    raise ValueError(
-                        f"{label} FWHM upper bound must exceed the template's "
-                        f"native FWHM of {template.native_fwhm_kms:g} km/s."
-                    )
-                fwhm_bounds = (lower, upper)
+            fwhm_bounds = resolve_iron_bounds(template, iron_cfg.fwhm_bounds, iron_cfg.width_mode)
             self._add(
                 f"{label}.fwhm_kms",
                 iron_cfg.fwhm_kms,
@@ -384,7 +369,7 @@ class _ContinuumContext:
                     normalization_definition="weighted_integral_at_fixed_reference_kernel")
 
         polynomial = cfg.polynomial
-        if polynomial.enabled:
+        if polynomial.mode != "off":
             selected_wave = self.wave[self.base_fit_mask]
             x = (selected_wave - self.polynomial_pivot) / self.polynomial_scale
             design = np.column_stack(
@@ -547,9 +532,13 @@ class _ContinuumContext:
 
     def _iron_basis(self, label, template, wave, kernel, need_derivatives=True):
         if self.middle_template is None:
+            mode = getattr(self.config, label).width_mode
             if not need_derivatives:
-                return evaluate_iron_basis(template, wave, kernel), None
-            return evaluate_iron_basis_with_derivative(template, wave, kernel)
+                return evaluate_iron_basis(template, wave, kernel, width_mode=mode), None
+            return evaluate_iron_basis_with_derivative(template, wave, kernel, width_mode=mode)
+        chain = 1.
+        if label != "middle_iron":
+            kernel, chain = self._kernel_and_derivative(label+".fwhm_kms", kernel)
         raw_flux, raw_derivative = evaluate_iron_kernel(
             template,
             wave,
@@ -565,10 +554,10 @@ class _ContinuumContext:
         if label != "middle_iron":
             if need_derivatives:
                 legacy_flux, legacy_derivative = evaluate_iron_basis_with_derivative(
-                    template, wave, kernel
+                    template, wave, kernel, width_mode="kernel"
                 )
             else:
-                legacy_flux = evaluate_iron_basis(template, wave, kernel)
+                legacy_flux = evaluate_iron_basis(template, wave, kernel, width_mode="kernel")
                 legacy_derivative = None
             outer = (
                 np.asarray(wave) < self.bridge_intervals[0][0]
@@ -583,12 +572,15 @@ class _ContinuumContext:
         derivative = (
             None
             if raw_derivative is None
-            else raw_derivative * weighted[index] / scale
+            else raw_derivative * weighted[index] / scale * chain
         )
         return flux, derivative
 
     def _middle_kernel(self, values):
-        return values[self.bridge_parent+".fwhm_kms"] if self.bridge_parent else self.config.regional_iron.fixed_kernel_fwhm_kms
+        if self.bridge_parent:
+            name = self.bridge_parent+".fwhm_kms"
+            return self._kernel_and_derivative(name, values[name])[0]
+        return self.config.regional_iron.fixed_kernel_fwhm_kms
 
     def prior_active(self) -> bool:
         """Whether the optional log-width prior applies to this context."""
@@ -602,10 +594,10 @@ class _ContinuumContext:
     def _kernel_and_derivative(
         self, name: str, value: float
     ) -> Tuple[float, float]:
-        template = (
-            self.uv_template if name == "uv_iron.fwhm_kms" else self.opt_template
-        )
-        resolved = resolve_iron_width(template, value, "legacy")
+        label = name.split(".")[0]
+        template = {"uv_iron": self.uv_template, "optical_iron": self.opt_template,
+                    "full_iron": self.full_template}[label]
+        resolved = resolve_iron_width(template, value, getattr(self.config, label).width_mode)
         kernel = float(resolved["kernel_fwhm_kms"])
         if resolved["requested_width_mode"] == "target":
             derivative = float(value) / kernel if kernel > 0 else 0.0
@@ -705,7 +697,7 @@ class _ContinuumContext:
             names.append("optical_iron.amp")
         if self.full_template is not None:
             fwhm = self._get(self.initial, "full_iron.fwhm_kms")
-            columns.append(evaluate_iron_basis(self.full_template, wave, fwhm))
+            columns.append(evaluate_iron_basis(self.full_template, wave, fwhm, width_mode=self.config.full_iron.width_mode))
             names.append("full_iron.amp")
         if self.middle_template is not None:
             values = {name: self._get(self.initial, name) for name in self.names}
@@ -869,10 +861,10 @@ class _ContinuumContext:
             fwhm = nonlinear_values["full_iron.fwhm_kms"]
             if need_derivatives:
                 basis, derivative = evaluate_iron_basis_with_derivative(
-                    self.full_template, wave, fwhm
+                    self.full_template, wave, fwhm, width_mode=self.config.full_iron.width_mode
                 )
             else:
-                basis = evaluate_iron_basis(self.full_template, wave, fwhm)
+                basis = evaluate_iron_basis(self.full_template, wave, fwhm, width_mode=self.config.full_iron.width_mode)
                 derivative = None
             append_column(
                 basis,
@@ -982,6 +974,7 @@ class _ContinuumContext:
                 self.full_template,
                 wave,
                 self._get(theta, "full_iron.fwhm_kms"),
+                width_mode=self.config.full_iron.width_mode,
             )
         if self.middle_template is not None:
             values = {name: self._get(theta, name) for name in self.names}
@@ -1445,9 +1438,10 @@ def _fit_global_continuum_fixed(
             "iron_templates": {
                 label: _iron_template_metadata(
                     template,
-                    target_fwhm_kms=float(
+                    requested_fwhm_kms=float(
                         result.x[context.index[f"{label}.fwhm_kms"]]
                     ),
+                    width_mode=getattr(cfg, label).width_mode,
                 )
                 for label, template in (
                     ("uv_iron", context.uv_template),
@@ -1462,14 +1456,13 @@ def _fit_global_continuum_fixed(
         iron_cfg = getattr(cfg,label)
         if label in metadata["iron_templates"]:
             metadata["iron_templates"][label]["requested_configuration"] = {
-                "width_mode": iron_cfg.width_mode, "legacy_fwhm_kms": iron_cfg.fwhm_kms,
-                "kernel_fwhm_kms": iron_cfg.kernel_fwhm_kms, "target_fwhm_kms": iron_cfg.target_fwhm_kms,
-                "bounds_in_legacy_coordinates": iron_cfg.fwhm_bounds}
+                "width_mode": iron_cfg.width_mode, "fwhm_kms": iron_cfg.fwhm_kms,
+                "fwhm_bounds": iron_cfg.fwhm_bounds}
     if context.middle_template is not None:
         values = dict(zip(context.names,result.x));values.update(context.fixed_parameters)
         kernel = context._middle_kernel(values)
         metadata["iron_templates"]["middle_iron"] = {
-            **_iron_template_metadata(context.middle_template,target_fwhm_kms=float(np.hypot(900.,kernel))),
+            **_iron_template_metadata(context.middle_template,requested_fwhm_kms=kernel,width_mode="kernel"),
             **resolve_iron_width(context.middle_template,kernel,"kernel"),
             "width_parent": context.bridge_parent or "fixed", "width_status": "shared_kernel"}
         metadata["regional_iron"]["kernel_fwhm_kms"] = float(kernel)
@@ -1842,11 +1835,12 @@ def fit_global_continuum(
     cfg = config or GlobalContinuumConfig()
     resolved, selection = _resolve_polynomial_config(spectrum, cfg)
     baseline = _fit_global_continuum_power_law_selection(
-        spectrum, replace(cfg, polynomial=replace(cfg.polynomial, enabled=False)),
+        spectrum, replace(cfg, polynomial=replace(cfg.polynomial, mode="off")),
         compute_covariance=compute_covariance,
     )
     baseline.metadata.update(selection)
-    if not resolved.polynomial.enabled:
+    baseline.metadata["global_model_id"] = cfg.model_id
+    if resolved.polynomial.mode == "off":
         return baseline
 
     poly = cfg.polynomial
@@ -1918,7 +1912,7 @@ def fit_global_continuum(
         return reject("incompatible_bounds")
     candidate_cfg = replace(
         cfg,
-        polynomial=replace(poly, enabled=True),
+        polynomial=replace(poly, mode="on"),
         power_law=replace(cfg.power_law, mode=baseline.metadata["power_law_mode_selected"]),
         clip_passes=0, blue_absorption_clip_enabled=False,
     )
@@ -1966,7 +1960,7 @@ def fit_global_continuum(
         return reject("fraction_limit_exceeded")
     if not np.all((candidate.component_models["power_law"] + correction)[valid] > 0):
         return reject("nonpositive_smooth_continuum")
-    if poly.enabled is None and delta < poly.auto_delta_bic:
+    if poly.mode == "auto" and delta < poly.auto_delta_bic:
         return reject("bic_improvement_insufficient")
 
     # Append baseline-derived slopes in covariance order. Their cross-covariance
@@ -2000,7 +1994,9 @@ def fit_global_continuum(
     candidate.metadata.update({
         "polynomial_effective": True,
         "polynomial_status": "accepted",
-        "polynomial_selection_reason": "explicit_enabled" if poly.enabled is True else "bic_improved",
+        "polynomial_mode_selected": "on",
+        "global_model_id": cfg.model_id,
+        "polynomial_selection_reason": "explicit_on" if poly.mode == "on" else "bic_improved",
         "polynomial_final_slopes": slopes,
         "polynomial_final_norm": candidate.param_values["power_law.norm"],
         "polynomial_covariance_policy": "conditional_on_baseline_slopes",
@@ -3891,7 +3887,7 @@ def fit_global_lines(
             )
 
     hgamma = None
-    hgamma_sync_policy = {"none": "never", "hard_legacy": "auto", "soft": "never"}.get(balmer_config.sync_with_hgamma, balmer_config.sync_with_hgamma)
+    hgamma_sync_policy = {"off": "never", "hard": "auto", "soft": "never", "require": "require"}[balmer_config.sync_with_hgamma]
     hgamma_sync_requested = (
         hgamma_sync_policy in ("auto", "require")
         and balmer_available
@@ -4217,6 +4213,7 @@ def fit_global_lines(
     )
     metadata = {
         "refinement_performed": continuum is not continuum_initial,
+        "global_model_id": resolved_global_cfg.model_id,
         "balmer_pseudocontinuum_fwhm_kms": float(final_width),
         "balmer_pseudocontinuum_fwhm_source": width_source,
         "balmer_pseudocontinuum_fwhm_synced_to_hbeta": bool(width_converged),
@@ -4263,6 +4260,8 @@ def fit_global_lines(
             else width_source
         ),
         "balmer_pseudocontinuum_hgamma_sync_status": hgamma_sync_status,
+        "hgamma_mode_requested": balmer_config.sync_with_hgamma,
+        "hgamma_mode_selected": balmer_config.sync_with_hgamma if hgamma_sync_converged else "off",
         "balmer_pseudocontinuum_hgamma_sync_requested": bool(
             hgamma_sync_requested
         ),
@@ -4312,9 +4311,9 @@ def fit_global_lines(
         "requested_complex_recipes": tuple(recipe.id for recipe in requested_recipes),
         "selected_complex_recipes": tuple(recipe.id for recipe in selected_recipes),
         "complex_preset_id": (
-            complex_recipes.NIR_COMPLETE_PRESET_ID
+            complex_recipes.EXTENDED_QUASAR_PRESET_ID
             if {recipe.id for recipe in requested_recipes}
-            == complex_recipes.NIR_COMPLETE_RECIPE_IDS
+            == complex_recipes.EXTENDED_QUASAR_RECIPE_IDS
             else None
         ),
         "complex_preset_configuration": (
@@ -4323,7 +4322,7 @@ def fit_global_lines(
                 for recipe in requested_recipes
             )
             if {recipe.id for recipe in requested_recipes}
-            == complex_recipes.NIR_COMPLETE_RECIPE_IDS
+            == complex_recipes.EXTENDED_QUASAR_RECIPE_IDS
             else None
         ),
         "continuum_preset": (
@@ -4363,7 +4362,8 @@ def fit_global_lines(
         ),
     }
     for key in (
-        "polynomial_requested",
+        "polynomial_mode_requested",
+        "polynomial_mode_selected",
         "polynomial_effective",
         "polynomial_activation_reason",
         "polynomial_survey",
@@ -4460,8 +4460,6 @@ def fit_global_lines(
         from ..uncertainties import apply_bootstrap_errors
         apply_bootstrap_errors(workflow)
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo"
-        workflow.metadata["continuum_sample_errors"] = {name: workflow.monte_carlo["errors"].get(name, np.nan)
-            for name in workflow.metadata.get("continuum_samples", {})}
     return workflow
 
 
@@ -4517,7 +4515,7 @@ def _resolve_requested_recipes(
             selected.append(recipe)
     selected_ids = {recipe.id for recipe in selected}
     compact_umbrella_conflicts = selected_ids & set(
-        complex_recipes.NIR_COMPLETE_COMPACT_IDS
+        complex_recipes.EXTENDED_QUASAR_COMPACT_IDS
     )
     if "paschen_nir" in selected_ids and compact_umbrella_conflicts:
         raise ValueError(
@@ -4742,6 +4740,7 @@ def _run_workflow_mc(spectrum, global_config, hbeta_config, mgii_config, halpha_
         except Exception as exc:
             failures.append({"trial_id": trial_id, "reason": str(exc)})
     summary = summarize_matched_draws(draws, failures, n_trials)
+    summary["measurement_key_schema"] = "qualified_v1"
     summary.update(continuum_success_count=len(draws), complex_success_counts=counts,
         noise_model="supplied_pixel_covariance" if pixel_covariance is not None else "diagonal_pixel_errors")
     return summary
@@ -4960,7 +4959,8 @@ def _joint_hgamma_refinement(spectrum, config, continuum, hgamma, compute_covari
         if template is not None:
             meta.setdefault("iron_templates",{})[label] = {
                 **meta.get("iron_templates",{}).get(label,{}),
-                **_iron_template_metadata(template,target_fwhm_kms=ctx._get(ct,label+".fwhm_kms"))}
+                **_iron_template_metadata(template,requested_fwhm_kms=ctx._get(ct,label+".fwhm_kms"),
+                                          width_mode=getattr(ctx.config,label).width_mode)}
     if ctx.middle_template is not None:
         kernel = ctx._middle_kernel(dict(zip(ctx.names,ct)))
         meta["regional_iron"] = {**ctx.bridge_metadata,"kernel_fwhm_kms":float(kernel)}

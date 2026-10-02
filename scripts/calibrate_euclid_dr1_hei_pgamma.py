@@ -7,6 +7,7 @@ physical class: independent higher-resolution decompositions remain required.
 """
 
 from __future__ import annotations
+import qsospec.hei_pgamma_classification
 
 import argparse
 import json
@@ -214,7 +215,7 @@ def inject_and_fit(loaded: Any, design: dict[str, object]) -> dict[str, object]:
         metadata=spectrum.metadata,
         mask=None if spectrum.mask is None else spectrum.mask.copy(),
     )
-    pair = qsospec.fit_hei_pgamma_model_pair(simulated, continuum)
+    pair = qsospec.hei_pgamma_classification.fit_hei_pgamma_model_pair(simulated, continuum)
     if pair is None:
         raise RuntimeError("An explicitly covered injection became not covered")
     record = pair.to_record(int(design["injection_id"]))

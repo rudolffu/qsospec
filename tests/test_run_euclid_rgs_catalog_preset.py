@@ -23,11 +23,11 @@ def test_standard_preset_keeps_historical_auto_enabled_set():
     assert module._resolve_complexes("standard") is None
 
 
-def test_nir_complete_preset_returns_versioned_recipe_set():
+def test_extended_quasar_preset_returns_versioned_recipe_set():
     module = _load_script()
-    resolved = module._resolve_complexes("nir_complete_v1")
-    assert {recipe.id for recipe in resolved} == qsospec.recipes.NIR_COMPLETE_RECIPE_IDS
-    assert len(resolved) == len(qsospec.recipes.NIR_COMPLETE_RECIPE_IDS)
+    resolved = module._resolve_complexes("extended_quasar_v1")
+    assert {recipe.id for recipe in resolved} == qsospec.recipes.EXTENDED_QUASAR_RECIPE_IDS
+    assert len(resolved) == len(qsospec.recipes.EXTENDED_QUASAR_RECIPE_IDS)
 
 
 def test_unknown_preset_is_rejected():

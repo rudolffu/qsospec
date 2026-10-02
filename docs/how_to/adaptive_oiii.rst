@@ -9,6 +9,8 @@ velocities; it is not automatically the systemic velocity.
 .. code-block:: python
 
    import qsospec
+
+   import qsospec.systemic_redshift
    from qsospec.resolution import SpectralResolution
 
    spectrum = qsospec.Spectrum.from_arrays(
@@ -154,7 +156,7 @@ acceptance reasons. The selected model and quality flags are stored separately.
 Old bundles retain their recorded models. Reading a run never reselects
 components or changes its adopted redshift. Explicit peak recovery uses saved
 model definitions and validates reconstruction against archived arrays.
-The optional ``qsospec.estimate_systemic_redshift(result, method="ws22")``
+The optional ``qsospec.systemic_redshift.estimate_systemic_redshift(result, method="ws22")``
 remains a separate diagnostic and does not trigger a refit or adopt its result.
 
 Validation artifacts

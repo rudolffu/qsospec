@@ -12,6 +12,7 @@ Short, task-oriented recipes with one canonical path each.
    fit_with_host
    agn_aware_ppxf_host_decomposition
    stellar_template_resolution_profiles
+   sdss_parquet_inputs
    fit_parquet_batch
    inspect_run
    render_qa

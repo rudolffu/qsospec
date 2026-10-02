@@ -225,7 +225,7 @@ def test_host_resampling_retains_matched_host_agn_variation(monkeypatch):
     result=host_workflow._run_host_refit_mc(data,n_trials=4,seed=4,redshift=0.,template_root='',template_file='',host_fit_range=(2900.,5200.),host_config=None,source='test',global_config=config,hbeta_config=None,mgii_config=None,halpha_config=None,complexes=[])
     assert len(calls)==4
     assert result['host_refitted']
-    assert result['errors']['fHost_3000']>0
-    assert result['errors']['fracHost_3000']>0
+    assert result['errors']['continuum_sample:fHost_3000']>0
+    assert result['errors']['continuum_sample:fracHost_3000']>0
     assert [row['trial_id'] for row in result['draws']]==list(range(4))
     assert result['measurement_covariance'] is not None

@@ -5,19 +5,13 @@ from importlib.metadata import PackageNotFoundError as _PackageNotFoundError, ve
 try:
     __version__ = _version("qsospec")
 except _PackageNotFoundError:  # source checkout without installation
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 from . import lines, recipes
 from .lines import LineDefinition
 from .complex_recipes import ComponentRecipe, ComplexRecipe
 from .fitting.local import fit_line_complex, fit_local
-from .workflows.batch import (
-    BatchResult,
-    BatchResumePlan,
-    fit_batch,
-    fit_object_to_store,
-    plan_batch_resume,
-)
+from .workflows.batch import BatchResult, BatchResumePlan, fit_batch, fit_object_to_store, plan_batch_resume
 from .config import (
     BalmerPseudoContinuumConfig,
     GalacticExtinctionConfig,
@@ -54,51 +48,13 @@ from .fitting.global_fit import (
     fit_hbeta_complex,
     fit_mgii_complex,
 )
-from .halpha_classification import (
-    HalphaModelGridResult,
-    HalphaModelSelectionConfig,
-    LineSpreadFunctionConfig,
-    diagnostic_bic_sweep,
-    fit_halpha_model_grid,
-    intrinsic_fwhm_kms,
-    observed_fwhm_kms,
-    observed_halpha_width_bounds,
-)
-from .hei_pgamma_classification import (
-    HEI_PGAMMA_WINDOW,
-    HeIPagammaModelPairResult,
-    HeIPagammaModelSelectionConfig,
-    fit_hei_pgamma_model_pair,
-    hei_pgamma_classification_recipe,
-)
-from .broad_narrow_measurements import (
-    COMPLEX_ORDER as BROAD_NARROW_COMPLEX_ORDER,
-    MEASUREMENT_SCHEMA_VERSION as BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION,
-    BroadNarrowMeasurementConfig,
-    broad_narrow_recipe,
-    measure_broad_narrow_complex,
-    measure_broad_narrow_complexes,
-    measurement_record as broad_narrow_measurement_record,
-    signed_to_uint64_string,
-)
-from .narrow_line_calibration import (
-    selection_mask as narrow_line_calibration_selection_mask,
-    stratified_recovery as narrow_line_stratified_recovery,
-    summarize_recovery as summarize_narrow_line_recovery,
-    threshold_sweep as narrow_line_calibration_threshold_sweep,
-)
 from .io.products import (
     GlobalQAPlotConfig,
     resolve_qa_plot_config,
     write_global_hbeta_products,
     write_global_line_products,
 )
-from .global_result import (
-    EmissionComplexResult,
-    GlobalContinuumResult,
-    HbetaComplexResult,
-    WorkflowResult,
-)
+from .global_result import EmissionComplexResult, GlobalContinuumResult, HbetaComplexResult, WorkflowResult
 from .workflows.host_workflow import (
     HostWorkflowResult,
     fit_global_hbeta_workflow,
@@ -106,31 +62,16 @@ from .workflows.host_workflow import (
     fit_with_optional_host_decomp,
 )
 from .workflows.host import (
-    HOST_RECONSTRUCTION_STATE_VERSION,
     HostAgnPseudoContinuumConfig,
     HostBroadLinePrefitConfig,
     HostCoverageConfig,
     HostDecompConfig,
-    HostReconstructionState,
-    HostSED,
-    HostSEDReconstructionError,
     EuclidHostScaleConfig,
     EuclidHostScaleFit,
     euclid_nir_line_mask,
     fit_euclid_host_aperture_scale,
-    reconstruct_host_sed_from_state,
-    ResolvedHostTemplateProfile,
-    PreconvolvedTemplateProduct,
-    build_preconvolved_xsl_product,
-    resolve_host_template_profile,
 )
 from .metadata import SpectrumMetadata, resolve_spectrum_metadata
-from .measurement_vocabulary import (
-    MEASUREMENT_VOCABULARY_VERSION,
-    canonicalize_legacy_measurement_name,
-    final_host_sample_name,
-    ppxf_host_sample_name,
-)
 from .io.qa import render_qa
 from .io.readers import (
     SpectrumInput,
@@ -138,7 +79,6 @@ from .io.readers import (
     discover_fits_inputs,
     read_input_manifest,
     read_spectrum,
-    scan_parquet_spectrum_inputs,
     scan_parquet_spectra,
 )
 from .plotting import plot_line_result, plot_local_result, save_local_window_plots
@@ -150,33 +90,9 @@ from .io.run_store import (
     finalize_run,
     load_model,
     load_model_by_key,
-    load_host_reconstruction_state,
     open_run,
-    reconstruct_host_sed_from_model_row,
-    reconstruct_host_sed_from_run,
 )
 from .spectrum import Spectrum
-from .resolution import (
-    SpectralResolution,
-    TemplateResolutionMatch,
-    additional_template_sigma,
-    match_template_resolution_toward_data,
-    smooth_constant_resolving_power,
-)
-from .signed_lines import (
-    LocalLinePatternResult,
-    SignedLineAmplitudeResult,
-    SignedLineComponent,
-    fit_local_line_pattern,
-    measure_signed_line_amplitude,
-    measure_signed_line_grid,
-)
-from .luminosity import (
-    MonochromaticLuminosity,
-    bolometric_luminosity,
-    luminosity_distance,
-    monochromatic_luminosity,
-)
 from .templates import (
     BalmerAnchorRatios,
     BalmerSeriesTemplate,
@@ -196,11 +112,8 @@ __all__ = [
     "BalmerPseudoContinuumConfig",
     "BalmerAnchorRatios",
     "BalmerSeriesTemplate",
-    "BROAD_NARROW_COMPLEX_ORDER",
-    "BROAD_NARROW_MEASUREMENT_SCHEMA_VERSION",
     "BatchResult",
     "BatchResumePlan",
-    "BroadNarrowMeasurementConfig",
     "ComponentRecipe",
     "ComplexRecipe",
     "FitResult",
@@ -216,30 +129,18 @@ __all__ = [
     "HostBroadLinePrefitConfig",
     "HostCoverageConfig",
     "HostDecompConfig",
-    "HOST_RECONSTRUCTION_STATE_VERSION",
-    "HostReconstructionState",
-    "HostSED",
-    "HostSEDReconstructionError",
     "HalphaComplexConfig",
-    "HalphaModelGridResult",
-    "HalphaModelSelectionConfig",
-    "HEI_PGAMMA_WINDOW",
-    "HeIPagammaModelPairResult",
-    "HeIPagammaModelSelectionConfig",
     "HbetaComplexConfig",
     "HbetaComplexResult",
     "IronTemplate",
     "IronTemplateConfig",
     "LineComplexConfig",
     "LineDefinition",
-    "LineSpreadFunctionConfig",
     "LyaNVComplexConfig",
     "LocalFitConfig",
     "LocalFitResult",
     "LorentzianComponent",
     "MgIIComplexConfig",
-    "MEASUREMENT_VOCABULARY_VERSION",
-    "MonochromaticLuminosity",
     "FitWarning",
     "HostWorkflowResult",
     "WorkflowResult",
@@ -247,22 +148,12 @@ __all__ = [
     "PolynomialContinuumConfig",
     "RunStore",
     "Spectrum",
-    "SpectralResolution",
-    "TemplateResolutionMatch",
-    "SignedLineAmplitudeResult",
-    "SignedLineComponent",
-    "LocalLinePatternResult",
     "SpectrumInput",
     "SpectrumMetadata",
     "UncertaintyConfig",
     "balmer_bound_free_shape",
     "build_science_catalog",
-    "bolometric_luminosity",
-    "additional_template_sigma",
-    "match_template_resolution_toward_data",
-    "smooth_constant_resolving_power",
     "compute_derived_quantities",
-    "canonicalize_legacy_measurement_name",
     "correct_spectrum",
     "correct_spectrum_data",
     "detect_fits_reader",
@@ -278,18 +169,13 @@ __all__ = [
     "fit_global_lines",
     "fit_global_lines_workflow",
     "fit_halpha_complex",
-    "fit_halpha_model_grid",
-    "fit_hei_pgamma_model_pair",
-    "hei_pgamma_classification_recipe",
     "fit_hbeta_complex",
     "fit_mgii_complex",
     "fit_line_complex",
-    "fit_local_line_pattern",
     "fit_local",
     "fit_object_to_store",
     "plan_batch_resume",
     "fit_with_optional_host_decomp",
-    "final_host_sample_name",
     "evaluate_balmer_pseudocontinuum",
     "evaluate_balmer_pseudocontinuum_with_derivatives",
     "euclid_nir_line_mask",
@@ -301,27 +187,8 @@ __all__ = [
     "load_iron_template",
     "load_model",
     "load_model_by_key",
-    "load_host_reconstruction_state",
-    "luminosity_distance",
-    "intrinsic_fwhm_kms",
-    "monochromatic_luminosity",
-    "measure_signed_line_amplitude",
-    "measure_signed_line_grid",
     "open_run",
-    "reconstruct_host_sed_from_model_row",
-    "reconstruct_host_sed_from_run",
-    "reconstruct_host_sed_from_state",
-    "ResolvedHostTemplateProfile",
-    "PreconvolvedTemplateProduct",
-    "build_preconvolved_xsl_product",
-    "resolve_host_template_profile",
-    "observed_fwhm_kms",
-    "observed_halpha_width_bounds",
-    "narrow_line_calibration_selection_mask",
-    "narrow_line_calibration_threshold_sweep",
-    "narrow_line_stratified_recovery",
     "prepare_spectrum",
-    "ppxf_host_sample_name",
     "preflight_galactic_extinction",
     "query_galactic_ebv",
     "plot_line_result",
@@ -332,27 +199,10 @@ __all__ = [
     "render_qa",
     "resolve_qa_plot_config",
     "resolve_spectrum_metadata",
-    "summarize_narrow_line_recovery",
     "save_local_window_plots",
     "scan_parquet_spectra",
-    "scan_parquet_spectrum_inputs",
     "write_global_hbeta_products",
     "write_global_line_products",
     "wang2019_extinction_mag",
-    "diagnostic_bic_sweep",
-    "broad_narrow_recipe",
-    "broad_narrow_measurement_record",
-    "measure_broad_narrow_complex",
-    "measure_broad_narrow_complexes",
-    "signed_to_uint64_string",
+    "RegionalIronConfig",
 ]
-
-from .uncertainties import recover_uncertainties, host_agn_covariance, measure_selected_profile
-
-__all__.extend(["RegionalIronConfig", "recover_uncertainties", "host_agn_covariance", "measure_selected_profile"])
-
-from .line_peaks import recover_line_peaks
-from .systemic_redshift import estimate_systemic_redshift
-__all__ += ["recover_line_peaks", "estimate_systemic_redshift"]
-
-from .observed_model import reconstruct_observed_model

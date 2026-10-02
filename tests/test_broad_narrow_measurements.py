@@ -1,6 +1,7 @@
 """Synthetic tests for the measurement-first broad+narrow catalogue model."""
 
 import numpy as np
+import qsospec.broad_narrow_measurements
 
 import qsospec
 from qsospec.broad_narrow_measurements import _profile_widths
@@ -51,7 +52,7 @@ def test_halpha_fraction_uses_halpha_only_and_covariance():
         residual_constant=0.05,
         residual_slope=2.0e-4,
     )
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "halpha"
     )
 
@@ -76,7 +77,7 @@ def test_hbeta_kinematics_are_tied_and_fraction_excludes_oiii():
             (40.0 / 2.98, 4960.30, -30.0, 850.0),
         ),
     )
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "hbeta"
     )
     assert result is not None and result.success
@@ -94,7 +95,7 @@ def test_mgii_uniform_one_narrow_one_broad_model():
             (9.0, 2798.75, 150.0, 5000.0),
         ),
     )
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "mgii"
     )
     assert result is not None and result.success
@@ -113,7 +114,7 @@ def test_hei_succeeds_with_zero_pgamma_and_records_joint_fraction():
             (2.0, 10833.3, -80.0, 3200.0),
         ),
     )
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "hei_pgamma"
     )
     assert result is not None and result.success
@@ -128,7 +129,7 @@ def test_hei_succeeds_with_zero_pgamma_and_records_joint_fraction():
 
 def test_not_covered_and_continuum_unavailable_are_explicit_nan_not_zero():
     spectrum, continuum = _inputs(3000.0, 3200.0, ())
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "halpha"
     )
     assert result is None
@@ -136,7 +137,7 @@ def test_not_covered_and_continuum_unavailable_are_explicit_nan_not_zero():
     assert np.isnan(record["narrow_flux"])
 
     continuum.success = False
-    record, result = qsospec.measure_broad_narrow_complex(
+    record, result = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(
         spectrum, continuum, "mgii"
     )
     assert result is None
@@ -144,12 +145,12 @@ def test_not_covered_and_continuum_unavailable_are_explicit_nan_not_zero():
 
 
 def test_fixed_r480_width_bounds_and_signed_id_round_trip():
-    config = qsospec.BroadNarrowMeasurementConfig()
+    config = qsospec.broad_narrow_measurements.BroadNarrowMeasurementConfig()
     instrument = C_KMS / 480.0
     assert np.isclose(config.instrumental_fwhm_kms, instrument)
     assert np.isclose(config.observed_bounds(broad=False)[1], np.hypot(1200.0, instrument))
     assert config.observed_bounds(broad=False)[1] == config.observed_bounds(broad=True)[0]
-    assert qsospec.signed_to_uint64_string(-1) == str(2**64 - 1)
+    assert qsospec.broad_narrow_measurements.signed_to_uint64_string(-1) == str(2**64 - 1)
 
 
 def test_all_finite_broad_fractions_are_bounded_and_total_width_is_primary_line_only():
@@ -163,7 +164,7 @@ def test_all_finite_broad_fractions_are_bounded_and_total_width_is_primary_line_
             (100.0 / 2.96, 6549.85, 0.0, 750.0),
         ),
     )
-    record, _ = qsospec.measure_broad_narrow_complex(spectrum, continuum, "halpha")
+    record, _ = qsospec.broad_narrow_measurements.measure_broad_narrow_complex(spectrum, continuum, "halpha")
     assert 0.0 <= record["broad_fraction"] <= 1.0
     assert record["total_profile_fwhm_observed_kms"] < 2000.0
 

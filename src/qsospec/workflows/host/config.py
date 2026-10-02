@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -370,3 +370,13 @@ def default_config() -> HostDecompConfig:
     """Return a fresh default host-decomposition config."""
 
     return HostDecompConfig()
+
+
+def resolve_host_runtime_config(host_config=None, *, template_root=None,
+                                template_file=None, host_fit_range=None) -> HostDecompConfig:
+    """Resolve explicit overrides > config values > package defaults."""
+    config = host_config or default_config()
+    return replace(config,
+                   template_root=str(template_root) if template_root is not None else str(config.template_root),
+                   template_file=str(template_file) if template_file is not None else str(config.template_file),
+                   fit_range=tuple(host_fit_range) if host_fit_range is not None else tuple(config.fit_range))

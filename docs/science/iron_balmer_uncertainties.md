@@ -20,15 +20,17 @@ Outer empirical tapers are preserved. Inner handoffs replace empirical tapers.
 
 `resolve_iron_width` and `evaluate_iron_kernel` in `qsospec.templates.iron`
 provide explicit width resolution and kernel-coordinate derivatives.
-`IronTemplateConfig(kernel_fwhm_kms=...)` and `target_fwhm_kms=...` accept
-explicit requests; `fwhm_kms` remains the legacy compatibility coordinate.
+`IronTemplateConfig(fwhm_kms=..., width_mode="kernel")` requests an additional
+convolution kernel; `width_mode="target"` requests an effective Gaussian-equivalent
+width when the native width is justified. The sole fitted coordinate is `fwhm_kms`.
 Legacy empirical widths are additional kernels. Legacy Verner09 widths are
 target Gaussian-equivalent widths, retaining its bundled 900 km/s native-width
 assumption. Unknown/mixed empirical native widths have no reported effective
 FWHM. Target sharpening is rejected and equality renders the zero-kernel limit.
 These template kernels are separate from instrumental resolution corrections.
-`fwhm_bounds` retains its historical coordinate (Verner09 target, empirical
-kernel); configure bounds to include the requested starting value.
+`fwhm_bounds` uses the selected `width_mode` coordinate. Target bounds enforce
+the native-width floor; kernel bounds may include zero. Soft log-kernel coupling
+requires strictly positive effective kernel bounds.
 
 Independent empirical widths remain the reference default. Set
 `iron_width_coupling='soft'` for the log10 kernel-ratio residual with default
@@ -46,9 +48,9 @@ Narrow Hγ and [O III] 4364.436 Å (vacuum) remain independent. The wavelength
 comes from the [SDSS reference line table](https://classic.sdss.org/dr7/algorithms/linestable.php).
 The existing bound-free/high-order-series join is unchanged. No Hδ intermediary
 is needed. Coverage is checked over the initial fitted Hγ wings; missing or
-truncated coverage skips the constraint. `none` disables synchronization;
-`hard_legacy` retains historical synchronization. Explicit old `auto`, `never`,
-and `require` values retain their historical policy. Hβ is refitted after a
+truncated coverage skips the constraint. Canonical modes are `off`, `soft`,
+`hard`, and `require`. Historical aliases normalize at construction: `none`/`never`
+to `off`, and `auto`/`hard_legacy` to `hard`. Hβ is refitted after a
 final continuum change.
 
 The fast covariance mode includes amplitude/shape covariance, including
@@ -92,8 +94,8 @@ than assigned uncertainties from a different profile.
 
 ## Schema and recovery
 
-Run schema 6 stores compact named covariance blocks and matched draws in the
-existing model archive's structured metadata. It reads schema 5 bundles;
+Run schema 7 stores compact named covariance blocks and matched draws in the
+existing model archive's structured metadata. It reads schemas 5 and 6 bundles;
 missing covariance remains unavailable. Free parameter ordering is explicit,
 including legacy fixed-parameter exclusions and conditional polynomial blocks.
 Joint Hγ covariance remains a joint block; independent fit blocks do not acquire
@@ -109,9 +111,9 @@ fit; upgrading cannot supply missing historical covariance.
 ## Reproducible commands
 
 ```bash
-/Users/yuming/miniforge3/bin/python examples/iron_balmer_uncertainty.py --output /tmp/iron-comparison.json
-/Users/yuming/miniforge3/bin/python examples/iron_balmer_uncertainty.py --trials 20 --output /tmp/iron-bootstrap.json
-/Users/yuming/miniforge3/bin/python -m pytest tests/test_qsospec_iron_templates.py tests/test_qsospec_global_workflow.py tests/test_qsospec_run_store.py tests/test_qsospec_host_workflow.py
+python examples/iron_balmer_uncertainty.py --output /tmp/iron-comparison.json
+python examples/iron_balmer_uncertainty.py --trials 20 --output /tmp/iron-bootstrap.json
+python -m pytest tests/test_qsospec_iron_templates.py tests/test_qsospec_global_workflow.py tests/test_qsospec_run_store.py tests/test_qsospec_host_workflow.py
 ```
 
 The comparison includes a deliberately non-adopted Hγ ratio and an omitted
@@ -126,7 +128,7 @@ A native host-inclusive invocation using an existing local template library is:
 import qsospec
 result = qsospec.fit_global_lines_workflow(
     "input_spectrum.parquet", row_index=0, run_host_decomp=True,
-    template_root="/Users/yuming/tools/ppxf_data",
+    template_root="/path/to/ppxf_data",
     template_file="spectra_emiles_9.0.npz",
     uncertainty_config=qsospec.UncertaintyConfig(
         monte_carlo_trials=20, random_seed=21, refit_host_in_mc=True,
@@ -150,6 +152,13 @@ The real-spectrum comparison can be repeated after extracting the documented
 JSONL fields from a saved run:
 
 ```bash
-/Users/yuming/miniforge3/bin/python examples/compare_archived_iron_balmer.py --input /tmp/qsospec-three-spectra.jsonl --output-dir /tmp/new-real-comparison
-/Users/yuming/miniforge3/bin/python examples/plot_iron_balmer_comparison.py --source /tmp/new-real-comparison --output /tmp/new-real-comparison-plots
+python examples/compare_archived_iron_balmer.py --input /tmp/qsospec-three-spectra.jsonl --output-dir /tmp/new-real-comparison
+python examples/plot_iron_balmer_comparison.py --source /tmp/new-real-comparison --output /tmp/new-real-comparison-plots
 ```
+
+Matched workflow products use `measurement_key_schema="qualified_v1"`: samples
+use `continuum_sample:<name>`, continuum parameters `continuum_param:<name>`,
+derived quantities `derived:<name>`, and line metrics `line:<recipe>:<metric>`.
+Native point-estimate metric dictionaries retain their established names.
+Older saved draws are read through an explicit namespace conversion; ambiguous
+bare line aliases are discarded in favor of their saved recipe-qualified entries.

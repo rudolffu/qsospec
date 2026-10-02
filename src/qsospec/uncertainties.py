@@ -11,6 +11,55 @@ import json
 from pathlib import Path
 import numpy as np
 
+MEASUREMENT_KEY_SCHEMA = "qualified_v1"
+
+
+def measurement_key(scope, name, *, recipe_id=None):
+    """Stable namespace for matched measurements, separate from native metrics."""
+    if scope == "line":
+        if not recipe_id:
+            raise ValueError("Line uncertainty keys require an explicit recipe_id")
+        return f"line:{recipe_id}:{name}"
+    if scope not in ("continuum_sample", "continuum_param", "derived"):
+        raise ValueError("Unknown uncertainty measurement scope")
+    if recipe_id is not None:
+        raise ValueError("Only line uncertainty keys accept a recipe_id")
+    return f"{scope}:{name}"
+
+
+def canonicalize_matched_draws(product, recipe_ids=(), sample_names=()):
+    """Read older saved draw namespaces without refitting or changing values."""
+    if not product or product.get("measurement_key_schema") == MEASUREMENT_KEY_SCHEMA:
+        return product
+    recipes = tuple(recipe_ids)
+    samples = set(sample_names)
+    def rename(name):
+        if name.startswith(("line:", "continuum_sample:", "continuum_param:", "derived:")):
+            return name
+        for recipe in recipes:
+            prefix = recipe+":"
+            if name.startswith(prefix):
+                return measurement_key("line", name[len(prefix):], recipe_id=recipe)
+        if name in samples:
+            return measurement_key("continuum_sample", name)
+        if name == "ws22_log_l1700":
+            return measurement_key("derived", name)
+        if name.startswith(("power_law.", "uv_iron.", "optical_iron.", "full_iron.", "middle_iron.", "balmer_pseudocontinuum.", "polynomial.")):
+            return measurement_key("continuum_param", name)
+        return None  # ambiguous historical bare line aliases cannot be recovered
+    result = dict(product)
+    for field in ("errors", "percentiles", "valid_trial_counts"):
+        result[field] = {rename(k):v for k,v in product.get(field, {}).items() if rename(k) is not None}
+    result["draws"] = [{**row, "values":{rename(k):v for k,v in row["values"].items() if rename(k) is not None}} for row in product.get("draws", [])]
+    result["measurement_names"] = [rename(k) for k in product.get("measurement_names", []) if rename(k) is not None]
+    names = product.get("covariance_measurement_names", [])
+    indices = [i for i,k in enumerate(names) if rename(k) is not None]
+    result["covariance_measurement_names"] = [rename(names[i]) for i in indices]
+    if product.get("measurement_covariance") is not None:
+        result["measurement_covariance"] = np.asarray(product["measurement_covariance"])[np.ix_(indices,indices)].tolist()
+    result.update(measurement_key_schema=MEASUREMENT_KEY_SCHEMA, source_measurement_key_schema="legacy_unqualified")
+    return result
+
 
 def covariance_block(result, scope):
     names = list(result.metadata.get("covariance_parameter_names", result.param_values))
@@ -71,7 +120,7 @@ def host_agn_covariance(host, agn, covariance):
     return jac @ np.asarray(covariance) @ jac.T
 
 
-def summarize_matched_draws(draws, failures, requested):
+def summarize_matched_draws(draws, failures, requested, *, measurement_key_schema=None):
     names = sorted({name for row in draws for name in row["values"]})
     matrix = np.array([[row["values"].get(name, np.nan) for name in names] for row in draws], dtype=float).reshape(len(draws), len(names))
     intervals, errors, counts = {}, {}, {}
@@ -88,7 +137,8 @@ def summarize_matched_draws(draws, failures, requested):
     covariance_matrix = matrix[:,covariance_indices]
     complete = np.all(np.isfinite(covariance_matrix), axis=1)
     covariance = np.atleast_2d(np.cov(covariance_matrix[complete], rowvar=False)).tolist() if complete.sum() >= 2 and covariance_indices else None
-    return {"method": "parametric_bootstrap", "noise_model": "diagonal_pixel_errors",
+    return {**({"measurement_key_schema": measurement_key_schema} if measurement_key_schema else {}),
+            "method": "parametric_bootstrap", "noise_model": "diagonal_pixel_errors",
             "n_requested": int(requested), "n_successful": len(draws), "failures": failures,
             "draws": draws, "measurement_names": names, "measurement_covariance": covariance,
             "covariance_measurement_names": [names[i] for i in covariance_indices],
@@ -104,13 +154,12 @@ def trial_seed(seed, object_id, trial_id):
 
 def workflow_measurements(result):
     from .systemic_redshift import luminosity_1700
-    values = dict(result.metadata.get("continuum_samples", {}))
-    values["ws22_log_l1700"] = luminosity_1700(result)["log_l1700"]
-    values.update(result.continuum.param_values)
+    values = {measurement_key("continuum_sample", k):v for k,v in result.metadata.get("continuum_samples", {}).items()}
+    values[measurement_key("derived", "ws22_log_l1700")] = luminosity_1700(result)["log_l1700"]
+    values.update({measurement_key("continuum_param", k):v for k,v in result.continuum.param_values.items()})
     for recipe, fit in result.line_complexes.items():
         if fit.success:
-            values.update({f"{recipe}:{name}": value for name, value in fit.metrics.items()})
-            values.update(fit.metrics)
+            values.update({measurement_key("line", name, recipe_id=recipe): value for name, value in fit.metrics.items()})
     return {name: float(value) for name, value in values.items() if np.isscalar(value)}
 
 
@@ -219,9 +268,15 @@ def measure_selected_profile(fit, component_ids, *, parameter_draws=None, contin
     if cov is not None:
         result["errors"] = {name:float(np.sqrt(cov[i,i])) if cov[i,i]>=0 else np.nan for i,name in enumerate(metric_names)}
     if parameter_draws is not None:
-        draws = [{"trial_id":row["trial_id"],"values":dict(zip(metric_names,map(float,evaluate([row["parameters"][name] for name in names]))))} for row in parameter_draws]
-        result["bootstrap"] = summarize_matched_draws(draws,[],len(draws))
-        result["errors"] = result["bootstrap"]["errors"]
+        keys = [measurement_key("line", "selected:"+"|".join(selected)+":"+name, recipe_id=recipe.id) for name in metric_names]
+        draws = []
+        for row in parameter_draws:
+            parameters = row["parameters"]
+            if recipe.id in parameters:
+                parameters = parameters[recipe.id]
+            draws.append({"trial_id":row["trial_id"],"values":dict(zip(keys,map(float,evaluate([parameters[name] for name in names]))))})
+        result["bootstrap"] = summarize_matched_draws(draws,[],len(draws),measurement_key_schema=MEASUREMENT_KEY_SCHEMA)
+        result["errors"] = {name:result["bootstrap"]["errors"].get(key,np.nan) for name,key in zip(metric_names,keys)}
         result["method"] = "matched_parameter_draws"
     fit.metadata.setdefault("selected_profile_measurements", {})["|".join(selected)] = result
     return result
@@ -230,10 +285,12 @@ def measure_selected_profile(fit, component_ids, *, parameter_draws=None, contin
 def apply_bootstrap_errors(result):
     """Expose matched bootstrap intervals in the native measurement products."""
     errors=result.monte_carlo.get('errors',{})
-    result.metadata['continuum_sample_errors']={name:errors.get(name,np.nan) for name in result.metadata.get('continuum_samples',{})}
+    intervals=result.monte_carlo.get('percentiles',{})
+    result.metadata['continuum_sample_errors']={name:errors.get(measurement_key('continuum_sample',name),np.nan) for name in result.metadata.get('continuum_samples',{})}
+    result.metadata['continuum_sample_intervals']={name:intervals.get(measurement_key('continuum_sample',name)) for name in result.metadata.get('continuum_samples',{})}
     result.metadata['continuum_sample_uncertainty_method']=result.monte_carlo.get('method')
     for recipe,fit in result.line_complexes.items():
-        fit.metric_errors={name:errors.get(f'{recipe}:{name}',errors.get(name,np.nan)) for name in fit.metrics}
+        fit.metric_errors={name:errors.get(measurement_key('line',name,recipe_id=recipe),np.nan) for name in fit.metrics}
         fit.metadata['measurement_uncertainty_method']=result.monte_carlo.get('method')
         for key, peak in fit.metadata.get('line_peaks', {}).get('measurements', {}).items():
             error = fit.metric_errors.get(f'{key}_peak_rest_angstrom', np.nan)
@@ -244,7 +301,7 @@ def apply_bootstrap_errors(result):
             peak['uncertainty_method'] = result.monte_carlo.get('method')
             peak['uncertainty_status'] = 'available' if np.isfinite(error) and error > 0 else 'insufficient_bootstrap_trials'
 
-        fit.metadata['measurement_intervals']={name:result.monte_carlo.get('percentiles',{}).get(f'{recipe}:{name}',result.monte_carlo.get('percentiles',{}).get(name)) for name in fit.metrics}
+        fit.metadata['measurement_intervals']={name:intervals.get(measurement_key('line',name,recipe_id=recipe)) for name in fit.metrics}
 
 
 def pixel_noise_factor(errors, covariance=None):

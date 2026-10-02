@@ -24,6 +24,7 @@ from ..fitting.global_fit import fit_global_lines
 from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
 from ..measurement_vocabulary import MEASUREMENT_VOCABULARY_VERSION
+from .host.config import resolve_host_runtime_config
 from ..result import LocalFitResult
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
@@ -260,26 +261,12 @@ def _host_subtracted_spectrum(
     )
     from .host.templates import load_ppxf_npz_templates
 
-    cfg = host_config or default_config()
+    cfg = resolve_host_runtime_config(host_config, template_root=template_root,
+                                      template_file=template_file, host_fit_range=fit_range)
     total_start = perf_counter()
-    default_root = "~/tools/ppxf_data"
-    default_file = "spectra_emiles_9.0.npz"
-    default_range = (3600.0, 7000.0)
-    effective_template_root = (
-        cfg.template_root
-        if template_root == default_root and cfg.template_root != default_root
-        else template_root
-    )
-    effective_template_file = (
-        cfg.template_file
-        if template_file == default_file and cfg.template_file != default_file
-        else template_file
-    )
-    effective_fit_range = (
-        cfg.fit_range
-        if tuple(fit_range) == default_range and tuple(cfg.fit_range) != default_range
-        else fit_range
-    )
+    effective_template_root = cfg.template_root
+    effective_template_file = cfg.template_file
+    effective_fit_range = cfg.fit_range
     templates = load_ppxf_npz_templates(
         template_root=effective_template_root,
         template_file=effective_template_file,
@@ -505,9 +492,9 @@ def fit_with_optional_host_decomp(
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
     fit_kind: str = "local",
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -774,11 +761,9 @@ def _run_host_refit_mc(
             values = workflow_measurements(trial)
             if trial.continuum_success:
                 continuum_successes += 1
-                values.update(trial.continuum.param_values)
             for recipe_id, complex_result in trial.line_complexes.items():
                 if complex_result.success:
                     complex_successes[recipe_id] = complex_successes.get(recipe_id, 0) + 1
-                    values.update(complex_result.metrics)
             draws.append({"trial_id": trial_id, "values": values, "parameters": {key: fit.param_values for key,fit in trial.line_complexes.items()}})
             for name, value in values.items():
                 if np.isfinite(value):
@@ -787,6 +772,7 @@ def _run_host_refit_mc(
             failures.append({"trial_id": trial_id, "reason": str(exc)})
             continue
     summary = summarize_matched_draws(draws, failures, n_trials)
+    summary["measurement_key_schema"] = "qualified_v1"
     summary.update(continuum_success_count=continuum_successes, complex_success_counts=complex_successes, method="observed_spectrum_perturbation_bootstrap", host_refitted=True)
     return summary
 
@@ -799,9 +785,9 @@ def _run_global_fit_with_optional_host(
     row_index: Optional[int] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -818,7 +804,10 @@ def _run_global_fit_with_optional_host(
 
     workflow_start = perf_counter()
     uncertainty = uncertainty_config or UncertaintyConfig()
-    base_host_config = host_config or default_config()
+    base_host_config = resolve_host_runtime_config(host_config, template_root=template_root,
+                                                  template_file=template_file, host_fit_range=host_fit_range)
+    template_root, template_file, host_fit_range = (base_host_config.template_root,
+                                                  base_host_config.template_file, base_host_config.fit_range)
     global_full_iron_propagated = bool(
         global_config is not None
         and global_config.full_iron is not None
@@ -1364,8 +1353,6 @@ def _run_global_fit_with_optional_host(
         from ..uncertainties import apply_bootstrap_errors
         apply_bootstrap_errors(workflow)
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo_host_refit"
-        workflow.metadata["continuum_sample_errors"] = {name: workflow.monte_carlo["errors"].get(name, np.nan)
-            for name in workflow.metadata.get("continuum_samples", {})}
     return workflow
 
 
@@ -1376,9 +1363,9 @@ def fit_global_lines_workflow(
     redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -1428,9 +1415,9 @@ def fit_global_hbeta_workflow(
     redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,

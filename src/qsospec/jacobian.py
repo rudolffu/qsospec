@@ -31,12 +31,14 @@ def _iron_fwhm_derivative(theta: np.ndarray, packed: PackedParameters, wave: np.
         wave,
         fwhm_kms=lo,
         velocity_step_kms=packed.iron_velocity_step_kms,
+        width_mode=packed.iron_width_mode,
     )
     basis_hi = evaluate_iron_basis(
         packed.iron_template,
         wave,
         fwhm_kms=hi,
         velocity_step_kms=packed.iron_velocity_step_kms,
+        width_mode=packed.iron_width_mode,
     )
     return (basis_hi - basis_lo) / (hi - lo)
 

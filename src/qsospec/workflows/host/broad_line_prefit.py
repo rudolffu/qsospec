@@ -168,7 +168,7 @@ def run_host_broad_line_prefit(
     prefit_global_config = global_config or GlobalContinuumConfig()
     prefit_global_config = replace(
         prefit_global_config,
-        polynomial=replace(prefit_global_config.polynomial, enabled=False),
+        polynomial=replace(prefit_global_config.polynomial, mode="off"),
     )
     try:
         workflow = fit_global_lines(

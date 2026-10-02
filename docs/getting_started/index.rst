@@ -11,3 +11,4 @@ the appropriate interface.
    dustmaps
    quickstart
    choose_workflow
+   migration_0_2

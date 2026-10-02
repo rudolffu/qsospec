@@ -1,6 +1,8 @@
 """Render only selected QA for the provisional DR1 narrow-line workflow."""
 
 from __future__ import annotations
+import qsospec.halpha_classification
+import qsospec.hei_pgamma_classification
 
 import argparse
 import json
@@ -73,31 +75,31 @@ def _qa_payload(row: dict[str, object]) -> dict[str, object]:
     output = {**row, "object_id": object_id, "complex_name": complex_name}
     try:
         resolving_power = float(row.get("resolving_power", 480.0))
-        lsf = qsospec.LineSpreadFunctionConfig(
+        lsf = qsospec.halpha_classification.LineSpreadFunctionConfig(
             resolving_power=resolving_power
         )
         loaded = qsospec.load_model(_WORKER_STORE, object_id)
         if complex_name == "halpha":
-            result = qsospec.fit_halpha_model_grid(
+            result = qsospec.halpha_classification.fit_halpha_model_grid(
                 loaded.spectrum,
                 loaded.continuum,
-                selection_config=qsospec.HalphaModelSelectionConfig(lsf=lsf),
+                selection_config=qsospec.halpha_classification.HalphaModelSelectionConfig(lsf=lsf),
             )
             n0 = result.narrow
             b1 = result.best_broad
             window = (6250.0, 6800.0)
         elif complex_name == "hei_pgamma":
-            result = qsospec.fit_hei_pgamma_model_pair(
+            result = qsospec.hei_pgamma_classification.fit_hei_pgamma_model_pair(
                 loaded.spectrum,
                 loaded.continuum,
-                selection_config=qsospec.HeIPagammaModelSelectionConfig(
+                selection_config=qsospec.hei_pgamma_classification.HeIPagammaModelSelectionConfig(
                     lsf=lsf
                 ),
             )
             if result is None:
                 raise RuntimeError("He I/Pa-gamma is not covered")
             n0, b1 = result.n0, result.b1
-            window = qsospec.HEI_PGAMMA_WINDOW
+            window = qsospec.hei_pgamma_classification.HEI_PGAMMA_WINDOW
         else:
             raise ValueError(f"Unknown complex: {complex_name}")
         if b1 is None:

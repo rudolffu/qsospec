@@ -70,13 +70,13 @@ every valid input wavelength, including pixels outside continuum anchors.
 Conservative per-coefficient envelopes guarantee this bound. These limits
 are configurable engineering defaults, not universal physical thresholds.
 
-Explicitly setting ``enabled=None`` opts into quadratic assessment only for SDSS provenance.
+Explicitly setting ``mode="auto"`` opts into quadratic assessment only for SDSS provenance.
 It accepts a numerically safe candidate when
 :math:`\chi^2_{\rm baseline}-\chi^2_{\rm candidate}-d\ln n\ge10` on the same
 accepted pixels. This is a conservative staged selection score, not exact
 Bayesian evidence. Otherwise the baseline is returned unchanged.
-``enabled=True`` bypasses this score requirement but not safety checks;
-``enabled=False`` (the default) disables the correction. Degree three remains opt-in.
+``mode="on"`` bypasses this score requirement but not safety checks;
+``mode="off"`` (the default) disables the correction. Degree three remains opt-in.
 
 Insufficient coverage, a nonpositive baseline power law, incompatible bounds,
 failed optimization, or a rank-deficient/ill-conditioned combined Jacobian

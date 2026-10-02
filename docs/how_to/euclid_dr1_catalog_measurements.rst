@@ -9,7 +9,7 @@ tier and Euclid redshift provenance from the MLSpecZ science ledger.
 .. code-block:: bash
 
    export MLSPECZ_DATA_ROOT=/path/to/mlspecz_data
-   /Users/yuming/miniforge3/bin/python scripts/build_euclid_dr1_qsospec_input.py \
+   python scripts/build_euclid_dr1_qsospec_input.py \
      --identified "$MLSPECZ_DATA_ROOT/dr1_public_catalog_v1/catalog_identified.parquet" \
      --ledger "$MLSPECZ_DATA_ROOT/dr1_public_catalog_v1/analysis/dr1_science_ledger.parquet" \
      --external-spectra /path/to/matched_desi_spectra.parquet \
@@ -45,8 +45,8 @@ reader-compatible input first:
 
 .. code-block:: bash
 
-   export MLSPECZ_DATA_ROOT=/Users/yuming/astro/ml_projects/dr1agn/mlspecz_data
-   /Users/yuming/miniforge3/bin/python \
+   export MLSPECZ_DATA_ROOT=/path/to/mlspecz_data
+   python \
      scripts/build_euclid_dr1_gold_rgs_input.py
 
 The builder consumes the materialized composite stack, its membership table,
@@ -67,9 +67,9 @@ legacy products.
 
 .. code-block:: bash
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/run_euclid_dr1_gold_rgs.py --mode smoke
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/run_euclid_dr1_gold_rgs.py --mode production
 
 The production command requires at least 12 GiB free space and a passing
@@ -83,9 +83,9 @@ Generate the reconciliation and science tables before rendering QA:
 
 .. code-block:: bash
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/report_euclid_dr1_gold_rgs.py
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/render_euclid_dr1_gold_rgs_qa.py
 
 The report defines hard bad fits as batch exceptions, failed/non-finite
@@ -107,10 +107,10 @@ flux fractions and profile widths and does not assign a type-1/type-2 class.
 Luminosities
 ------------
 
-:func:`qsospec.monochromatic_luminosity` converts observed-frame physical
+:func:`qsospec.luminosity.monochromatic_luminosity` converts observed-frame physical
 ``f_lambda`` to ``L_lambda``, ``lambda L_lambda``, and ``L_nu`` with an explicit
 Astropy cosmology. It propagates flux and optional host-fraction uncertainty.
-:func:`qsospec.bolometric_luminosity` requires a named correction prescription;
+:func:`qsospec.luminosity.bolometric_luminosity` requires a named correction prescription;
 there is intentionally no universal default correction.
 
 Host subtraction remains object-level until the external-to-Euclid aperture,

@@ -1,6 +1,7 @@
 """Integration-level table and resume tests for the measurement CLI."""
 
 from __future__ import annotations
+import qsospec.broad_narrow_measurements
 
 import importlib.util
 from pathlib import Path
@@ -143,7 +144,7 @@ def test_finalized_source_failures_are_retained_as_unavailable_rows():
     assert reconciled.loc[0, "source_failure_exception_type"] == "ValueError"
     records = module._fit_one(
         object(), reconciled.iloc[0].to_dict(), ("halpha",),
-        qsospec.BroadNarrowMeasurementConfig(), {},
+        qsospec.broad_narrow_measurements.BroadNarrowMeasurementConfig(), {},
     )
     assert records[0]["fit_status"] == "not_available"
     assert "Too few valid continuum-window pixels" in records[0]["fit_message"]
@@ -226,7 +227,7 @@ def test_selective_fit_reframes_archived_pixels_and_records_provenance(monkeypat
         "alias_rule_version": "v1",
     }
     records = module._fit_one(
-        object(), payload, ("halpha",), qsospec.BroadNarrowMeasurementConfig(), {}
+        object(), payload, ("halpha",), qsospec.broad_narrow_measurements.BroadNarrowMeasurementConfig(), {}
     )
     assert seen[0][0] == 0.5
     assert np.allclose(seen[0][1], wave / 1.5)

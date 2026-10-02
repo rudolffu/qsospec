@@ -42,6 +42,6 @@ behavior is:
 Reproduce the synthetic benchmark with:
 
 ```bash
-PYTHONPATH=src /Users/yuming/miniforge3/bin/python \
+PYTHONPATH=src python \
   benchmarks/benchmark_fast_resume.py
 ```

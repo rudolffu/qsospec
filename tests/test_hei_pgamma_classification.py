@@ -1,6 +1,8 @@
 """Tests for the R=480 He I 10833 + Pa-gamma N0/B1 comparison."""
 
 import numpy as np
+import qsospec.halpha_classification
+import qsospec.hei_pgamma_classification
 import pytest
 
 import qsospec
@@ -42,11 +44,11 @@ def _synthetic_hei_pgamma(
     wave = np.linspace(10520.0, 11180.0, 1321)
     continuum = np.ones_like(wave)
     line = np.zeros_like(wave)
-    instrument = qsospec.LineSpreadFunctionConfig().instrumental_fwhm_kms
-    narrow_observed = qsospec.observed_fwhm_kms(
+    instrument = qsospec.halpha_classification.LineSpreadFunctionConfig().instrumental_fwhm_kms
+    narrow_observed = qsospec.halpha_classification.observed_fwhm_kms(
         narrow_intrinsic_fwhm, instrument
     )
-    broad_observed = qsospec.observed_fwhm_kms(broad_intrinsic_fwhm, instrument)
+    broad_observed = qsospec.halpha_classification.observed_fwhm_kms(broad_intrinsic_fwhm, instrument)
     for flux, center in (
         (hei_narrow_flux, 10833.31),
         (pagamma_narrow_flux, 10941.09),
@@ -73,8 +75,8 @@ def _synthetic_hei_pgamma(
 
 
 def test_recipe_has_shared_kinematics_and_independent_nonnegative_fluxes():
-    n0 = qsospec.hei_pgamma_classification_recipe(include_broad=False)
-    b1 = qsospec.hei_pgamma_classification_recipe(include_broad=True)
+    n0 = qsospec.hei_pgamma_classification.hei_pgamma_classification_recipe(include_broad=False)
+    b1 = qsospec.hei_pgamma_classification.hei_pgamma_classification_recipe(include_broad=True)
     assert n0.fit_window == (10550.0, 11150.0)
     assert [component.role for component in n0.components] == ["narrow", "narrow"]
     assert {component.kinematic_group for component in n0.components} == {
@@ -89,7 +91,7 @@ def test_recipe_has_shared_kinematics_and_independent_nonnegative_fluxes():
 
 
 def test_r480_bounds_use_the_intrinsic_1200_boundary():
-    config = qsospec.HeIPagammaModelSelectionConfig()
+    config = qsospec.hei_pgamma_classification.HeIPagammaModelSelectionConfig()
     assert config.lsf.instrumental_fwhm_kms == pytest.approx(624.5676208333333)
     assert config.observed_narrow_bounds_kms[1] == pytest.approx(1352.80623630785)
     assert config.observed_broad_bounds_kms[0] == pytest.approx(
@@ -103,7 +105,7 @@ def test_secure_narrow_hei_does_not_require_pagamma_detection(pagamma_flux):
         pagamma_narrow_flux=pagamma_flux,
         add_noise=True,
     )
-    pair = qsospec.fit_hei_pgamma_model_pair(spectrum, continuum)
+    pair = qsospec.hei_pgamma_classification.fit_hei_pgamma_model_pair(spectrum, continuum)
     assert pair is not None
     assert pair.n0.success and pair.b1.success
     record = pair.to_record(-7)
@@ -126,7 +128,7 @@ def test_broad_hei_cannot_pass_merely_because_pagamma_is_weak():
         pagamma_narrow_flux=0.0,
         pagamma_broad_flux=0.0,
     )
-    pair = qsospec.fit_hei_pgamma_model_pair(spectrum, continuum)
+    pair = qsospec.hei_pgamma_classification.fit_hei_pgamma_model_pair(spectrum, continuum)
     assert pair is not None
     record = pair.to_record(8)
     assert record["delta_bic_broad"] >= 10.0
@@ -145,7 +147,7 @@ def test_model_pair_returns_none_when_local_window_is_not_covered():
         flux_unit="relative",
     )
     continuum = _continuum_result(spectrum, np.ones_like(wave))
-    assert qsospec.fit_hei_pgamma_model_pair(spectrum, continuum) is None
+    assert qsospec.hei_pgamma_classification.fit_hei_pgamma_model_pair(spectrum, continuum) is None
 
 
 def test_exact_evidence_thresholds_and_active_bound_veto():

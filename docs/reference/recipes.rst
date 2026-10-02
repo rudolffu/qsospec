@@ -51,10 +51,10 @@ Built-in auto-enabled recipes
 ``generic_narrow_lines`` is available for custom construction but is not
 auto-enabled.
 
-NIR-complete preset
--------------------
+extended-quasar preset
+----------------------
 
-``qsospec.recipes.nir_complete()`` returns the versioned ``nir_complete_v1``
+``qsospec.recipes.extended_quasar()`` returns the versioned ``extended_quasar_v1``
 recipe set (the full 17-feature emission-line inventory). It adds these compact recipes and
 replaces ``paschen_nir`` with the compact NIR set:
 
@@ -88,7 +88,7 @@ replaces ``paschen_nir`` with the compact NIR set:
 .. code-block:: python
 
    result = qsospec.fit_global_lines(
-       spectrum, complexes=qsospec.recipes.nir_complete()
+       spectrum, complexes=qsospec.recipes.extended_quasar()
    )
 
 The historical ``paschen_nir`` umbrella is unchanged for

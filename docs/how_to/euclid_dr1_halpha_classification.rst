@@ -18,7 +18,7 @@ observed fitted FWHM of 1352.8 km/s.
 Run the model comparison after the gold run has been finalized::
 
    export MLSPECZ_DATA_ROOT=/path/to/mlspecz_data
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/classify_euclid_dr1_halpha.py
 
 The command is resumable and writes chunk products plus final tables under::

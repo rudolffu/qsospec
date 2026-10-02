@@ -11,13 +11,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from qsospec import (
-    BroadNarrowMeasurementConfig,
-    LineSpreadFunctionConfig,
-    load_model_by_key,
-    measure_broad_narrow_complex,
-    open_run,
-)
+from qsospec import load_model_by_key, open_run
+from qsospec.broad_narrow_measurements import BroadNarrowMeasurementConfig
+from qsospec.halpha_classification import LineSpreadFunctionConfig
+from qsospec.broad_narrow_measurements import measure_broad_narrow_complex
 
 
 def parse_args() -> argparse.Namespace:

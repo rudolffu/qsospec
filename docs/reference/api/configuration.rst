@@ -11,6 +11,7 @@ Configuration API
    PowerLawConfig
    PolynomialContinuumConfig
    IronTemplateConfig
+   RegionalIronConfig
    BalmerPseudoContinuumConfig
    HbetaComplexConfig
    MgIIComplexConfig
@@ -28,4 +29,3 @@ Configuration API
    HostBroadLinePrefitConfig
    HostAgnPseudoContinuumConfig
    HostCoverageConfig
-   ResolvedHostTemplateProfile

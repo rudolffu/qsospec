@@ -18,13 +18,13 @@ narrow-width gate is conservative.
 Run the real 64-object smoke test first::
 
    export MLSPECZ_DATA_ROOT=/path/to/mlspecz_data
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/classify_euclid_dr1_narrow_lines.py \
      --mode smoke --workers 2
 
 Then resume or start the current archived production sample::
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/classify_euclid_dr1_narrow_lines.py \
      --mode production --workers 2
 
@@ -81,10 +81,10 @@ Calibration boundary
 Use the real-pattern injection command for a smoke test and then a larger
 calibration::
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/calibrate_euclid_dr1_hei_pgamma.py --mode smoke
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
      scripts/calibrate_euclid_dr1_hei_pgamma.py \
      --mode production --n-injections 2000
 
@@ -103,7 +103,7 @@ After finalization, render only the selected QA rows (failures, decision
 boundaries, high residuals, broad-evidence cases, and deterministic provisional
 controls)::
 
-   /Users/yuming/miniforge3/bin/python \
+   python \
    scripts/render_euclid_dr1_narrow_line_qa.py --workers 2
 
 The renderer writes PNGs plus a row-level render-status table.  It does not

@@ -1,5 +1,6 @@
 """SDSS follows the same scanner, fitting, store, and selective-resume APIs."""
 import numpy as np
+import qsospec.io.readers
 import pandas as pd
 
 import qsospec
@@ -18,7 +19,7 @@ def test_sdss_provenance_through_batch_store_and_resume(tmp_path):
                  resolution_is_object_specific=True, resolution_status="complete_object_specific") for i in range(3)]
     path = tmp_path / "spectra.parquet"
     pd.DataFrame(rows).to_parquet(path, row_group_size=1)
-    descriptors = list(qsospec.scan_parquet_spectrum_inputs(str(path), row_indices=[0, 2]))
+    descriptors = list(qsospec.io.readers.scan_parquet_spectrum_inputs(str(path), row_indices=[0, 2]))
     spectra = list(qsospec.scan_parquet_spectra(str(path), row_indices=[0, 2]))
     assert descriptors == [d for d, _ in spectra]
     assert spectra[0][1].object_id == "63050395803782712"

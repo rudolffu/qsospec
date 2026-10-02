@@ -120,7 +120,7 @@ def test_warm_continuum_reoptimizes_noise():
  from dataclasses import replace
  w=np.linspace(2200,7000,800);flux=3*(w/3000)**-1.2;err=np.ones_like(w)*.05
  s=Spectrum.from_arrays(w,flux,err=err,wave_frame='rest',flux_unit='relative')
- cfg=GlobalContinuumConfig(uv_iron=None,optical_iron=None,regional_iron=RegionalIronConfig(enabled=False),polynomial=PolynomialContinuumConfig(enabled=False),balmer_pseudocontinuum=BalmerPseudoContinuumConfig(enabled=False))
+ cfg=GlobalContinuumConfig(uv_iron=None,optical_iron=None,regional_iron=RegionalIronConfig(enabled=False),polynomial=PolynomialContinuumConfig(mode="off"),balmer_pseudocontinuum=BalmerPseudoContinuumConfig(enabled=False))
  base=fit_global_continuum(s,cfg,compute_covariance=False)
  refit=refit_custom_continuum(replace(s,flux=flux+.1),base,cfg)
  assert refit.success

@@ -1,4 +1,5 @@
 import json
+import qsospec.measurement_vocabulary
 from types import SimpleNamespace
 
 import numpy as np
@@ -108,19 +109,19 @@ def test_direct_ppxf_sample_producer_uses_v2_names_and_values(strategy):
 
 
 def test_naming_helpers_and_section_aware_legacy_mapping():
-    assert qsospec.final_host_sample_name("host_fraction", 5100) == (
+    assert qsospec.measurement_vocabulary.final_host_sample_name("host_fraction", 5100) == (
         "fracHost_5100"
     )
-    assert qsospec.ppxf_host_sample_name("host_fraction", 5100) == (
+    assert qsospec.measurement_vocabulary.ppxf_host_sample_name("host_fraction", 5100) == (
         "fracHost_pPXF_5100"
     )
-    assert qsospec.canonicalize_legacy_measurement_name(
+    assert qsospec.measurement_vocabulary.canonicalize_legacy_measurement_name(
         "host_sample", "fHostFit_5100"
     )[0] == "fHost_pPXF_5100"
-    assert qsospec.canonicalize_legacy_measurement_name(
+    assert qsospec.measurement_vocabulary.canonicalize_legacy_measurement_name(
         "host_sample", "fracHost_5100"
     )[0] == "fracHost_pPXF_5100"
-    assert qsospec.canonicalize_legacy_measurement_name(
+    assert qsospec.measurement_vocabulary.canonicalize_legacy_measurement_name(
         "continuum_sample", "fracHost_5100"
     ) == ("fracHost_5100", {})
 

@@ -48,7 +48,7 @@ Optional additive polynomial (disabled by default for all surveys):
 .. code-block:: python
 
    polynomial = qsospec.PolynomialContinuumConfig(
-       enabled=None,  # explicitly opt into BIC-gated SDSS assessment
+       mode="auto",  # explicitly opt into BIC-gated SDSS assessment
        degree=2,
        max_fraction=0.10,
        max_norm_fraction=0.10,
@@ -57,12 +57,12 @@ Optional additive polynomial (disabled by default for all surveys):
    config = qsospec.GlobalContinuumConfig(polynomial=polynomial)
 
 The polynomial has no constant term and is additive to the global continuum.
-The default ``enabled=False`` skips assessment, including for SDSS inputs.
-Explicit ``enabled=None`` opts into assessment with ``survey="sdss"`` provenance;
+The default ``mode="off"`` skips assessment, including for SDSS inputs.
+Explicit ``mode="auto"`` opts into assessment with ``survey="sdss"`` provenance;
 survey metadata or a filename alone never activates it. The polynomial-free baseline slope is fixed,
 and the candidate must pass the improvement score and numerical safeguards.
-``enabled=True`` bypasses only the score requirement, not fractional bounds or
-conditioning checks. ``enabled=False`` retains polynomial-free fitting.
+``mode="on"`` bypasses only the score requirement, not fractional bounds or
+conditioning checks. ``mode="off"`` retains polynomial-free fitting.
 See :doc:`../science/continuum_model` for the staged fit and covariance policy.
 
 Known foreground E(B-V):

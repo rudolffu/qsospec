@@ -242,11 +242,13 @@ def _broaden_template(
     template: IronTemplate,
     fwhm_kms: float,
     velocity_step_kms: float = 25.0,
+    width_mode: str = "legacy",
 ):
     grid, broadened, _ = _broaden_template_with_derivative(
         template,
         fwhm_kms,
         velocity_step_kms,
+        width_mode=width_mode,
         need_derivative=False,
     )
     return grid, broadened
@@ -279,11 +281,13 @@ def evaluate_iron_basis(
     wave_rest_fit: np.ndarray,
     fwhm_kms: float,
     velocity_step_kms: float = 25.0,
+    *,
+    width_mode: str = "legacy",
 ) -> np.ndarray:
     """Return a broadened iron-template basis on a rest-frame fitting grid."""
 
     wave_rest_fit = np.asarray(wave_rest_fit, dtype=float)
-    broadened_wave, broadened_flux = _broaden_template(template, fwhm_kms, velocity_step_kms=velocity_step_kms)
+    broadened_wave, broadened_flux = _broaden_template(template, fwhm_kms, velocity_step_kms=velocity_step_kms, width_mode=width_mode)
     basis = np.interp(wave_rest_fit, broadened_wave, broadened_flux, left=0.0, right=0.0)
     return _apply_coverage_taper(template, wave_rest_fit, basis)
 
@@ -293,6 +297,8 @@ def evaluate_iron_basis_with_derivative(
     wave_rest_fit: np.ndarray,
     fwhm_kms: float,
     velocity_step_kms: float = 25.0,
+    *,
+    width_mode: str = "legacy",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Return the broadened iron basis and its FWHM derivative."""
 
@@ -301,6 +307,7 @@ def evaluate_iron_basis_with_derivative(
         template,
         fwhm_kms,
         velocity_step_kms=velocity_step_kms,
+        width_mode=width_mode,
     )
     basis = np.interp(wave_rest_fit, broadened_wave, broadened_flux, left=0.0, right=0.0)
     derivative = np.interp(
@@ -318,6 +325,8 @@ def prepare_iron_template(
     window: Tuple[float, float],
     fwhm_kms: float,
     velocity_step_kms: float = 25.0,
+    *,
+    width_mode: str = "legacy",
 ) -> PreparedIronTemplate:
     """Broaden and interpolate an iron template onto a fit grid."""
 
@@ -347,7 +356,7 @@ def prepare_iron_template(
             )
         )
 
-    basis = evaluate_iron_basis(template, wave_rest_fit, fwhm_kms, velocity_step_kms=velocity_step_kms)
+    basis = evaluate_iron_basis(template, wave_rest_fit, fwhm_kms, velocity_step_kms=velocity_step_kms, width_mode=width_mode)
     return PreparedIronTemplate(template, basis, float(fwhm_kms), warnings)
 
 
@@ -381,6 +390,22 @@ def resolve_iron_width(template, value, mode="legacy"):
             "native_width_source": template.native_width_source,
             "target_fwhm_kms": float(np.hypot(native, kernel)) if known else None,
             "effective_width_status": "gaussian_equivalent" if known else "unavailable"}
+
+
+def resolve_iron_bounds(template, bounds, mode="legacy"):
+    """Resolve fitted bounds in the requested coordinate, enforcing native width."""
+    lower, upper = bounds
+    # Resolving a valid reference also validates target eligibility.
+    reference = max(float(template.native_fwhm_kms), 0.)
+    resolved = resolve_iron_width(template, reference, mode)
+    if resolved["requested_width_mode"] == "target":
+        native = resolved["native_fwhm_kms"]
+        lower = native if lower is None else max(float(lower), native)
+    else:
+        lower = 0. if lower is None else lower
+    if upper is not None and upper <= lower:
+        raise ValueError("Iron FWHM upper bound must exceed the lower bound and native-width floor in the selected coordinate.")
+    return lower, upper
 
 
 def evaluate_iron_kernel(
