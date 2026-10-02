@@ -17,6 +17,11 @@ Overview semantics
   regions.
 - Residual strip: :math:`(\mathrm{data}-\mathrm{model})/\sigma` on fitted
   pixels only, with references at zero and :math:`\pm3`.
+- When a baseline-anchored polynomial is accepted, an additional signed strip
+  shows ``polynomial / baseline power law`` on valid input pixels, with zero
+  and the configured fractional limits (default ±10%). Negative corrections
+  remain visible even when the overview flux axis starts at zero. Archived
+  legacy polynomials without baseline provenance do not receive this strip.
 
 A successful emission-line fit takes display precedence over a pPXF emission
 mask. Absorption pixels rejected by the Lyα refit remain marked separately.

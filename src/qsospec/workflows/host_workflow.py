@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from time import perf_counter
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -22,6 +23,8 @@ from ..extinction import correct_spectrum_data
 from ..fitting.global_fit import fit_global_lines
 from ..complex_recipes import ComplexRecipe
 from ..global_result import WorkflowResult
+from ..measurement_vocabulary import MEASUREMENT_VOCABULARY_VERSION
+from .host.config import resolve_host_runtime_config
 from ..result import LocalFitResult
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
@@ -41,6 +44,42 @@ def _host_decomp_decision(requested: bool, redshift: Optional[float]) -> Tuple[b
     if value >= 1.2:
         return False, "redshift_at_or_above_1.2"
     return True, None
+
+
+def _host_config_with_global_iron(host_config: Any, global_config: Optional[GlobalContinuumConfig]):
+    """Propagate an exclusive bundled iron template into the AGN host basis."""
+
+    if global_config is None:
+        global_config = GlobalContinuumConfig()
+    if global_config.full_iron is None:
+        pseudo = host_config.agn_pseudocontinuum
+        uv, optical = global_config.uv_iron, global_config.optical_iron
+        if pseudo.inherit_global_full_iron and pseudo.full_feii_template is None and uv is not None and optical is not None and uv.template == "vw01" and optical.template == "park22":
+            return replace(host_config, agn_pseudocontinuum=replace(pseudo,
+                uv_feii_template="vw01", optical_feii_template="park22",
+                regional_iron_enabled=global_config.regional_iron.enabled))
+        return host_config
+    iron = global_config.full_iron
+    pseudo = host_config.agn_pseudocontinuum
+    if (
+        not iron.enabled
+        or not pseudo.inherit_global_full_iron
+        or pseudo.full_feii_template is not None
+    ):
+        return host_config
+    if iron.template_path is not None:
+        raise ValueError(
+            "Host AGN-basis inheritance only supports bundled full-range iron "
+            "templates; configure HostAgnPseudoContinuumConfig explicitly for "
+            "an external template."
+        )
+    return replace(
+        host_config,
+        agn_pseudocontinuum=replace(
+            pseudo,
+            full_feii_template=iron.template,
+        ),
+    )
 
 
 @dataclass
@@ -98,9 +137,16 @@ def _spectrum_from_arrays(
             "flux_scale",
             "flux_frame",
             "rest_frame_conversion",
+            "survey",
         ):
             if key in spectrum_data.metadata:
                 base_metadata[key] = spectrum_data.metadata[key]
+        if not base_metadata.get("survey"):
+            explicit_survey = spectrum_data.metadata.get("optical_survey")
+            if explicit_survey is not None:
+                normalized_survey = str(explicit_survey).strip().lower()
+                if normalized_survey in {"sdss", "desi"}:
+                    base_metadata["survey"] = normalized_survey
         base_metadata.update(
             {
                 "source": source,
@@ -135,6 +181,7 @@ def _spectrum_from_arrays(
         ),
         galactic_extinction=extinction,
         metadata=base_metadata,
+        resolution=getattr(spectrum_data, "resolution", None),
     )
 
 
@@ -191,6 +238,8 @@ def _host_subtracted_spectrum(
     fit_range: Tuple[float, float],
     host_config: Optional[Any],
     source: str,
+    global_config: Optional[GlobalContinuumConfig] = None,
+    pseudocontinuum_width_override_kms: Optional[float] = None,
 ) -> Tuple[
     Spectrum,
     Spectrum,
@@ -203,6 +252,7 @@ def _host_subtracted_spectrum(
     list,
 ]:
     from .host.config import default_config
+    from .host.broad_line_prefit import run_host_broad_line_prefit
     from .host.ppxf_host import (
         prepare_spectrum_for_host_decomp,
         predict_host_sed,
@@ -211,18 +261,74 @@ def _host_subtracted_spectrum(
     )
     from .host.templates import load_ppxf_npz_templates
 
-    cfg = host_config or default_config()
-    templates = load_ppxf_npz_templates(template_root=template_root, template_file=template_file)
+    cfg = resolve_host_runtime_config(host_config, template_root=template_root,
+                                      template_file=template_file, host_fit_range=fit_range)
+    total_start = perf_counter()
+    effective_template_root = cfg.template_root
+    effective_template_file = cfg.template_file
+    effective_fit_range = cfg.fit_range
+    templates = load_ppxf_npz_templates(
+        template_root=effective_template_root,
+        template_file=effective_template_file,
+        report_dir=cfg.output_dir,
+        template_family=cfg.template_family,
+        template_profile=cfg.template_profile,
+        template_product_kind=cfg.template_product_kind,
+        source_template_file=cfg.source_template_file,
+        template_coarser_action=cfg.template_coarser_action,
+        preserve_native_data=cfg.preserve_native_data,
+    )
     prep = prepare_spectrum_for_host_decomp(
         spectrum_data,
         redshift=redshift,
-        fit_range=fit_range,
+        fit_range=effective_fit_range,
         line_mask_widths=cfg.line_mask_widths,
         broad_line_mask_widths=cfg.broad_line_mask_widths,
         observed_artifact_windows=cfg.observed_artifact_windows,
         max_native_gap_pixels=cfg.max_native_gap_pixels,
         systematic_error_floor_fraction=cfg.systematic_error_floor_fraction,
     )
+    prep.metadata["spectral_resolution"] = getattr(spectrum_data, "resolution", None)
+    strategy_requested = cfg.strategy
+    strategy_used = strategy_requested
+    strategy_fallback = False
+    strategy_fallback_reason = None
+    broad_prefit = None
+    selected_width = pseudocontinuum_width_override_kms
+    broad_prefit_seconds = 0.0
+    if strategy_requested == "agn_pseudocontinuum_masked":
+        if not cfg.agn_pseudocontinuum.enabled:
+            strategy_used = "masked_simple"
+            strategy_fallback = True
+            strategy_fallback_reason = "agn_pseudocontinuum_disabled"
+        if selected_width is None:
+            if strategy_used != "agn_pseudocontinuum_masked":
+                selected_width = None
+            else:
+                prefit_start = perf_counter()
+                broad_prefit = run_host_broad_line_prefit(
+                    _spectrum_from_spectrum_data(spectrum_data, source=source),
+                    config=cfg.broad_line_prefit,
+                    width_grid_kms=cfg.agn_pseudocontinuum.width_grid_kms,
+                    global_config=global_config,
+                )
+                broad_prefit_seconds = perf_counter() - prefit_start
+                selected_width = broad_prefit.selected_width_grid_kms
+                if broad_prefit.fallback_used:
+                    strategy_fallback = True
+                    strategy_fallback_reason = broad_prefit.fallback_reason
+        if (
+            strategy_used == "agn_pseudocontinuum_masked"
+            and selected_width is None
+        ):
+            strategy_used = "masked_simple"
+            strategy_fallback = True
+            strategy_fallback_reason = (
+                broad_prefit.fallback_reason
+                if broad_prefit is not None
+                else "missing_selected_width"
+            )
+    ppxf_start = perf_counter()
     host_fit = run_ppxf_host_fit(
         prep,
         templates,
@@ -239,8 +345,72 @@ def _host_subtracted_spectrum(
         minimum_clean_pixels=cfg.minimum_clean_pixels,
         minimum_continuum_snr=cfg.minimum_continuum_snr,
         maximum_clipped_fraction=cfg.maximum_clipped_fraction,
+        strategy=strategy_used,
+        strategy_requested=strategy_requested,
+        strategy_fallback=strategy_fallback,
+        strategy_fallback_reason=strategy_fallback_reason,
+        agn_pseudocontinuum_config=cfg.agn_pseudocontinuum,
+        selected_pseudocontinuum_fwhm_kms=selected_width,
+        coverage_config=cfg.coverage,
     )
+    ppxf_seconds = perf_counter() - ppxf_start
+    if broad_prefit is not None:
+        host_fit.quality_metrics.update(
+            {
+                "broad_prefit_status": broad_prefit.status,
+                "broad_prefit_line": broad_prefit.selected_line,
+                "broad_prefit_fwhm_kms": broad_prefit.fwhm_kms,
+                "broad_prefit_fwhm_error_kms": broad_prefit.fwhm_error_kms,
+                "broad_prefit_flux_snr": broad_prefit.flux_snr,
+                "broad_prefit_fwhm_snr": broad_prefit.fwhm_snr,
+                "broad_prefit_velocity_kms": broad_prefit.velocity_kms,
+                "broad_prefit_diagnostics": broad_prefit.diagnostics,
+            }
+        )
+    host_fit.quality_metrics.update(
+        {
+            "pseudocontinuum_width_initial_kms": selected_width,
+            "pseudocontinuum_width_final_kms": selected_width,
+            "pseudocontinuum_width_iterations": (
+                1 if strategy_used == "agn_pseudocontinuum_masked" else 0
+            ),
+            "pseudocontinuum_width_converged": None,
+            "pseudocontinuum_width_change_kms": 0.0,
+            "pseudocontinuum_width_status": (
+                "initial_selection"
+                if strategy_used == "agn_pseudocontinuum_masked"
+                else "not_used"
+            ),
+            "broad_line_prefit_seconds": float(broad_prefit_seconds),
+            "host_ppxf_total_seconds": float(ppxf_seconds),
+        }
+    )
+    host_fit.preprocessed.metadata.update(
+        {
+            "host_strategy_requested": strategy_requested,
+            "host_strategy_used": strategy_used,
+            "host_strategy_fallback": strategy_fallback,
+            "host_strategy_fallback_reason": strategy_fallback_reason,
+            "host_method_reference": (
+                "Aydar et al. 2026, A&A, 710, A141"
+                if strategy_requested == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_exact_replication": (
+                False
+                if strategy_requested == "agn_pseudocontinuum_masked"
+                else None
+            ),
+        }
+    )
+    sed_start = perf_counter()
     host_sed = predict_host_sed(host_fit)
+    host_fit.quality_metrics["host_sed_prediction_seconds"] = float(
+        perf_counter() - sed_start
+    )
+    host_fit.quality_metrics["host_sed_reconstruction_seconds"] = (
+        host_fit.quality_metrics["host_sed_prediction_seconds"]
+    )
     full_wave_obs = np.asarray(spectrum_data.wave_obs, dtype=float)
     full_wave_rest = full_wave_obs / (1.0 + float(redshift))
     full_flux = np.asarray(spectrum_data.flux, dtype=float)
@@ -249,13 +419,32 @@ def _host_subtracted_spectrum(
     host_on_grid, grid_warnings = predict_host_sed_on_grid(
         host_sed, full_wave_rest
     )
+    fitted_host_finite = np.isfinite(host_fit.host_model)
+    if np.count_nonzero(fitted_host_finite) >= 2:
+        fitted_wave = host_fit.preprocessed.wave_rest[fitted_host_finite]
+        fitted_values = host_fit.host_model[fitted_host_finite]
+        order = np.argsort(fitted_wave)
+        fitted_host_on_grid = np.interp(
+            full_wave_rest,
+            fitted_wave[order],
+            fitted_values[order],
+            left=np.nan,
+            right=np.nan,
+        )
+        constrained = np.isfinite(fitted_host_on_grid)
+        host_on_grid[constrained] = fitted_host_on_grid[constrained]
+        host_fit.preprocessed.metadata[
+            "host_model_grid_policy"
+        ] = "ppxf_convolved_within_fit_range_stellar_sed_elsewhere"
     host_warnings = list(host_fit.warnings) + list(host_sed.warnings) + list(grid_warnings)
+    if host_fit.ppxf_high_agn_fraction_warning:
+        host_warnings.append("ppxf_high_agn_fraction_above_0.8")
     finite_host = np.isfinite(host_on_grid)
     host_subtracted_flux = full_flux - np.where(finite_host, host_on_grid, 0.0)
     host_fit_mask, host_emission_mask = _full_host_grid_masks(
         spectrum_data,
         redshift=float(redshift),
-        fit_range=fit_range,
+        fit_range=effective_fit_range,
         host_config=cfg,
         finite_host=finite_host,
     )
@@ -277,6 +466,9 @@ def _host_subtracted_spectrum(
         full_good & np.isfinite(host_subtracted_flux) & finite_host,
         source=f"{source}; host_subtracted=ppxf_sed_grid",
         spectrum_data=spectrum_data,
+    )
+    host_fit.quality_metrics["host_decomposition_seconds"] = float(
+        perf_counter() - total_start
     )
     return (
         total_spectrum,
@@ -300,9 +492,9 @@ def fit_with_optional_host_decomp(
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
     fit_kind: str = "local",
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -359,7 +551,17 @@ def fit_with_optional_host_decomp(
         run_host_decomp, spectrum_data.redshift
     )
     if host_decomp_enabled:
-        total_spectrum, fit_spectrum, host_fit, host_sed, host_on_grid, host_subtracted_flux, host_warnings = (
+        (
+            total_spectrum,
+            fit_spectrum,
+            host_fit,
+            host_sed,
+            host_on_grid,
+            host_subtracted_flux,
+            _,
+            _,
+            host_warnings,
+        ) = (
             _host_subtracted_spectrum(
                 spectrum_data,
                 redshift=float(spectrum_data.redshift),
@@ -393,6 +595,18 @@ def fit_with_optional_host_decomp(
         "host_decomp_enabled": host_decomp_enabled,
         "host_decomp_skip_reason": host_skip_reason,
         "host_model_source": "template_weighted_sed_on_quasar_grid" if host_decomp_enabled else None,
+        "host_strategy_requested": (
+            host_fit.strategy_requested if host_fit is not None else None
+        ),
+        "host_strategy_used": (
+            host_fit.strategy_used if host_fit is not None else None
+        ),
+        "host_strategy_fallback": (
+            bool(host_fit.strategy_fallback) if host_fit is not None else False
+        ),
+        "host_strategy_fallback_reason": (
+            host_fit.strategy_fallback_reason if host_fit is not None else None
+        ),
         "galactic_extinction": dict(
             spectrum_data.metadata.get("galactic_extinction", {})
         ),
@@ -432,6 +646,64 @@ def _summarize_mc_results(
     }
 
 
+def _final_broad_width_selection(workflow: WorkflowResult, host_config: Any):
+    """Select a reliable final broad width for one bounded host refit."""
+
+    from .host.broad_line_prefit import nearest_width_grid_value
+
+    cfg = host_config.broad_line_prefit
+    for line in cfg.preferred_lines:
+        recipe = "halpha_nii_sii" if line == "halpha" else "hbeta_oiii"
+        prefix = "Ha" if line == "halpha" else "Hb"
+        result = workflow.line_complexes.get(recipe)
+        if result is None or not result.success:
+            continue
+        flux = float(result.metrics.get(f"{prefix}_broad_flux_input", np.nan))
+        flux_error = float(
+            result.metric_errors.get(f"{prefix}_broad_flux_input", np.nan)
+        )
+        width = float(result.metrics.get(f"{prefix}_broad_fwhm_kms", np.nan))
+        width_error = float(
+            result.metric_errors.get(f"{prefix}_broad_fwhm_kms", np.nan)
+        )
+        flux_snr = flux / flux_error if np.isfinite(flux_error) and flux_error > 0 else np.nan
+        width_snr = width / width_error if np.isfinite(width_error) and width_error > 0 else np.nan
+        at_bound = any(
+            warning.code == "parameter_at_bound"
+            and "broad" in str(warning.context.get("parameter", "")).lower()
+            and any(
+                token in str(warning.context.get("parameter", "")).lower()
+                for token in ("fwhm", "velocity")
+            )
+            for warning in result.warnings
+        )
+        if (
+            np.isfinite(flux)
+            and flux > 0
+            and np.isfinite(width)
+            and width > 0
+            and np.isfinite(flux_snr)
+            and flux_snr >= cfg.minimum_flux_snr
+            and np.isfinite(width_snr)
+            and width_snr >= cfg.minimum_fwhm_snr
+            and (not cfg.reject_parameter_bounds or not at_bound)
+        ):
+            selected = nearest_width_grid_value(
+                width,
+                host_config.agn_pseudocontinuum.width_grid_kms,
+            )
+            return {
+                "status": "reliable",
+                "line": line,
+                "fwhm_kms": width,
+                "fwhm_error_kms": width_error,
+                "flux_snr": float(flux_snr),
+                "fwhm_snr": float(width_snr),
+                "selected_width_grid_kms": float(selected),
+            }
+    return {"status": "no_reliable_final_broad_width"}
+
+
 def _run_host_refit_mc(
     spectrum_data: Any,
     *,
@@ -449,16 +721,20 @@ def _run_host_refit_mc(
     halpha_config: Optional[HalphaComplexConfig],
     lya_nv_config: Optional[LyaNVComplexConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
+    pixel_covariance=None,
 ) -> Dict[str, Any]:
-    rng = np.random.default_rng(seed)
+    from ..uncertainties import summarize_matched_draws, trial_seed, workflow_measurements, pixel_noise_factor, draw_pixel_noise
+    draws, failures = [], []
     samples: Dict[str, list] = {}
     continuum_successes = 0
     complex_successes: Dict[str, int] = {}
     error = np.asarray(spectrum_data.uncertainty(), dtype=float)
-    for _ in range(int(n_trials)):
+    factor = pixel_noise_factor(error,pixel_covariance)
+    for trial_id in range(int(n_trials)):
+        rng = np.random.default_rng(trial_seed(seed, source, trial_id))
         noisy_data = replace(
             spectrum_data,
-            flux=np.asarray(spectrum_data.flux, dtype=float) + rng.normal(0.0, error),
+            flux=np.asarray(spectrum_data.flux, dtype=float) + draw_pixel_noise(rng,factor),
         )
         try:
             _, fit_spectrum, _, _, host_on_grid, _, _, _, _ = _host_subtracted_spectrum(
@@ -469,6 +745,7 @@ def _run_host_refit_mc(
                 fit_range=host_fit_range,
                 host_config=host_config,
                 source=source,
+                global_config=global_config,
             )
             trial = fit_global_lines(
                 fit_spectrum,
@@ -481,34 +758,36 @@ def _run_host_refit_mc(
                 host_model_on_grid=host_on_grid,
                 complexes=complexes,
             )
-            values = {}
+            values = workflow_measurements(trial)
             if trial.continuum_success:
                 continuum_successes += 1
-                values.update(trial.continuum.param_values)
             for recipe_id, complex_result in trial.line_complexes.items():
                 if complex_result.success:
                     complex_successes[recipe_id] = complex_successes.get(recipe_id, 0) + 1
-                    values.update(complex_result.metrics)
+            draws.append({"trial_id": trial_id, "values": values, "parameters": {key: fit.param_values for key,fit in trial.line_complexes.items()}})
             for name, value in values.items():
                 if np.isfinite(value):
                     samples.setdefault(name, []).append(float(value))
-        except Exception:
+        except Exception as exc:
+            failures.append({"trial_id": trial_id, "reason": str(exc)})
             continue
-    return _summarize_mc_results(
-        samples, n_trials, continuum_successes, complex_successes
-    )
+    summary = summarize_matched_draws(draws, failures, n_trials)
+    summary["measurement_key_schema"] = "qualified_v1"
+    summary.update(continuum_success_count=continuum_successes, complex_success_counts=complex_successes, method="observed_spectrum_perturbation_bootstrap", host_refitted=True)
+    return summary
 
 
-def fit_global_lines_workflow(
-    input_path: str,
+def _run_global_fit_with_optional_host(
+    spectrum_data: Any,
     *,
+    source: str,
+    input_path: str,
     row_index: Optional[int] = None,
-    redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -519,18 +798,30 @@ def fit_global_lines_workflow(
     uncertainty_config: Optional[UncertaintyConfig] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
 ) -> WorkflowResult:
-    """Read one spectrum and run optional pPXF plus global multi-line qsospec."""
+    """Authoritative SpectrumData-based host plus global-fit orchestration."""
 
-    from .host.io import read_sparcli_spectrum
+    from .host.config import default_config
 
+    workflow_start = perf_counter()
     uncertainty = uncertainty_config or UncertaintyConfig()
-    spectrum_data = read_sparcli_spectrum(
-        input_path, row_index=row_index, redshift=redshift, object_id=object_id
+    base_host_config = resolve_host_runtime_config(host_config, template_root=template_root,
+                                                  template_file=template_file, host_fit_range=host_fit_range)
+    template_root, template_file, host_fit_range = (base_host_config.template_root,
+                                                  base_host_config.template_file, base_host_config.fit_range)
+    global_full_iron_propagated = bool(
+        global_config is not None
+        and global_config.full_iron is not None
+        and global_config.full_iron.enabled
+        and base_host_config.agn_pseudocontinuum.inherit_global_full_iron
+        and base_host_config.agn_pseudocontinuum.full_feii_template is None
+    )
+    resolved_host_config = _host_config_with_global_iron(
+        base_host_config,
+        global_config,
     )
     spectrum_data = correct_spectrum_data(
         spectrum_data, galactic_extinction_config
     )
-    source = f"{input_path}:row_index={row_index}"
     host_decomp_enabled, host_skip_reason = _host_decomp_decision(
         run_host_decomp, spectrum_data.redshift
     )
@@ -552,8 +843,9 @@ def fit_global_lines_workflow(
                 template_root=template_root,
                 template_file=template_file,
                 fit_range=host_fit_range,
-                host_config=host_config,
+                host_config=resolved_host_config,
                 source=source,
+                global_config=global_config,
             )
         )
         primary_uncertainty = (
@@ -570,6 +862,7 @@ def fit_global_lines_workflow(
         host_warnings = []
         primary_uncertainty = uncertainty
 
+    final_fit_start = perf_counter()
     workflow = fit_global_lines(
         fit_spectrum,
         global_config,
@@ -581,11 +874,151 @@ def fit_global_lines_workflow(
         host_model_on_grid=host_on_grid,
         complexes=complexes,
     )
+    final_qsospec_seconds = perf_counter() - final_fit_start
+    if (
+        host_fit is not None
+        and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+        and resolved_host_config.agn_pseudocontinuum.maximum_width_iterations > 1
+    ):
+        final_width = _final_broad_width_selection(
+            workflow,
+            resolved_host_config,
+        )
+        initial_width = host_fit.quality_metrics.get(
+            "pseudocontinuum_width_initial_kms"
+        )
+        candidate_width = final_width.get("selected_width_grid_kms")
+        if candidate_width is None:
+            host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": None,
+                    "pseudocontinuum_width_status": final_width["status"],
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+        elif (
+            abs(float(candidate_width) - float(initial_width))
+            <= resolved_host_config.agn_pseudocontinuum.width_convergence_tolerance_kms
+        ):
+            host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": True,
+                    "pseudocontinuum_width_status": "stable_after_final_fit",
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+        else:
+            refit_start = perf_counter()
+            (
+                total_spectrum,
+                fit_spectrum,
+                updated_host_fit,
+                host_sed,
+                host_on_grid,
+                _,
+                host_fit_mask,
+                host_emission_mask,
+                host_warnings,
+            ) = _host_subtracted_spectrum(
+                spectrum_data,
+                redshift=float(spectrum_data.redshift),
+                template_root=template_root,
+                template_file=template_file,
+                fit_range=host_fit_range,
+                host_config=resolved_host_config,
+                source=source,
+                global_config=global_config,
+                pseudocontinuum_width_override_kms=float(candidate_width),
+            )
+            updated_host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_initial_kms": initial_width,
+                    "pseudocontinuum_width_final_kms": float(candidate_width),
+                    "pseudocontinuum_width_iterations": 2,
+                    "pseudocontinuum_width_change_kms": float(candidate_width)
+                    - float(initial_width),
+                    "pseudowidth_refit_seconds": float(
+                        perf_counter() - refit_start
+                    ),
+                    "final_broad_width_diagnostics": final_width,
+                }
+            )
+            for key, value in host_fit.quality_metrics.items():
+                if key.startswith("broad_prefit"):
+                    updated_host_fit.quality_metrics.setdefault(key, value)
+            second_fit_start = perf_counter()
+            workflow = fit_global_lines(
+                fit_spectrum,
+                global_config,
+                hbeta_config,
+                mgii_config,
+                halpha_config,
+                primary_uncertainty,
+                lya_nv_config=lya_nv_config,
+                host_model_on_grid=host_on_grid,
+                complexes=complexes,
+            )
+            final_qsospec_seconds += perf_counter() - second_fit_start
+            confirmation = _final_broad_width_selection(
+                workflow,
+                resolved_host_config,
+            )
+            updated_host_fit.quality_metrics.update(
+                {
+                    "pseudocontinuum_width_converged": bool(
+                        confirmation.get("selected_width_grid_kms")
+                        == float(candidate_width)
+                    ),
+                    "pseudocontinuum_width_status": (
+                        "converged_after_one_update"
+                        if confirmation.get("selected_width_grid_kms")
+                        == float(candidate_width)
+                        else "maximum_iterations_reached"
+                    ),
+                    "final_broad_width_confirmation": confirmation,
+                }
+            )
+            host_fit = updated_host_fit
+    if host_fit is not None:
+        host_fit.quality_metrics["final_qsospec_seconds"] = float(
+            final_qsospec_seconds
+        )
+        host_fit.quality_metrics["total_host_workflow_seconds"] = float(
+            perf_counter() - workflow_start
+        )
     workflow.host_decomp_enabled = host_decomp_enabled
     workflow.total_spectrum = total_spectrum
     workflow.host_fit = host_fit
     workflow.host_sed = host_sed
+    workflow.host_reconstruction_state = (
+        dict(host_fit.host_reconstruction_state)
+        if host_fit is not None and host_fit.host_reconstruction_state
+        else None
+    )
     workflow.host_model_on_quasar_grid = host_on_grid
+    if host_fit is not None:
+        host_component_models = {}
+        host_wave = np.asarray(host_fit.preprocessed.wave_rest, dtype=float)
+        target_wave = np.asarray(fit_spectrum.wave_rest, dtype=float)
+        for name, values in host_fit.component_models.items():
+            component = np.asarray(values, dtype=float)
+            finite = np.isfinite(host_wave) & np.isfinite(component)
+            if np.count_nonzero(finite) < 2:
+                aligned = np.full_like(target_wave, np.nan, dtype=float)
+            else:
+                order = np.argsort(host_wave[finite])
+                aligned = np.interp(
+                    target_wave,
+                    host_wave[finite][order],
+                    component[finite][order],
+                    left=np.nan,
+                    right=np.nan,
+                )
+            host_component_models[name] = aligned
+        host_component_models["host_subtracted_flux"] = np.asarray(
+            fit_spectrum.flux, dtype=float
+        ).copy()
+        workflow.host_component_models = host_component_models
     workflow.host_fit_mask = (
         np.asarray(host_fit_mask, dtype=bool).copy()
         if host_fit is not None else None
@@ -595,6 +1028,17 @@ def fit_global_lines_workflow(
         if host_fit is not None else None
     )
     workflow.host_warnings = [str(item) for item in host_warnings]
+    if host_fit is not None:
+        from .host.ppxf_host import fitted_host_fraction_samples
+
+        host_fit_samples = fitted_host_fraction_samples(host_fit)
+    else:
+        host_fit_samples = {}
+    from .host.io import PROVENANCE_SCALAR_COLUMNS
+
+    workflow.metadata.update({name: spectrum_data.metadata[name]
+                              for name in PROVENANCE_SCALAR_COLUMNS
+                              if name in spectrum_data.metadata})
     workflow.metadata.update(
         {
             "input_path": input_path,
@@ -605,6 +1049,9 @@ def fit_global_lines_workflow(
             "dec": spectrum_data.dec,
             "redshift": fit_spectrum.z,
             "fit_kind": "global",
+            "measurement_vocabulary_version": (
+                MEASUREMENT_VOCABULARY_VERSION
+            ),
             "flux_frame": fit_spectrum.flux_frame,
             "rest_frame_conversion": dict(
                 fit_spectrum.metadata.rest_frame_conversion
@@ -629,6 +1076,30 @@ def fit_global_lines_workflow(
             "host_fit_reliability_reasons": (
                 list(host_fit.host_fit_reliability_reasons)
                 if host_fit is not None else []
+            ),
+            "host_continuum_reliable": (
+                bool(getattr(host_fit, "host_continuum_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
+            ),
+            "host_fraction_reliable": (
+                bool(getattr(host_fit, "host_fraction_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
+            ),
+            "host_absorption_subtraction_status": (
+                getattr(host_fit, "host_absorption_subtraction_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "stellar_kinematics_resolution_status": (
+                getattr(host_fit, "stellar_kinematics_resolution_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "stellar_population_resolution_status": (
+                getattr(host_fit, "stellar_population_resolution_status", "unavailable")
+                if host_fit is not None else None
+            ),
+            "host_sed_prediction_reliable": (
+                bool(getattr(host_fit, "host_sed_prediction_reliable", host_fit.host_fit_reliable))
+                if host_fit is not None else None
             ),
             "host_fit_quality": (
                 dict(host_fit.quality_metrics)
@@ -662,6 +1133,186 @@ def fit_global_lines_workflow(
                 list(host_fit.templates.wavelength_coverage)
                 if host_fit is not None else None
             ),
+            "host_template_file_sha256": (
+                host_fit.templates.metadata.get("source_sha256")
+                if host_fit is not None else None
+            ),
+            "host_template_profile": (
+                getattr(host_fit.templates, "profile_id", "custom_native")
+                if host_fit is not None else None
+            ),
+            "host_template_product_kind": (
+                getattr(host_fit.templates, "product_kind", "native")
+                if host_fit is not None else None
+            ),
+            "host_fit_template_file": (
+                getattr(host_fit.templates, "fit_source_path", host_fit.templates.source_path)
+                if host_fit is not None else None
+            ),
+            "host_fit_template_sha256": (
+                getattr(
+                    host_fit.templates,
+                    "fit_source_sha256",
+                    host_fit.templates.metadata.get("source_sha256"),
+                )
+                if host_fit is not None else None
+            ),
+            "host_source_template_file": (
+                getattr(host_fit.templates, "source_library_path", host_fit.templates.source_path)
+                if host_fit is not None else None
+            ),
+            "host_source_template_sha256": (
+                getattr(
+                    host_fit.templates,
+                    "source_library_sha256",
+                    host_fit.templates.metadata.get("source_sha256"),
+                )
+                if host_fit is not None else None
+            ),
+            "host_source_template_wavelength_coverage": (
+                list(
+                    getattr(
+                        host_fit.templates,
+                        "source_wavelength_coverage",
+                        host_fit.templates.wavelength_coverage,
+                    )
+                )
+                if host_fit is not None else None
+            ),
+            "host_template_wave_sha256": (
+                host_fit.templates.metadata.get("template_wave_sha256")
+                if host_fit is not None else None
+            ),
+            "host_template_matrix_sha256": (
+                host_fit.templates.metadata.get("template_matrix_sha256")
+                if host_fit is not None else None
+            ),
+            "host_fit_normalization": (
+                float(host_fit.preprocessed.normalization)
+                if host_fit is not None else None
+            ),
+            "host_strategy_requested": (
+                host_fit.strategy_requested if host_fit is not None else None
+            ),
+            "host_strategy_used": (
+                host_fit.strategy_used if host_fit is not None else None
+            ),
+            "host_strategy_fallback": (
+                bool(host_fit.strategy_fallback)
+                if host_fit is not None else False
+            ),
+            "host_strategy_fallback_reason": (
+                host_fit.strategy_fallback_reason
+                if host_fit is not None else None
+            ),
+            "host_full_iron_template": (
+                resolved_host_config.agn_pseudocontinuum.full_feii_template
+                if host_fit is not None
+                and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "full_iron_propagated_to_host": bool(
+                host_fit is not None
+                and host_fit.strategy_used == "agn_pseudocontinuum_masked"
+                and global_full_iron_propagated
+            ),
+            "host_method_reference": (
+                "Aydar et al. 2026, A&A, 710, A141"
+                if host_fit is not None
+                and host_fit.strategy_requested
+                == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_exact_replication": (
+                False
+                if host_fit is not None
+                and host_fit.strategy_requested
+                == "agn_pseudocontinuum_masked"
+                else None
+            ),
+            "host_coverage_class": (
+                host_fit.coverage.coverage_class
+                if host_fit is not None and host_fit.coverage is not None
+                else None
+            ),
+            "host_feature_coverage": (
+                dict(host_fit.coverage.feature_coverage)
+                if host_fit is not None and host_fit.coverage is not None
+                else {}
+            ),
+            "ppxf_agn_fraction_flux_global": (
+                float(host_fit.ppxf_agn_fraction_flux_global)
+                if host_fit is not None else np.nan
+            ),
+            "ppxf_agn_fraction_definition": (
+                "integrated_positive_model_flux_agn_over_agn_plus_stellar"
+                if host_fit is not None else None
+            ),
+            "ppxf_agn_fraction_wavelength_support": (
+                [
+                    float(np.nanmin(host_fit.preprocessed.wave_rest)),
+                    float(np.nanmax(host_fit.preprocessed.wave_rest)),
+                ]
+                if host_fit is not None else None
+            ),
+            "ppxf_high_agn_fraction_warning": (
+                bool(host_fit.ppxf_high_agn_fraction_warning)
+                if host_fit is not None else False
+            ),
+            "host_component_weights": (
+                dict(host_fit.component_weights)
+                if host_fit is not None else {}
+            ),
+            "host_component_metadata": (
+                dict(host_fit.component_metadata)
+                if host_fit is not None else {}
+            ),
+            "host_fit_samples": host_fit_samples,
+            "host_closure": (
+                dict(host_fit.closure_metrics)
+                if host_fit is not None else {}
+            ),
+            "host_sed_reconstruction_status": (
+                "available"
+                if workflow.host_reconstruction_state is not None
+                else (
+                    "not_available_host_not_fit"
+                    if run_host_decomp else "not_requested"
+                )
+            ),
+            "host_reconstruction_state_version": (
+                workflow.host_reconstruction_state.get(
+                    "host_reconstruction_state_version"
+                )
+                if workflow.host_reconstruction_state is not None else None
+            ),
+            "resolution_status": spectrum_data.metadata.get(
+                "resolution_status",
+                (
+                    spectrum_data.resolution.status
+                    if spectrum_data.resolution is not None else "missing"
+                ),
+            ),
+            "resolution_source": spectrum_data.metadata.get(
+                "resolution_source",
+                (
+                    spectrum_data.resolution.source
+                    if spectrum_data.resolution is not None else None
+                ),
+            ),
+            "resolution_is_object_specific": bool(
+                spectrum_data.metadata.get(
+                    "resolution_is_object_specific",
+                    (
+                        spectrum_data.resolution.is_object_specific
+                        if spectrum_data.resolution is not None else False
+                    ),
+                )
+            ),
+            "source_backend": spectrum_data.metadata.get("source_backend"),
+            "source_backend_version": spectrum_data.metadata.get(
+                "source_backend_version"
+            ),
             "galactic_extinction": dict(
                 spectrum_data.metadata.get("galactic_extinction", {})
             ),
@@ -683,13 +1334,14 @@ def fit_global_lines_workflow(
     if host_decomp_enabled and uncertainty.monte_carlo_trials > 0 and uncertainty.refit_host_in_mc:
         workflow.monte_carlo = _run_host_refit_mc(
             spectrum_data,
+            pixel_covariance=uncertainty.pixel_covariance,
             n_trials=uncertainty.monte_carlo_trials,
             seed=uncertainty.random_seed,
-            redshift=redshift,
+            redshift=spectrum_data.redshift,
             template_root=template_root,
             template_file=template_file,
             host_fit_range=host_fit_range,
-            host_config=host_config,
+            host_config=resolved_host_config,
             source=source,
             global_config=global_config,
             hbeta_config=hbeta_config,
@@ -698,8 +1350,62 @@ def fit_global_lines_workflow(
             lya_nv_config=lya_nv_config,
             complexes=complexes,
         )
+        from ..uncertainties import apply_bootstrap_errors
+        apply_bootstrap_errors(workflow)
         workflow.metadata["uncertainty_mode"] = "covariance+monte_carlo_host_refit"
     return workflow
+
+
+def fit_global_lines_workflow(
+    input_path: str,
+    *,
+    row_index: Optional[int] = None,
+    redshift: Optional[float] = None,
+    object_id: Optional[str] = None,
+    run_host_decomp: bool = False,
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
+    host_config: Optional[Any] = None,
+    galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
+    global_config: Optional[GlobalContinuumConfig] = None,
+    hbeta_config: Optional[HbetaComplexConfig] = None,
+    mgii_config: Optional[MgIIComplexConfig] = None,
+    halpha_config: Optional[HalphaComplexConfig] = None,
+    lya_nv_config: Optional[LyaNVComplexConfig] = None,
+    uncertainty_config: Optional[UncertaintyConfig] = None,
+    complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
+) -> WorkflowResult:
+    """Read one spectrum and use the shared host/global-fit orchestration."""
+
+    from .host.io import read_sparcli_spectrum
+
+    spectrum_data = read_sparcli_spectrum(
+        input_path,
+        row_index=row_index,
+        redshift=redshift,
+        object_id=object_id,
+    )
+    return _run_global_fit_with_optional_host(
+        spectrum_data,
+        source=f"{input_path}:row_index={row_index}",
+        input_path=input_path,
+        row_index=row_index,
+        object_id=object_id,
+        run_host_decomp=run_host_decomp,
+        template_root=template_root,
+        template_file=template_file,
+        host_fit_range=host_fit_range,
+        host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
+        global_config=global_config,
+        hbeta_config=hbeta_config,
+        mgii_config=mgii_config,
+        halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
+        uncertainty_config=uncertainty_config,
+        complexes=complexes,
+    )
 
 
 def fit_global_hbeta_workflow(
@@ -709,9 +1415,9 @@ def fit_global_hbeta_workflow(
     redshift: Optional[float] = None,
     object_id: Optional[str] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range: Tuple[float, float] = (3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range: Optional[Tuple[float, float]] = None,
     host_config: Optional[Any] = None,
     galactic_extinction_config: Optional[GalacticExtinctionConfig] = None,
     global_config: Optional[GlobalContinuumConfig] = None,

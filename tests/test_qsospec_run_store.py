@@ -1,4 +1,7 @@
 import json
+import qsospec.io.run_store
+import qsospec.uncertainties
+import os
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +12,7 @@ from astropy.io import fits
 
 import qsospec
 from qsospec.io.run_store import RunStore, workflow_payload
+from qsospec.workflows import batch as batch_module
 from qsospec.workflows.host.io import SpectrumData
 
 
@@ -88,6 +92,9 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
     assert "wave_rest" in model_table.column_names
     assert "wave_obs" not in model_table.column_names
     assert loaded.spectrum.flux_frame == "rest"
+    assert loaded.continuum.metadata["global_model_id"] == "global_v2"
+    assert loaded.metadata["global_model_id"] == "global_v2"
+    assert store.manifest["configuration"]["global_model_id"] == "global_v2"
     assert sorted(loaded.warning_codes()) == sorted(result.warning_codes())
     assert store.read_table("objects").num_rows == 1
     assert store.read_table("models").num_rows == 1
@@ -237,6 +244,7 @@ def test_balmer_hgamma_sync_metadata_archive_round_trip(tmp_path):
                 amplitude=10.0,
                 fwhm_kms=3400.0,
                 sync_with_hbeta="never",
+                sync_with_hgamma="hard_legacy",
             ),
             continuum_windows=((3300.0, 4260.0),),
             mask_windows=(),
@@ -281,6 +289,19 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     result.host_decomp_enabled = True
     result.total_spectrum = result.spectrum
     result.host_model_on_quasar_grid = np.zeros_like(wave)
+    result.host_component_models = {
+        "stellar": np.full_like(wave, 0.4),
+        "powerlaw": np.full_like(wave, 0.6),
+        "agn_total": np.full_like(wave, 0.6),
+        "ppxf_bestfit": np.ones_like(wave),
+        "closure_residual": np.zeros_like(wave),
+        "host_subtracted_flux": result.spectrum.flux.copy(),
+    }
+    result.host_reconstruction_state = {
+        "host_reconstruction_state_version": "1",
+        "template_file_name": "tiny_emiles.npz",
+        "stellar_weights": [1.0],
+    }
     result.host_fit_mask = (wave >= 3600.0) & (wave <= 4200.0)
     result.host_emission_mask = (wave >= 3710.0) & (wave <= 3745.0)
     result.metadata.update(
@@ -288,6 +309,20 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
             "object_id": "host-mask-object",
             "host_decomp_enabled": True,
             "host_mask_provenance": "exact",
+            "host_template_profile": "xsl_preconvolved",
+            "host_template_product_kind": "preconvolved",
+            "host_fit_template_sha256": "fit-hash",
+            "host_source_template_sha256": "source-hash",
+            "host_continuum_reliable": True,
+            "host_fraction_reliable": True,
+            "stellar_kinematics_resolution_status": (
+                "resolution_matched_candidate"
+            ),
+            "host_fit_quality": {
+                "template_coarser_than_data_fraction": 0.2,
+                "additional_template_sigma_nonzero_fraction": 0.8,
+                "preconvolution_validation_status": "preconvolved_exact",
+            },
         }
     )
     run_path = tmp_path / "host-mask-run"
@@ -316,15 +351,59 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     loaded = qsospec.load_model(store, "host-mask-object")
     np.testing.assert_array_equal(loaded.host_fit_mask, result.host_fit_mask)
     np.testing.assert_array_equal(loaded.host_emission_mask, result.host_emission_mask)
+    assert set(loaded.host_component_models) == set(
+        result.host_component_models
+    )
+    for name, values in result.host_component_models.items():
+        np.testing.assert_allclose(loaded.host_component_models[name], values)
     assert loaded.metadata["host_mask_provenance"] == "exact"
-    assert store.manifest["schema_version"] == "5"
+    assert loaded.metadata["host_template_profile"] == "xsl_preconvolved"
+    assert loaded.metadata["host_fit_template_sha256"] == "fit-hash"
+    assert loaded.metadata["host_source_template_sha256"] == "source-hash"
+    assert loaded.metadata["host_continuum_reliable"] is True
+    assert loaded.metadata["host_fit_quality"][
+        "preconvolution_validation_status"
+    ] == "preconvolved_exact"
+    assert loaded.host_reconstruction_state == result.host_reconstruction_state
+    assert qsospec.io.run_store.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
+    original_read_object_table = store.read_object_table
+    projected_reads = []
+
+    def record_projected_read(table_name, object_key, *, columns=None):
+        projected_reads.append((table_name, object_key, columns))
+        return original_read_object_table(
+            table_name, object_key, columns=columns
+        )
+
+    store.read_object_table = record_projected_read
+    assert qsospec.io.run_store.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
+    assert projected_reads == [
+        (
+            "models",
+            "host-mask-object",
+            ["object_key", "workflow_metadata"],
+        )
+    ]
+    with pytest.raises(KeyError, match="Object not found in models"):
+        qsospec.io.run_store.load_host_reconstruction_state(store, "missing-object")
+    store.read_table = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("host-state accessor must not scan a full table")
+    )
+    assert qsospec.io.run_store.load_host_reconstruction_state(
+        store, "host-mask-object"
+    ) == result.host_reconstruction_state
+    assert store.manifest["schema_version"] == "7"
 
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["schema_version"] = "4"
     manifest_path.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="requires schema 5"):
+    with pytest.raises(ValueError, match="requires schema 7"):
         qsospec.open_run(str(run_path))
 
 
@@ -398,6 +477,26 @@ def test_duplicate_object_ids_get_row_safe_qa_names(tmp_path):
     ]
 
 
+def test_worker_initializer_preserves_thread_environment(monkeypatch):
+    thread_variables = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    expected = {
+        variable: str(index + 2)
+        for index, variable in enumerate(thread_variables)
+    }
+    for variable, value in expected.items():
+        monkeypatch.setenv(variable, value)
+
+    batch_module._worker_initializer()
+
+    assert {variable: os.environ[variable] for variable in thread_variables} == expected
+
+
 def test_parallel_batch_and_deterministic_multi_job_partition(tmp_path):
     source = tmp_path / "spectra.parquet"
     _parquet_input(source, count=4)
@@ -453,6 +552,7 @@ def test_failure_archive_keeps_input_locator(tmp_path):
     store = qsospec.open_run(str(run))
     assert store.read_table("failures").num_rows == 1
     assert store.read_table("inputs").to_pylist()[0]["source"] == missing.source
+    assert store.object_row("missing", table_name="failures")["object_id"] == "missing"
 
 
 def test_parquet_scanner_projects_case_insensitive_vector_columns(tmp_path):
@@ -490,6 +590,7 @@ def test_fits_reader_registry_handles_sdss_lamost_and_iraf(tmp_path):
     np.testing.assert_allclose(sdss_data.wave_obs, wave)
     assert sdss_data.metadata["flux_unit"] == "cgs"
     assert sdss_data.metadata["flux_scale"] == pytest.approx(1e-17)
+    assert sdss_data.metadata["survey"] == "sdss"
 
     lamost = tmp_path / "lamost.fits"
     columns = [
@@ -546,3 +647,136 @@ def test_manifest_records_schema_and_shard_state(tmp_path):
     assert "hbeta_config" not in manifest["configuration"]
     assert manifest["shard_state"]["models"] == 1
     assert pads.dataset(run / "data" / "models", format="parquet").count_rows() == 1
+
+
+def test_deferred_promotion_and_authoritative_manifest_reconciliation(tmp_path, monkeypatch):
+    spectrum = qsospec.Spectrum.from_arrays(
+        np.linspace(3500.0, 4500.0, 240),
+        _spectrum_data().flux,
+        err=_spectrum_data().error,
+        z=0.0,
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    result = qsospec.fit_global_lines(spectrum, _continuum_config(), complexes=[])
+    result.metadata["object_id"] = "deferred"
+    store = RunStore.create(str(tmp_path / "deferred"), configuration={"test": True})
+    payload = workflow_payload(
+        result,
+        run_id=store.run_id,
+        object_key="deferred-key",
+        object_id="deferred",
+        input_record={"source": "memory", "row_index": 0, "reader": "memory", "metadata": {}},
+    )
+    original = store._write_manifest
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("deferred promotion must not write/reconcile the manifest")
+
+    monkeypatch.setattr(store, "_write_manifest", forbidden)
+    store.write_payload(payload, update_manifest=False)
+    monkeypatch.setattr(store, "_write_manifest", original)
+    assert store.manifest["completed_objects"] == 0
+    state = store.reconcile_manifest()
+    assert state["completed_keys"] == {"deferred-key"}
+    assert store.manifest["completed_objects"] == 1
+    assert store.manifest["manifest_count_mode"] == "authoritative_reconciliation"
+
+
+def test_direct_model_load_does_not_scan_whole_tables(tmp_path, monkeypatch):
+    run = tmp_path / "direct"
+    qsospec.fit_object_to_store(
+        _spectrum_data("direct-object"),
+        str(run),
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(),
+        complexes=[],
+        write_qa=False,
+    )
+    store = qsospec.open_run(str(run))
+    object_key = store.build_object_index()["direct-object"]
+
+    def forbidden_scan(*args, **kwargs):
+        raise AssertionError("load_model_by_key must not scan a whole table")
+
+    monkeypatch.setattr(store, "read_table", forbidden_scan)
+    loaded = qsospec.load_model_by_key(store, object_key)
+    assert loaded.metadata["object_id"] == "direct-object"
+    np.testing.assert_allclose(loaded.spectrum.flux, _spectrum_data("direct-object").flux)
+
+
+def test_object_index_rejects_ambiguous_display_ids(tmp_path):
+    source = tmp_path / "duplicate-index.parquet"
+    rows = []
+    for index in range(2):
+        item = _spectrum_data("same-display-id", 1.0 + index * 0.1)
+        rows.append({
+            "TARGETID": item.object_id,
+            "WAVELENGTH": item.wave_obs.tolist(),
+            "FLUX": item.flux.tolist(),
+            "ERROR": item.error.tolist(),
+            "Z": item.redshift,
+        })
+    pd.DataFrame(rows).to_parquet(source, index=False)
+    run = tmp_path / "duplicate-index-run"
+    qsospec.fit_batch(
+        str(source), str(run), n_workers=1,
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(), complexes=[],
+    )
+    with pytest.raises(ValueError, match="Duplicate/ambiguous object IDs"):
+        qsospec.open_run(str(run)).build_object_index()
+
+
+def test_batch_records_storage_timings_and_rejects_noop_compaction(tmp_path):
+    source = tmp_path / "timings.parquet"
+    _parquet_input(source, count=2)
+    run = tmp_path / "timings-run"
+    output = qsospec.fit_batch(
+        str(source), str(run), n_workers=1,
+        manifest_update_interval=2,
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(), complexes=[],
+    )
+    assert output.timings["parent_promotion_seconds"] >= 0.0
+    assert output.timings["lightweight_manifest_update_seconds"] >= 0.0
+    manifest = qsospec.open_run(str(run)).manifest
+    assert "performance_timings_last_invocation" in manifest
+
+    with pytest.raises(ValueError, match="compact_models is not implemented"):
+        qsospec.fit_batch(
+            str(source), str(tmp_path / "compact-noop"), n_workers=1,
+            compact_models=True,
+            galactic_extinction_config=_extinction_config(),
+            global_config=_continuum_config(), complexes=[],
+        )
+
+
+def test_covariance_order_and_matched_draw_round_trip(tmp_path):
+    data=_spectrum_data('covariance-roundtrip')
+    data.wave_obs=np.linspace(2900.,5300.,len(data.flux))
+    result=qsospec.fit_object_to_store(data,str(tmp_path/'run'),
+        galactic_extinction_config=_extinction_config(),global_config=_continuum_config(),
+        uncertainty_config=qsospec.UncertaintyConfig(monte_carlo_trials=3),complexes=[],write_qa=False)
+    loaded=qsospec.load_model(str(tmp_path/'run'),'covariance-roundtrip')
+    assert list(loaded.continuum.param_values)==list(result.continuum.param_values)
+    np.testing.assert_allclose(loaded.continuum.covariance,result.continuum.covariance)
+    assert loaded.monte_carlo['covariance_trial_ids']==result.monte_carlo['covariance_trial_ids']
+    assert loaded.monte_carlo['measurement_key_schema'] == 'qualified_v1'
+    manifest_path = tmp_path / 'run' / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    for schema in ('5', '6'):
+        manifest['schema_version'] = schema
+        manifest_path.write_text(json.dumps(manifest))
+        older = qsospec.load_model(str(tmp_path/'run'), 'covariance-roundtrip')
+        np.testing.assert_allclose(older.continuum.model, loaded.continuum.model)
+        assert older.monte_carlo['measurement_key_schema'] == 'qualified_v1'
+    assert all(name.startswith(('continuum_sample:', 'continuum_param:', 'derived:', 'line:'))
+               for name in loaded.monte_carlo['measurement_names'])
+    rows=qsospec.open_run(str(tmp_path/'run')).read_table('measurements').to_pandas()
+    samples=rows[rows.section=='continuum_sample']
+    assert samples.error.notna().any()
+    report=tmp_path/'recovery.json'
+    qsospec.uncertainties.recover_uncertainties(loaded,report)
+    with pytest.raises(FileExistsError):
+        qsospec.uncertainties.recover_uncertainties(loaded,report)

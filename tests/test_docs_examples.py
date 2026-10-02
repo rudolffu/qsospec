@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import qsospec
 
@@ -67,6 +68,9 @@ def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path):
     assert result.metadata["galactic_extinction"]["status"] == "declared_corrected"
 
 
+@pytest.mark.docs
+@pytest.mark.plotting
+@pytest.mark.slow
 def test_documented_j001554_example_data_and_preparation(tmp_path):
     data_path = Path("examples/data/spec_J001554.18+560257.5_LJT.csv")
     table = pd.read_csv(data_path)

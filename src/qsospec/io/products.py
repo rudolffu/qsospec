@@ -246,7 +246,7 @@ def _plot_global(
     balmer_label_used = False
     for name, component in continuum.component_models.items():
         color, linestyle = _CONTINUUM_STYLES.get(name, ("0.5", "-"))
-        if name in ("uv_iron", "optical_iron"):
+        if name in ("uv_iron", "middle_iron", "optical_iron", "full_iron"):
             label = "iron" if not iron_label_used else "_nolegend_"
             iron_label_used = True
         elif name in ("balmer_bound_free", "balmer_high_order_series"):
@@ -332,7 +332,10 @@ _BALMER_STYLE = (_TCC_COLORS["balmer_cont"], "-.")
 _CONTINUUM_STYLES = {
     "power_law": (_TCC_COLORS["powerlaw"], "--"),
     "uv_iron": _IRON_STYLE,
+    "middle_iron": _IRON_STYLE,
     "optical_iron": _IRON_STYLE,
+    "full_iron": _IRON_STYLE,
+    "polynomial": (_TCC_COLORS["continuum"], ":"),
     "balmer_bound_free": _BALMER_STYLE,
     "balmer_high_order_series": _BALMER_STYLE,
 }
@@ -454,7 +457,7 @@ def _line_groups(name: str, fit) -> Tuple[Tuple[str, np.ndarray, str, str], ...]
         species = _species_from_component(broad_names[0])
         groups.append((label, broad_sum, species, "broad"))
     for component_name, component in fit.component_models.items():
-        if component_name in broad_names:
+        if component_name in broad_names or component_name.startswith("local_continuum_"):
             continue
         kind = "wing" if "wing" in component_name else "narrow"
         groups.append(
@@ -740,7 +743,7 @@ def _host_fraction_annotation(result: WorkflowResult) -> str:
         fraction = samples.get(f"fracHost_{wavelength}")
         if fraction is not None and np.isfinite(fraction):
             entries.append(
-                rf"$f_{{\rm host}}({wavelength}\,\mathrm{{\AA}})="
+                rf"$f_{{\rm host,final}}({wavelength}\,\mathrm{{\AA}})="
                 f"{100.0 * float(fraction):.1f}\\%$"
             )
     return "\n".join(entries)
@@ -1142,27 +1145,29 @@ def _plot_qa(
     result.metadata["qa_zoom_titles"] = {}
     result.metadata["qa_zoom_line_labels"] = {}
     ncols = max(len(available), 1)
+    polynomial_metadata = result.continuum.metadata
+    show_polynomial = bool(
+        polynomial_metadata.get("polynomial_effective")
+        and "polynomial_baseline_slopes" in polynomial_metadata
+        and "polynomial" in result.continuum.component_models
+    )
     fig = plt.figure(
-        figsize=(config.figure_width, config.figure_height),
+        figsize=(config.figure_width, config.figure_height + (1.0 if show_polynomial else 0)),
         constrained_layout=True,
     )
-    if config.show_residual_panel:
-        grid = fig.add_gridspec(
-            3,
-            ncols,
-            height_ratios=(1.0, 0.28, 0.78),
-        )
-        overview_axis = fig.add_subplot(grid[0, :])
-        residual_axis = fig.add_subplot(
-            grid[1, :],
-            sharex=overview_axis,
-        )
-        zoom_row = 2
-    else:
-        grid = fig.add_gridspec(2, ncols, height_ratios=(1.0, 0.78))
-        overview_axis = fig.add_subplot(grid[0, :])
-        residual_axis = None
-        zoom_row = 1
+    heights = [1.0] + ([0.28] if config.show_residual_panel else [])
+    heights += ([0.22] if show_polynomial else []) + [0.78]
+    grid = fig.add_gridspec(len(heights), ncols, height_ratios=heights)
+    overview_axis = fig.add_subplot(grid[0, :])
+    residual_axis = (
+        fig.add_subplot(grid[1, :], sharex=overview_axis)
+        if config.show_residual_panel else None
+    )
+    polynomial_axis = (
+        fig.add_subplot(grid[1 + int(config.show_residual_panel), :], sharex=overview_axis)
+        if show_polynomial else None
+    )
+    zoom_row = len(heights) - 1
     zoom_axes = [
         fig.add_subplot(grid[zoom_row, index])
         for index in range(ncols)
@@ -1339,7 +1344,7 @@ def _plot_qa(
             color, linestyle = _CONTINUUM_STYLES.get(
                 component_name, ("0.5", ":")
             )
-            if component_name in ("uv_iron", "optical_iron"):
+            if component_name in ("uv_iron", "middle_iron", "optical_iron", "full_iron"):
                 label = (
                     "Fe II"
                     if labels and not iron_label_used
@@ -1358,8 +1363,11 @@ def _plot_qa(
                 balmer_label_used = True
             else:
                 label = (
-                    component_name.replace("_", " ")
-                    if labels else "_nolegend_"
+                    "polynomial correction"
+                    if labels and component_name == "polynomial"
+                    else component_name.replace("_", " ")
+                    if labels
+                    else "_nolegend_"
                 )
             ax.plot(
                 wave[panel_mask],
@@ -1436,7 +1444,7 @@ def _plot_qa(
                 continue
             style = _WING_STYLE if kind == "wing" else _NARROW_STYLE
             if kind == "wing":
-                legend_label = "outflow wing" if not wing_label_used else "_nolegend_"
+                legend_label = "additional component" if not wing_label_used else "_nolegend_"
                 wing_label_used = True
             else:
                 legend_label = "narrow-line model" if not narrow_label_used else "_nolegend_"
@@ -1685,6 +1693,33 @@ def _plot_qa(
             np.count_nonzero(residual_mask)
         )
 
+    result.metadata["qa_show_polynomial_panel"] = show_polynomial
+    if polynomial_axis is not None:
+        baseline_config = polynomial_metadata["polynomial_baseline_power_law_config"]
+        slopes = polynomial_metadata["polynomial_baseline_slopes"]
+        baseline_pl = polynomial_metadata["polynomial_baseline_norm"] * (
+            wave / baseline_config["pivot"]
+        ) ** slopes["power_law.slope"]
+        if baseline_config["mode"] == "double":
+            red = wave >= baseline_config["break_wave"]
+            baseline_pl[red] = (
+                polynomial_metadata["polynomial_baseline_norm"]
+                * (baseline_config["break_wave"] / baseline_config["pivot"]) ** slopes["power_law.slope"]
+                * (wave[red] / baseline_config["break_wave"]) ** slopes["power_law.red_slope"]
+            )
+        fraction = np.full_like(wave, np.nan)
+        fraction[valid] = result.continuum.component_models["polynomial"][valid] / baseline_pl[valid]
+        polynomial_axis.plot(wave, fraction, color="#d98d35", lw=0.9,
+                             label="polynomial / baseline power law")
+        limit = polynomial_metadata["polynomial_max_fraction"]
+        for level in (0, -limit, limit):
+            polynomial_axis.axhline(level, color="0.5", lw=0.6, ls=":" if level else "-")
+        polynomial_axis.set_ylim(-1.2 * limit, 1.2 * limit)
+        polynomial_axis.set_ylabel("Polynomial\n/ baseline PL", fontsize=10)
+        polynomial_axis.tick_params(axis="x", labelbottom=False)
+        _configure_qa_axis(polynomial_axis)
+        result.metadata["qa_polynomial_fraction_limits"] = [-limit, limit]
+
     for zoom_index, (axis, complex_name) in enumerate(zip(zoom_axes, available)):
         lo, hi = _COMPLEX_WINDOWS[complex_name]
         panel_mask = valid & (wave >= lo) & (wave <= hi)
@@ -1742,6 +1777,8 @@ def _plot_qa(
         broad_component_label_used = False
         broad_names = set(_broad_component_names(fit))
         for component_name, component in fit.component_models.items():
+            if component_name.startswith("local_continuum_"):
+                continue
             if component_name in broad_names:
                 if complex_name == "lya_nv":
                     component_label = (
@@ -1769,7 +1806,7 @@ def _plot_qa(
                 wave[panel_mask],
                 display_scale * component[panel_mask],
                 label=(
-                    "outflow wing"
+                    "additional component"
                     if kind == "wing"
                     else "narrow lines"
                 ),
@@ -1815,7 +1852,7 @@ def _plot_qa(
         allowed = {
             "broad components",
             "narrow lines",
-            "outflow wing",
+            "additional component",
             "Lyα component",
             "N V component",
             "masked absorption",
@@ -1910,13 +1947,15 @@ def _plot_hbeta(
     narrow_label_used = False
     wing_label_used = False
     for name, component in fit.component_models.items():
+        if name.startswith("local_continuum_"):
+            continue
         if "broad" in name and "wing" not in name:
             style = _BROAD_COMPONENT_STYLE
             label = "broad components" if not broad_label_used else "_nolegend_"
             broad_label_used = True
         elif "wing" in name:
             style = _WING_STYLE
-            label = "outflow wing" if not wing_label_used else "_nolegend_"
+            label = "additional component" if not wing_label_used else "_nolegend_"
             wing_label_used = True
         else:
             style = _NARROW_STYLE
@@ -2115,6 +2154,22 @@ def write_global_line_products(
         grid["flux_total_before_host"] = result.total_spectrum.flux
     if result.host_model_on_quasar_grid is not None:
         grid["ppxf_host_model"] = result.host_model_on_quasar_grid
+    host_product_names = {
+        "stellar": "ppxf_stellar_model",
+        "powerlaw": "ppxf_powerlaw_model",
+        "feii_optical": "ppxf_feii_optical_model",
+        "feii_uv": "ppxf_feii_uv_model",
+        "balmer_continuum": "ppxf_balmer_continuum_model",
+        "balmer_high_order": "ppxf_balmer_high_order_model",
+        "agn_total": "ppxf_agn_total_model",
+        "physical_component_total": "ppxf_physical_component_total",
+        "ppxf_bestfit": "ppxf_bestfit",
+        "closure_residual": "ppxf_closure_residual",
+        "host_subtracted_flux": "host_subtracted_flux",
+    }
+    for name, component in result.host_component_models.items():
+        column = host_product_names.get(name, f"ppxf_component_{name}")
+        grid[column] = component
     for name, component in result.continuum.component_models.items():
         grid[f"continuum_{name}"] = component
     for complex_name, fit in result.line_complexes.items():

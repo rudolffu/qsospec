@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qsospec"
-version = "0.1.1"
+version = "0.2.0"
 description = "A fast and robust Python package for fitting quasar spectra"
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "Yuming Fu", email = "fuympku@outlook.com"},
 ]
@@ -22,7 +22,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -37,6 +36,7 @@ dependencies = [
     "dust-extinction>=1.5",
     "pandas",
     "pyarrow>=12",
+    "tqdm>=4.65",
 ]
 
 [project.optional-dependencies]
@@ -75,7 +75,20 @@ qsospec = ["data/**/*"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+    "integration: integration test spanning multiple package layers",
+    "slow: test not intended for every fast CI job",
+    "external_data: requires non-packaged data or templates",
+    "plotting: creates or validates rendered figures",
+    "benchmark: performance benchmark excluded from normal tests",
+    "docs: executable documentation example",
+]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 120
+
+[tool.ruff.lint]
+# Begin with correctness rules. Broader style normalization is intentionally a
+# separate mechanical change from scientific refactoring.
+select = ["E9", "F63", "F7", "F82"]

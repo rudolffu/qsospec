@@ -508,9 +508,9 @@ def test_output_schema_writes_summary_files(tmp_path):
     assert summary["flux_scale"] == pytest.approx(1e-17)
     assert "host_fit_range_min" in summary
     assert "desi_fit_range_min" not in summary
-    assert np.isfinite(summary["fracHost_4000"])
-    assert np.isnan(summary["fracHost_5100"])
-    assert np.isnan(summary["fAGN_5100"])
+    assert np.isfinite(summary["fracHost_pPXF_4000"])
+    assert np.isnan(summary["fracHost_pPXF_5100"])
+    assert np.isnan(summary["fAGN_pPXF_5100"])
     assert "host_subtracted_spectrum" in files
     assert (tmp_path / "host_subtracted_spectrum.csv").exists()
     assert not (tmp_path / "desi_host_subtracted.csv").exists()

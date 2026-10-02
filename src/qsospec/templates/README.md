@@ -7,7 +7,8 @@ loop.
 
 ## Internal Format
 
-Bundled normalized templates live in `data/*.txt` with two columns:
+Bundled normalized templates live in `src/qsospec/data/iron/*.txt` with two
+columns:
 
 ```text
 wave_rest_angstrom  area_normalized_flux
@@ -41,6 +42,7 @@ emission-line pixels.
 | `park22`, `park22_optical` | `park22_optical` | optical/H-beta | yes |
 | `veron04`, `vc04`, `veron04_optical` | `veron04_optical` | optical/H-beta to broad optical | yes |
 | `vw01`, `vw01_uv` | `vw01_uv` | UV/MgII | yes |
+| `verner09`, `verner_2009`, `v09`, `verner` | `verner09` | 2000–10000 Å | yes |
 | `external` | `external` | user supplied | no |
 
 Users can choose bundled templates by name without passing a path:
@@ -88,9 +90,17 @@ Legacy qsofitmore UV Fe template associated with Vestergaard & Wilkes (2001)
 and the existing package data file `qsofitmore/data/iron_templates/fe_uv.txt`.
 Intended for MgII-region local fits.
 
+### `verner09`
+
+Verner et al. (2009), Physica Scripta, T134, 014006. This theoretical Fe II
+template is available as one exclusive global component over approximately
+2000–10000 Å. Its assumed native FWHM is 900 km/s; the fitted FWHM is the
+final target width, and qsospec applies only the additional broadening needed
+in quadrature. Use ``GlobalContinuumConfig.with_single_iron("verner09")``.
+
 ## Current Limitations
 
-- Iron amplitude and FWHM are fitted in local qsospec models.
+- Iron amplitude and FWHM are fitted in local and global qsospec models.
 - Iron velocity shift is not included in the local qsospec iron component.
 - Broadening is performed in log wavelength with a Gaussian velocity kernel.
 - No physical Fe II template uncertainty model is included.

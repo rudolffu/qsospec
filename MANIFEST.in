@@ -4,4 +4,5 @@ include README.md
 recursive-include docs *.css *.md *.png *.py *.rst
 prune docs/_build
 recursive-include examples *.csv *.md
+recursive-include scripts *.py
 recursive-include src/qsospec/data *.csv *.txt

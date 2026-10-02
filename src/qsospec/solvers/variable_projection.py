@@ -17,6 +17,10 @@ class VariableProjectionError(RuntimeError):
 DesignEvaluator = Callable[[np.ndarray, bool], Tuple[np.ndarray, Optional[Sequence[np.ndarray]]]]
 
 
+PriorResidual = Callable[[np.ndarray], np.ndarray]
+PriorJacobian = Callable[[np.ndarray], np.ndarray]
+
+
 @dataclass
 class VariableProjectionState:
     """One cached nonlinear evaluation and its bounded linear solution."""
@@ -27,6 +31,11 @@ class VariableProjectionState:
     linear: np.ndarray
     linear_active_mask: np.ndarray
     residual: np.ndarray
+    prior: np.ndarray = None
+
+    def __post_init__(self) -> None:
+        if self.prior is None:
+            self.prior = np.empty(0, dtype=float)
 
 
 @dataclass
@@ -56,6 +65,8 @@ class _VariableProjectionProblem:
         err: np.ndarray,
         linear_bounds: Tuple[np.ndarray, np.ndarray],
         evaluator: DesignEvaluator,
+        prior_residual: Optional[PriorResidual] = None,
+        prior_jacobian: Optional[PriorJacobian] = None,
     ):
         self.flux = np.asarray(flux, dtype=float)
         self.err = np.asarray(err, dtype=float)
@@ -63,6 +74,8 @@ class _VariableProjectionProblem:
         self.linear_lower = np.asarray(linear_bounds[0], dtype=float)
         self.linear_upper = np.asarray(linear_bounds[1], dtype=float)
         self.evaluator = evaluator
+        self.prior_residual = prior_residual
+        self.prior_jacobian = prior_jacobian
         self.linear_solve_count = 0
         self._state: Optional[VariableProjectionState] = None
 
@@ -123,6 +136,13 @@ class _VariableProjectionProblem:
         residual = self.weighted_flux - weighted_design @ linear
         if not np.all(np.isfinite(residual)):
             raise VariableProjectionError("Variable-projection residual contains non-finite values.")
+        prior = np.empty(0, dtype=float)
+        if self.prior_residual is not None:
+            prior = np.asarray(self.prior_residual(nonlinear), dtype=float).reshape(-1)
+            if not np.all(np.isfinite(prior)):
+                raise VariableProjectionError(
+                    "Variable-projection prior residual contains non-finite values."
+                )
         self._state = VariableProjectionState(
             nonlinear=nonlinear.copy(),
             design=design,
@@ -130,11 +150,15 @@ class _VariableProjectionProblem:
             linear=linear,
             linear_active_mask=np.asarray(linear_result.active_mask, dtype=int),
             residual=residual,
+            prior=prior,
         )
         return self._state
 
     def residual(self, nonlinear: np.ndarray) -> np.ndarray:
-        return self.state(nonlinear, need_derivatives=False).residual
+        state = self.state(nonlinear, need_derivatives=False)
+        if state.prior.size:
+            return np.concatenate([state.residual, state.prior])
+        return state.residual
 
     def jacobian(self, nonlinear: np.ndarray) -> np.ndarray:
         state = self.state(nonlinear, need_derivatives=True)
@@ -154,6 +178,23 @@ class _VariableProjectionProblem:
                 jacobian[:, index] = -direct - free_design @ coefficient_derivative
             else:
                 jacobian[:, index] = -direct
+        if state.prior.size:
+            if self.prior_jacobian is None:
+                raise VariableProjectionError(
+                    "A nonlinear prior requires an explicit Jacobian hook."
+                )
+            prior_jacobian = np.asarray(
+                self.prior_jacobian(nonlinear), dtype=float
+            )
+            if prior_jacobian.shape != (state.prior.size, nonlinear.size):
+                raise VariableProjectionError(
+                    "Variable-projection prior Jacobian has an invalid shape."
+                )
+            if not np.all(np.isfinite(prior_jacobian)):
+                raise VariableProjectionError(
+                    "Variable-projection prior Jacobian contains non-finite values."
+                )
+            jacobian = np.vstack([jacobian, prior_jacobian])
         if not np.all(np.isfinite(jacobian)):
             raise VariableProjectionError("Variable-projection Jacobian contains non-finite values.")
         return jacobian
@@ -169,15 +210,28 @@ def solve_variable_projection(
     *,
     jacobian_method: str = "semi_analytic",
     max_nfev: Optional[int] = None,
+    prior_residual: Optional[PriorResidual] = None,
+    prior_jacobian: Optional[PriorJacobian] = None,
 ) -> VariableProjectionResult:
-    """Solve a bounded separable nonlinear least-squares problem."""
+    """Solve a bounded separable nonlinear least-squares problem.
+
+    Optional nonlinear-prior hooks append rows that depend only on the
+    nonlinear parameters to the reduced residual and Jacobian.
+    """
 
     if jacobian_method not in ("semi_analytic", "2-point"):
         raise ValueError("jacobian_method must be 'semi_analytic' or '2-point'.")
     nonlinear_initial = np.asarray(nonlinear_initial, dtype=float)
     nonlinear_lower = np.asarray(nonlinear_bounds[0], dtype=float)
     nonlinear_upper = np.asarray(nonlinear_bounds[1], dtype=float)
-    problem = _VariableProjectionProblem(flux, err, linear_bounds, evaluator)
+    problem = _VariableProjectionProblem(
+        flux,
+        err,
+        linear_bounds,
+        evaluator,
+        prior_residual=prior_residual,
+        prior_jacobian=prior_jacobian,
+    )
 
     if nonlinear_initial.size:
         nonlinear_result = least_squares(
@@ -208,10 +262,15 @@ def solve_variable_projection(
         nfev = 1
         njev = 0
 
+    combined_residual = (
+        np.concatenate([final_state.residual, final_state.prior])
+        if final_state.prior.size
+        else final_state.residual.copy()
+    )
     return VariableProjectionResult(
         nonlinear=final_state.nonlinear.copy(),
         linear=final_state.linear.copy(),
-        residual=final_state.residual.copy(),
+        residual=combined_residual,
         reduced_jacobian=reduced_jacobian,
         design=final_state.design.copy(),
         design_derivatives=tuple(item.copy() for item in final_state.derivatives or ()),
@@ -232,10 +291,14 @@ def evaluate_profile_chi2(
     nonlinear: np.ndarray,
     linear_bounds: Tuple[np.ndarray, np.ndarray],
     evaluator: DesignEvaluator,
+    *,
+    prior_residual: Optional[PriorResidual] = None,
 ) -> float:
     """Evaluate the bounded linear profile objective at fixed nonlinear values."""
 
-    problem = _VariableProjectionProblem(flux, err, linear_bounds, evaluator)
+    problem = _VariableProjectionProblem(
+        flux, err, linear_bounds, evaluator, prior_residual=prior_residual
+    )
     residual = problem.residual(np.asarray(nonlinear, dtype=float))
     return float(np.sum(residual**2))
 

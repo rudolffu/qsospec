@@ -5,13 +5,13 @@ from importlib.metadata import PackageNotFoundError as _PackageNotFoundError, ve
 try:
     __version__ = _version("qsospec")
 except _PackageNotFoundError:  # source checkout without installation
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 from . import lines, recipes
 from .lines import LineDefinition
 from .complex_recipes import ComponentRecipe, ComplexRecipe
 from .fitting.local import fit_line_complex, fit_local
-from .workflows.batch import BatchResult, fit_batch, fit_object_to_store
+from .workflows.batch import BatchResult, BatchResumePlan, fit_batch, fit_object_to_store, plan_batch_resume
 from .config import (
     BalmerPseudoContinuumConfig,
     GalacticExtinctionConfig,
@@ -20,11 +20,13 @@ from .config import (
     HalphaComplexConfig,
     HbetaComplexConfig,
     IronTemplateConfig,
+    RegionalIronConfig,
     LyaNVComplexConfig,
     LineComplexConfig,
     LocalFitConfig,
     LorentzianComponent,
     MgIIComplexConfig,
+    PolynomialContinuumConfig,
     PowerLawConfig,
     UncertaintyConfig,
 )
@@ -52,12 +54,7 @@ from .io.products import (
     write_global_hbeta_products,
     write_global_line_products,
 )
-from .global_result import (
-    EmissionComplexResult,
-    GlobalContinuumResult,
-    HbetaComplexResult,
-    WorkflowResult,
-)
+from .global_result import EmissionComplexResult, GlobalContinuumResult, HbetaComplexResult, WorkflowResult
 from .workflows.host_workflow import (
     HostWorkflowResult,
     fit_global_hbeta_workflow,
@@ -65,6 +62,10 @@ from .workflows.host_workflow import (
     fit_with_optional_host_decomp,
 )
 from .workflows.host import (
+    HostAgnPseudoContinuumConfig,
+    HostBroadLinePrefitConfig,
+    HostCoverageConfig,
+    HostDecompConfig,
     EuclidHostScaleConfig,
     EuclidHostScaleFit,
     euclid_nir_line_mask,
@@ -88,6 +89,7 @@ from .io.run_store import (
     compute_derived_quantities,
     finalize_run,
     load_model,
+    load_model_by_key,
     open_run,
 )
 from .spectrum import Spectrum
@@ -111,6 +113,7 @@ __all__ = [
     "BalmerAnchorRatios",
     "BalmerSeriesTemplate",
     "BatchResult",
+    "BatchResumePlan",
     "ComponentRecipe",
     "ComplexRecipe",
     "FitResult",
@@ -122,6 +125,10 @@ __all__ = [
     "GlobalContinuumConfig",
     "GlobalContinuumResult",
     "GlobalQAPlotConfig",
+    "HostAgnPseudoContinuumConfig",
+    "HostBroadLinePrefitConfig",
+    "HostCoverageConfig",
+    "HostDecompConfig",
     "HalphaComplexConfig",
     "HbetaComplexConfig",
     "HbetaComplexResult",
@@ -138,6 +145,7 @@ __all__ = [
     "HostWorkflowResult",
     "WorkflowResult",
     "PowerLawConfig",
+    "PolynomialContinuumConfig",
     "RunStore",
     "Spectrum",
     "SpectrumInput",
@@ -166,6 +174,7 @@ __all__ = [
     "fit_line_complex",
     "fit_local",
     "fit_object_to_store",
+    "plan_batch_resume",
     "fit_with_optional_host_decomp",
     "evaluate_balmer_pseudocontinuum",
     "evaluate_balmer_pseudocontinuum_with_derivatives",
@@ -177,6 +186,7 @@ __all__ = [
     "load_balmer_template",
     "load_iron_template",
     "load_model",
+    "load_model_by_key",
     "open_run",
     "prepare_spectrum",
     "preflight_galactic_extinction",
@@ -194,4 +204,5 @@ __all__ = [
     "write_global_hbeta_products",
     "write_global_line_products",
     "wang2019_extinction_mag",
+    "RegionalIronConfig",
 ]

@@ -142,7 +142,7 @@ def test_continuum_design_derivatives_match_centered_differences():
 
 def test_hbeta_design_derivatives_match_centered_differences():
     wave = np.linspace(4640.0, 5100.0, 900)
-    context = _HbetaContext(qsospec.HbetaComplexConfig(), include_wing=True, flux_scale=100.0)
+    context = _HbetaContext(qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", ), include_wing=True, flux_scale=100.0)
     _, _, nonlinear, _ = context.separable_initial_and_bounds()
     design, derivatives = context.separable_design(nonlinear, wave, True)
     assert design.shape[1] == len(context.linear_names)
@@ -289,12 +289,12 @@ def test_hbeta_variable_projection_matches_legacy_wing_selection():
     optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(optimizer_method="variable_projection"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", optimizer_method="variable_projection"),
     )
     legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(optimizer_method="legacy_joint"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "wing"
@@ -322,12 +322,12 @@ def test_hbeta_parity_for_core_model_with_heii_and_rejected_wing():
     optimized = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="variable_projection"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True, optimizer_method="variable_projection"),
     )
     legacy = qsospec.fit_hbeta_complex(
         spectrum,
         continuum_result,
-        qsospec.HbetaComplexConfig(heii_enabled=True, optimizer_method="legacy_joint"),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True, optimizer_method="legacy_joint"),
     )
 
     assert optimized.selected_model == legacy.selected_model == "core"
@@ -384,3 +384,118 @@ def test_reduced_two_point_jacobian_mode_is_available():
     assert result.success
     assert result.metadata["optimizer_used"] == "variable_projection"
     assert result.metadata["jacobian_method"] == "2-point"
+
+
+def _soft_prior_case():
+    wave = np.linspace(2500.0, 5500.0, 650)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        np.ones_like(wave),
+        err=np.full_like(wave, 0.002),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    config = qsospec.GlobalContinuumConfig(
+        power_law=qsospec.PowerLawConfig(norm=2.0, slope=-1.0, mode="single"),
+        uv_iron=qsospec.IronTemplateConfig.vw01(amp=400.0, fwhm_kms=1800.0),
+        optical_iron=qsospec.IronTemplateConfig.park22(amp=400.0, fwhm_kms=6000.0),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+    )
+    context = _ContinuumContext(spectrum, config)
+    truth = context.initial.copy()
+    for key, value in {
+        "power_law.norm": 2.0,
+        "power_law.slope": -1.0,
+        "uv_iron.amp": 400.0,
+        "optical_iron.amp": 400.0,
+        "middle_iron.amp": 40.0,
+    }.items():
+        truth[context.index[key]] = value
+    spectrum = replace(spectrum, flux=context.model(truth, wave))
+    return spectrum, config
+
+
+def test_soft_width_prior_variable_projection_matches_legacy_objective():
+    spectrum, config = _soft_prior_case()
+    varpro = qsospec.fit_global_continuum(
+        spectrum,
+        replace(config, iron_width_coupling="soft", optimizer_method="variable_projection"),
+    )
+    legacy = qsospec.fit_global_continuum(
+        spectrum,
+        replace(config, iron_width_coupling="soft", optimizer_method="legacy_joint"),
+    )
+    assert varpro.metadata["optimizer_used"] == "variable_projection"
+    assert legacy.metadata["optimizer_used"] == "legacy_joint"
+    assert varpro.metadata["total_objective"] == pytest.approx(
+        legacy.metadata["total_objective"], rel=5.0e-4, abs=1.0e-6
+    )
+    assert varpro.metadata["total_objective"] == pytest.approx(
+        varpro.chi2 + varpro.metadata["prior_penalty"], rel=1.0e-12
+    )
+    assert varpro.metadata["prior_penalty"] > 0
+    for name in (
+        "uv_iron.fwhm_kms",
+        "optical_iron.fwhm_kms",
+        "middle_iron.amp",
+        "power_law.norm",
+    ):
+        assert varpro.param_values[name] == pytest.approx(
+            legacy.param_values[name], rel=5.0e-3
+        )
+    assert varpro.covariance is not None
+    assert np.isfinite(list(varpro.param_errors.values())).all()
+
+
+def test_no_prior_variable_projection_is_unchanged():
+    spectrum, config = _soft_prior_case()
+    result = qsospec.fit_global_continuum(
+        spectrum, replace(config, optimizer_method="variable_projection")
+    )
+    assert result.metadata["optimizer_used"] == "variable_projection"
+    assert result.metadata["prior_penalty"] == 0.0
+    assert result.metadata["iron_width_prior"]["basis"] == "additional_kernel"
+
+
+@pytest.mark.parametrize("uv_template", ["vw01", "verner09"])
+def test_soft_prior_jacobian_matches_central_differences(uv_template):
+    wave = np.linspace(2500.0, 5500.0, 200)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave,
+        np.ones_like(wave),
+        err=np.full_like(wave, 0.002),
+        wave_frame="rest",
+        flux_unit="relative",
+    )
+    uv = (
+        qsospec.IronTemplateConfig("verner09", fwhm_kms=3000.0, fwhm_bounds=(910.0, 10000.0))
+        if uv_template == "verner09"
+        else qsospec.IronTemplateConfig.vw01(fwhm_kms=3000.0)
+    )
+    config = qsospec.GlobalContinuumConfig(
+        iron_width_coupling="soft",
+        uv_iron=uv,
+        optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=6000.0),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(enabled=False),
+    )
+    context = _ContinuumContext(spectrum, config)
+    nonlinear = np.array(
+        [context.initial[context.index[name]] for name in context.nonlinear_names]
+    )
+    jacobian = context.prior_jacobian_nonlinear(nonlinear)
+    for index, name in enumerate(context.nonlinear_names):
+        if not name.endswith(".fwhm_kms"):
+            continue
+        step = max(abs(nonlinear[index]) * 1.0e-6, 1.0e-6)
+        plus, minus = nonlinear.copy(), nonlinear.copy()
+        plus[index] += step
+        minus[index] -= step
+        finite = (
+            context.prior_residuals_nonlinear(plus)
+            - context.prior_residuals_nonlinear(minus)
+        ) / (2.0 * step)
+        assert jacobian[0, index] == pytest.approx(finite[0], rel=1.0e-6, abs=1.0e-12)

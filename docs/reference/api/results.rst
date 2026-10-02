@@ -13,4 +13,5 @@ Result API
    WorkflowResult
    HostWorkflowResult
    BatchResult
+   BatchResumePlan
    FitWarning

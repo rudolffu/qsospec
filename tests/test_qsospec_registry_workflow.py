@@ -86,7 +86,7 @@ def test_hbeta_absent_auto_keeps_free_width_and_warns():
         complexes=None,
     )
     assert result.hbeta is None
-    assert result.metadata["balmer_pseudocontinuum_fwhm_source"] == "free_global_fit"
+    assert result.metadata["balmer_pseudocontinuum_fwhm_source"] == "joint_hgamma_continuum"
     assert result.metadata["hbeta_sync_attempted"] is False
     assert "hbeta_sync_skipped_not_covered" in result.warning_codes()
     assert "balmer_pseudocontinuum_fwhm_free_no_hbeta_anchor" in result.warning_codes()

@@ -52,6 +52,7 @@ def test_global_continuum_recovers_full_synthetic_model():
         wave, power + uv + optical + balmer, err=err, wave_frame="rest", survey="desi"
     )
     config = qsospec.GlobalContinuumConfig(
+        regional_iron=qsospec.RegionalIronConfig(enabled=False),
         power_law=qsospec.PowerLawConfig(norm=2.5, slope=-1.25),
         uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_kms=2600.0, amp=70.0),
         optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3200.0, amp=55.0),
@@ -273,6 +274,7 @@ def test_balmer_pseudocontinuum_flux_syncs_to_fitted_hgamma():
                 fwhm_kms=3600.0,
                 velocity_kms=0.0,
                 sync_with_hbeta="never",
+                sync_with_hgamma="hard_legacy",
             ),
             continuum_windows=((3300.0, 4260.0),),
             mask_windows=(),
@@ -330,6 +332,7 @@ def test_balmer_hgamma_sync_skips_when_hdelta_is_not_in_template():
             balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
                 n_min=7,
                 sync_with_hbeta="never",
+                sync_with_hgamma="hard_legacy",
             ),
             continuum_windows=((3300.0, 4260.0),),
             mask_windows=(),
@@ -362,7 +365,7 @@ def test_hbeta_core_ties_oiii_ratio_and_narrow_kinematics():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        qsospec.HbetaComplexConfig(fit_oiii_wings=False),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", fit_oiii_wings=False),
     )
 
     assert result.success
@@ -389,7 +392,7 @@ def test_hbeta_wing_selection_accepts_strong_broad_wing():
     err = np.full_like(wave, 0.02)
     spectrum = qsospec.Spectrum.from_arrays(wave, continuum + line, err=err, wave_frame="rest", flux_unit="relative")
 
-    result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum))
+    result = qsospec.fit_hbeta_complex(spectrum, _continuum_result(spectrum, continuum), qsospec.HbetaComplexConfig(oiii_profile_mode="legacy"))
 
     assert result.success
     assert result.selected_model == "wing"
@@ -433,6 +436,7 @@ def test_hbeta_wing_selection_rejects_modest_width_contrast():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy"),
     )
 
     candidate = result.metadata["wing_candidate"]
@@ -461,7 +465,7 @@ def test_hbeta_wing_selection_rejects_absent_wing_and_can_fit_heii():
     result = qsospec.fit_hbeta_complex(
         spectrum,
         _continuum_result(spectrum, continuum),
-        qsospec.HbetaComplexConfig(heii_enabled=True),
+        qsospec.HbetaComplexConfig(oiii_profile_mode="legacy", heii_enabled=True),
     )
 
     assert result.success
@@ -561,4 +565,273 @@ def test_global_workflow_monte_carlo_reports_percentiles():
     assert result.monte_carlo["n_requested"] == 2
     assert result.monte_carlo["continuum_success_count"] == 2
     assert result.monte_carlo["complex_success_counts"]["hbeta_oiii"] == 2
-    assert "Hb_broad_fwhm_kms" in result.monte_carlo["percentiles"]
+    assert "line:hbeta_oiii:Hb_broad_fwhm_kms" in result.monte_carlo["percentiles"]
+
+
+def test_covariance_propagation_off_pivot_and_host_fraction():
+    from qsospec.uncertainties import propagate, host_agn_covariance
+    values=np.array([2.,-1.2]);cov=np.array([[.04,-.01],[-.01,.09]])
+    for wavelength in (1350.,3000.,5100.):
+        ratio=wavelength/3000.
+        _, propagated=propagate(lambda t:[t[0]*ratio**t[1]],values,cov)
+        gradient=np.array([ratio**values[1],values[0]*ratio**values[1]*np.log(ratio)])
+        assert propagated[0,0]==pytest.approx(gradient@cov@gradient,rel=1e-7)
+    joint=np.array([[.16,-.03],[-.03,.09]])
+    _, numerical=propagate(lambda t:[sum(t),t[0]/sum(t)],[1.,2.],joint)
+    np.testing.assert_allclose(host_agn_covariance(1.,2.,joint),numerical,rtol=1e-8)
+
+
+def test_soft_hgamma_joint_union_and_ratio_offset():
+    wave=np.linspace(3300.,4550.,650)
+    balmer=20.*qsospec.evaluate_balmer_pseudocontinuum(load_balmer_template(provenance='sh95_k13full_ext'),wave,3500.,0.)
+    flux=2.+balmer+_gaussian_area_profile(wave,18.,4341.68,3500.)
+    spectrum=qsospec.Spectrum.from_arrays(wave,flux,err=np.full_like(wave,.015),wave_frame='rest',flux_unit='relative')
+    result=qsospec.fit_global_lines(spectrum,qsospec.GlobalContinuumConfig(
+        uv_iron=None,optical_iron=None,power_law=qsospec.PowerLawConfig(norm=2.,slope=0.,mode='single'),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(amplitude=20.,fwhm_kms=3500.,sync_with_hbeta='never'),
+        continuum_windows=((3300.,4260.),),mask_windows=(),clip_passes=0,blue_absorption_clip_enabled=False),
+        complexes=('oii_nev_neiii_hgamma',))
+    assert result.continuum.metadata['hgamma_joint_status']=='fit'
+    assert result.continuum.metadata['hgamma_joint_n_pixels']<=spectrum.valid_mask.sum()
+    assert result.continuum.metadata['hgamma_delta_dex']>0.1
+    assert 'OIII4364' in result.line_complexes['oii_nev_neiii_hgamma'].component_models
+    assert result.continuum.metadata['joint_covariance']['parameter_names'][-1]=='balmer.delta_gamma_dex'
+
+
+def test_bootstrap_pixel_covariance_and_seed_preserve_grid():
+    from dataclasses import replace
+    from qsospec.uncertainties import pixel_noise_factor,draw_pixel_noise,trial_seed
+    covariance=np.array([[.04,.015],[.015,.09]])
+    factor=pixel_noise_factor(np.array([.2,.3]),covariance)
+    np.testing.assert_allclose(factor@factor.T,covariance)
+    first=draw_pixel_noise(np.random.default_rng(trial_seed(23,'object',7)),factor)
+    second=draw_pixel_noise(np.random.default_rng(trial_seed(23,'object',7)),factor)
+    np.testing.assert_array_equal(first,second)
+    original=qsospec.Spectrum.from_arrays([3000.,3100.],[2.,3.],err=[.2,.3],z=.8,wave_frame='rest',survey='desi',galactic_extinction_corrected=True,mask=[True,False])
+    trial=replace(original,flux=original.flux+first)
+    np.testing.assert_array_equal(original.wave_obs,trial.wave_obs)
+    np.testing.assert_array_equal(original.mask,trial.mask)
+    assert trial.metadata is original.metadata
+    assert trial.flux_frame=='rest'
+    assert trial.flux_scale==original.flux_scale
+    assert trial.metadata.galactic_extinction_corrected
+
+
+def test_joint_hgamma_analytic_jacobian_matches_central_differences():
+    from qsospec.fitting.complexes import resolve_recipe_coverage
+    from qsospec.fitting.global_fit import (
+        _ContinuumContext,
+        _build_joint_hgamma_problem,
+    )
+
+    wave = np.linspace(3300.0, 4550.0, 650)
+    balmer = 20.0 * qsospec.evaluate_balmer_pseudocontinuum(
+        load_balmer_template(provenance="sh95_k13full_ext"), wave, 3500.0, 0.0
+    )
+    flux = 2.0 + balmer + _gaussian_area_profile(wave, 27.0, 4341.68, 3600.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.015), wave_frame="rest",
+        flux_unit="relative",
+    )
+    config = qsospec.GlobalContinuumConfig(
+        uv_iron=qsospec.IronTemplateConfig.vw01(fwhm_kms=3000.0),
+        optical_iron=qsospec.IronTemplateConfig.park22(fwhm_kms=3000.0),
+        power_law=qsospec.PowerLawConfig(norm=2.0, slope=0.0, mode="single"),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            amplitude=20.0, fwhm_kms=3500.0, sync_with_hbeta="never",
+            sync_with_hgamma="soft",
+        ),
+        continuum_windows=((3300.0, 4260.0),),
+        mask_windows=(),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+    )
+    result = qsospec.fit_global_lines(
+        spectrum, config, complexes=("oii_nev_neiii_hgamma",)
+    )
+    assert result.continuum.metadata["hgamma_joint_status"] == "fit"
+    recipe = qsospec.recipes.get("oii_nev_neiii_hgamma")
+    coverage = resolve_recipe_coverage(spectrum, recipe)
+    context = _ContinuumContext(
+        spectrum, config, initial_parameters=result.continuum.param_values
+    )
+    problem = _build_joint_hgamma_problem(
+        spectrum,
+        config,
+        result.continuum,
+        result.line_complexes["oii_nev_neiii_hgamma"],
+        coverage,
+        context,
+    )
+    theta = problem.start.copy()
+    for index in range(theta.size):
+        lo, hi = problem.lower[index], problem.upper[index]
+        if np.isfinite(lo) and np.isfinite(hi):
+            theta[index] = 0.5 * theta[index] + 0.5 * (
+                lo + 0.55 * (hi - lo)
+            )
+    objective = lambda values: np.r_[problem.data(values), problem.prior(values)]
+    expected_union = (
+        spectrum.valid_mask
+        & (result.continuum.clip_mask | result.line_complexes[
+            "oii_nev_neiii_hgamma"
+        ].fit_mask)
+    )
+    assert problem.n_data == int(np.count_nonzero(expected_union))
+    jacobian = problem.jacobian(theta)
+    assert jacobian.shape[0] == problem.n_data + problem.n_prior
+    for fraction in (0.45, 0.65):
+        state = problem.start.copy()
+        for index in range(state.size):
+            lo, hi = problem.lower[index], problem.upper[index]
+            if np.isfinite(lo) and np.isfinite(hi):
+                state[index] = 0.5 * state[index] + 0.5 * (
+                    lo + fraction * (hi - lo)
+                )
+        state_jacobian = problem.jacobian(state)
+        for index in range(state.size):
+            step = max(abs(state[index]) * 1.0e-6, 1.0e-6)
+            plus, minus = state.copy(), state.copy()
+            plus[index] += step
+            minus[index] -= step
+            finite = (objective(plus) - objective(minus)) / (2.0 * step)
+            np.testing.assert_allclose(
+                state_jacobian[:, index], finite, rtol=1.0e-5, atol=1.0e-7
+            )
+    # Bounds are tested separately with a feasible one-sided difference.
+    lower = problem.lower.copy()
+    for index in range(theta.size):
+        if not np.isfinite(lower[index]):
+            continue
+        at_bound = theta.copy()
+        at_bound[index] = lower[index]
+        step = max(abs(at_bound[index]) * 1.0e-6, 1.0e-6)
+        forward = at_bound.copy()
+        forward[index] += step
+        finite = (objective(forward) - objective(at_bound)) / step
+        np.testing.assert_allclose(
+            jacobian[:, index], finite, rtol=1.0e-4, atol=1.0e-6
+        )
+        break
+
+
+def test_joint_hgamma_final_state_is_the_fitted_objective_state():
+    wave = np.linspace(2900.0, 4550.0, 500)
+    balmer = 18.0 * qsospec.evaluate_balmer_pseudocontinuum(
+        load_balmer_template(provenance="sh95_k13full_ext"), wave, 3400.0, 0.0
+    )
+    flux = 2.0 + balmer + _gaussian_area_profile(wave, 22.0, 4341.68, 3300.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.02), wave_frame="rest",
+        flux_unit="relative",
+    )
+    config = qsospec.GlobalContinuumConfig(
+        uv_iron=None,
+        optical_iron=None,
+        power_law=qsospec.PowerLawConfig(norm=2.0, slope=0.0, mode="single"),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            amplitude=18.0, fwhm_kms=3400.0, sync_with_hbeta="never",
+            sync_with_hgamma="soft",
+        ),
+        continuum_windows=((3300.0, 4260.0),),
+        mask_windows=(),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+    )
+    result = qsospec.fit_global_lines(
+        spectrum, config, complexes=("oii_nev_neiii_hgamma",)
+    )
+    continuum = result.continuum
+    hgamma = result.line_complexes["oii_nev_neiii_hgamma"]
+    union = continuum.fit_mask
+    residual = (
+        spectrum.flux[union]
+        - continuum.model[union]
+        - hgamma.model[union]
+    ) / spectrum.err[union]
+    assert continuum.metadata["hgamma_joint_data_chi2"] == pytest.approx(
+        float(np.sum(residual**2)), rel=1.0e-10
+    )
+    assert hgamma.metadata["metric_status"] == "joint_continuum_propagation"
+    assert np.isfinite(hgamma.metric_errors["hgamma_broad_flux_input"])
+    assert hgamma.covariance is not None
+    sample_errors = continuum.metadata.get("continuum_sample_errors", {})
+    assert sample_errors
+    assert all(np.isfinite(list(sample_errors.values())))
+
+
+def test_no_continuum_refinement_reuses_the_initial_hbeta_state(monkeypatch):
+    wave = np.linspace(4600.0, 5150.0, 700)
+    flux = 2.0 + _gaussian_area_profile(wave, 60.0, 4862.68, 2600.0)
+    flux += _gaussian_area_profile(wave, 25.0, 4862.68, 400.0)
+    flux += _gaussian_area_profile(wave, 90.0, 5008.24, 400.0)
+    flux += _gaussian_area_profile(wave, 30.0, 4960.30, 400.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.02), wave_frame="rest",
+        flux_unit="relative",
+    )
+    config = qsospec.GlobalContinuumConfig(
+        uv_iron=None,
+        optical_iron=None,
+        power_law=qsospec.PowerLawConfig(norm=2.0, slope=0.0, mode="single"),
+        balmer_pseudocontinuum=qsospec.BalmerPseudoContinuumConfig(
+            enabled=False, sync_with_hbeta="never"
+        ),
+        clip_passes=0,
+        blue_absorption_clip_enabled=False,
+    )
+    result = qsospec.fit_global_lines(
+        spectrum, config, complexes=("hbeta_oiii",)
+    )
+    assert result.metadata["refinement_performed"] is False
+    assert result.hbeta is result.hbeta_initial
+    assert result.hbeta.success
+
+
+def test_deferred_peaks_do_not_change_hbeta_model_selection():
+    wave = np.linspace(4600.0, 5150.0, 700)
+    flux = 2.0 + _gaussian_area_profile(wave, 60.0, 4862.68, 2600.0)
+    flux += _gaussian_area_profile(wave, 90.0, 5008.24, 400.0)
+    flux += _gaussian_area_profile(wave, 12.0, 5008.24, 1400.0)
+    flux += _gaussian_area_profile(wave, 30.0, 4960.30, 400.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.02), wave_frame="rest",
+        flux_unit="relative",
+    )
+    from qsospec.fitting.global_fit import fit_hbeta_complex
+
+    continuum = _continuum_result(spectrum, np.full_like(wave, 2.0))
+    eager = fit_hbeta_complex(spectrum, continuum, defer_peaks=False)
+    deferred = fit_hbeta_complex(spectrum, continuum, defer_peaks=True)
+    assert eager.selected_model == deferred.selected_model
+    assert eager.param_values == pytest.approx(deferred.param_values)
+    assert eager.bic == pytest.approx(deferred.bic)
+    assert [x["accepted"] for x in eager.metadata["candidate_selection"]] == [x["accepted"] for x in deferred.metadata["candidate_selection"]]
+    assert "line_peaks" in eager.metadata
+    assert "line_peaks" not in deferred.metadata
+    assert deferred.metadata["peak_recovery_status"] == "deferred"
+
+
+def test_changing_the_continuum_parameter_forces_the_hbeta_refit():
+    wave = np.linspace(4600.0, 5150.0, 700)
+    flux = 2.0 + _gaussian_area_profile(wave, 60.0, 4862.68, 2600.0)
+    flux += _gaussian_area_profile(wave, 90.0, 5008.24, 400.0)
+    spectrum = qsospec.Spectrum.from_arrays(
+        wave, flux, err=np.full_like(wave, 0.02), wave_frame="rest",
+        flux_unit="relative",
+    )
+    from qsospec.fitting.global_fit import fit_hbeta_complex
+
+    first = fit_hbeta_complex(
+        spectrum, _continuum_result(spectrum, np.full_like(wave, 2.0))
+    )
+    second = fit_hbeta_complex(
+        spectrum, _continuum_result(spectrum, np.full_like(wave, 3.0))
+    )
+    assert not np.allclose(first.model, second.model)
+    assert any(
+        first.param_values[name] != pytest.approx(second.param_values[name], rel=1.0e-6)
+        for name in first.param_values
+    )
+    assert first.metadata["peak_recovery_status"] == "available"
+    assert second.metadata["peak_recovery_status"] == "available"

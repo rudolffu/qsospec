@@ -1,7 +1,8 @@
 Host decomposition
 ==================
 
-Install ``qsospec[host]`` and provide a local pPXF E-MILES template bundle:
+Install ``qsospec[host]`` and provide a local pPXF E-MILES template bundle
+from `micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__:
 
 .. code-block:: python
 
@@ -36,6 +37,38 @@ Inspect:
 - ``result.metadata["host_decomp_skip_reason"]``
 
 Host fractions are shown only where the rest-frame data constrain the
-requested wavelength. Host-refit Monte Carlo is available through
+requested wavelength. ``fracHost_5100`` is the final/adopted fraction formed
+from the pPXF stellar host and final qsospec AGN continuum;
+``fracHost_pPXF_5100`` is the direct pPXF host/total fraction. These are related
+but not interchangeable. See :ref:`the run-bundle host-fraction vocabulary
+<host-fraction-vocabulary>` for definitions and archived names. Host-refit
+Monte Carlo is available through
 ``UncertaintyConfig(refit_host_in_mc=True)`` and runs only when host
 decomposition was enabled.
+
+Host strategies
+---------------
+
+``HostDecompConfig(strategy="masked_simple")`` preserves the historical
+masked pPXF model and is the default. The explicit
+``agn_pseudocontinuum_masked`` strategy adds width-matched Fe II and Balmer
+pseudo-continuum templates while determining the stellar weights, then
+subtracts only the stellar model. See
+:doc:`../how_to/agn_aware_ppxf_host_decomposition` for configuration,
+provenance, coverage classes, fractions, and limitations.
+
+When the final continuum uses an exclusive full-range iron template, such as
+``GlobalContinuumConfig.with_single_iron("verner09")``, the AGN-aware host
+strategy inherits that one template and suppresses its split Fe components.
+Set ``HostAgnPseudoContinuumConfig(full_feii_template=...)`` explicitly to
+retain a different host-stage template. The default ``masked_simple``
+strategy is unaffected.
+
+Stellar-template resolution profiles
+------------------------------------
+
+E-MILES remains the default. Native XSL and exact object-specific preconvolved
+XSL are optional profiles. All preserve the native input spectrum, and a
+stellar template that is coarser than the data is retained with diagnostics
+rather than excluded. See
+:doc:`../how_to/stellar_template_resolution_profiles`.

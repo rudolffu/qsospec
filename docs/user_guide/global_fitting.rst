@@ -17,6 +17,7 @@ Default model
 
 - Pivoted power law.
 - Independently broadened UV and optical Fe II templates when covered.
+- An optional baseline-anchored quadratic correction, disabled by default.
 - Continuous KD13-style Balmer bound-free plus high-order series component.
 - Auto-enabled covered line recipes, including Lyα/N V, C IV, C III], Mg II,
   optical complexes, and Paschen/NIR complexes.
@@ -48,3 +49,34 @@ continuum windows automatically.
 
 See :doc:`../science/continuum_model`, :doc:`../reference/recipes`, and
 :doc:`../reference/configuration`.
+
+Alternative iron and polynomial choices
+---------------------------------------
+
+The default split iron model remains VW01 in the UV plus Park22 in the
+optical. To use the single Verner et al. (2009) theoretical template across
+its approximately 2000–10000 Å support:
+
+.. code-block:: python
+
+   config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
+
+Polynomial correction is disabled by default, including for SDSS FITS,
+SDSS Parquet, and arrays declared with ``survey="sdss"``. No candidate is
+assessed unless requested. To opt into BIC-gated SDSS assessment:
+
+.. code-block:: python
+
+   from dataclasses import replace
+
+   config = replace(
+       config,
+       polynomial=qsospec.PolynomialContinuumConfig(mode="auto"),
+   )
+
+This assesses a small quadratic after the polynomial-free baseline and retains
+it only if it passes improvement and safety checks. Its baseline slopes are
+preserved exactly. Use ``mode="on"`` to attempt correction for any survey
+without the improvement-score gate (safety checks still apply), or
+``mode="off"`` to keep the baseline only.
+The default correction and normalization-change limits are both 10%.

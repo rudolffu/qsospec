@@ -25,6 +25,7 @@ def iron_basis_vector(theta: np.ndarray, packed: PackedParameters, wave: np.ndar
             wave,
             fwhm_kms=fwhm_kms,
             velocity_step_kms=packed.iron_velocity_step_kms,
+            width_mode=packed.iron_width_mode,
         )
     return packed.iron_basis
 

@@ -5,7 +5,8 @@ Prerequisites
 -------------
 
 Install ``qsospec[host]``, configure dust maps, and obtain the expected pPXF
-template NPZ bundle.
+template NPZ bundle from `micappe/ppxf_data
+<https://github.com/micappe/ppxf_data>`__.
 
 .. code-block:: python
 
@@ -29,4 +30,5 @@ Common failures
 - Template file missing: check ``template_root`` and ``template_file``.
 - Too little optical coverage: widen the input coverage or skip host fitting.
 
-Next: :doc:`../user_guide/host_decomposition`.
+Next: :doc:`../user_guide/host_decomposition` or the optional
+:doc:`agn_aware_ppxf_host_decomposition` strategy.

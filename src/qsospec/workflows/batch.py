@@ -2,35 +2,33 @@
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
+import time
 import traceback
-from typing import Any, Dict, Iterator, Optional, Sequence, Union
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
 from .host.io import SpectrumData
+from .host.config import resolve_host_runtime_config
 
 from ..complex_recipes import ComplexRecipe
 from ..config import (
     GalacticExtinctionConfig,
     GlobalContinuumConfig,
+    DEFAULT_GLOBAL_MODEL_ID,
     HalphaComplexConfig,
     HbetaComplexConfig,
     LyaNVComplexConfig,
     MgIIComplexConfig,
     UncertaintyConfig,
 )
-from ..extinction import (
-    correct_spectrum_data,
-    prepare_spectrum,
-    preflight_galactic_extinction,
-)
-from ..fitting.global_fit import fit_global_lines
+from ..extinction import prepare_spectrum, preflight_galactic_extinction
 from ..io.products import (
     GlobalQAPlotConfig,
     resolve_qa_plot_config,
@@ -38,20 +36,19 @@ from ..io.products import (
 )
 from ..global_result import WorkflowResult
 from .host_workflow import (
-    _host_decomp_decision,
-    _host_subtracted_spectrum,
-    _spectrum_from_spectrum_data,
+    _run_global_fit_with_optional_host,
+    _host_config_with_global_iron,
 )
 from ..io.readers import (
     SpectrumInput,
     discover_fits_inputs,
     read_input_manifest,
     read_spectrum,
+    scan_parquet_spectrum_inputs,
     scan_parquet_spectra,
 )
 from ..io.run_store import RunStore, finalize_run, workflow_payload
 from ..spectrum import Spectrum
-from ..warnings import FitWarning
 
 
 @dataclass
@@ -66,6 +63,30 @@ class BatchResult:
     n_skipped: int
     n_workers: int
     datasets: Dict[str, str]
+    timings: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BatchResumePlan:
+    """Scalar-only classification of the inputs for a resumable batch."""
+
+    expected_count: int
+    completed_count: int
+    failed_terminal_count: int
+    retry_failed_count: int
+    unfinished_count: int
+    skipped_count: int
+    unfinished_row_indices: Mapping[str, tuple[int, ...]]
+    unfinished_object_keys: tuple[str, ...]
+    completed_object_keys: tuple[str, ...]
+    failed_object_keys: tuple[str, ...]
+    input_identity_sha256: str
+    status: str
+    timings: Mapping[str, Any]
+
+
+class LightweightResumeUnavailable(ValueError):
+    """Raised when scalar-only planning cannot preserve input semantics."""
 
 
 @dataclass
@@ -85,15 +106,230 @@ def _auto_workers(number_of_objects: Optional[int]) -> int:
     return min(available, 8)
 
 
-def _worker_initializer() -> None:
-    for variable in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
+def _is_spectral_parquet(path: Path) -> bool:
+    import pyarrow.parquet as pq
+
+    columns = {name.lower() for name in pq.read_schema(path).names}
+    return (
+        any(alias in columns for alias in ("wavelength", "wave", "lambda", "lam", "obs_wave"))
+        and any(alias in columns for alias in ("flux", "flam", "flux_lambda"))
+    )
+
+
+def _identity_iterator(
+    inputs,
+    *,
+    row_indices,
+    filter_expression,
+    parquet_identity_batch_size: int,
+) -> Iterator[SpectrumInput]:
+    """Yield input descriptors without materializing spectrum vectors."""
+
+    if filter_expression is not None:
+        raise LightweightResumeUnavailable(
+            "lightweight resume cannot preserve physical row offsets with "
+            "filter_expression"
+        )
+    items = [inputs] if isinstance(inputs, (str, Path, SpectrumInput)) else list(inputs)
+    parquet_spectra: list[str] = []
+    descriptors: list[SpectrumInput] = []
+    discoverable: list[str] = []
+    for item in items:
+        if isinstance(item, SpectrumInput):
+            descriptors.append(item)
+        elif isinstance(item, (str, Path)):
+            path = Path(item).expanduser()
+            if path.suffix.lower() == ".csv":
+                descriptors.extend(read_input_manifest(str(path)))
+            elif path.suffix.lower() == ".parquet":
+                if _is_spectral_parquet(path):
+                    parquet_spectra.append(str(path))
+                else:
+                    descriptors.extend(read_input_manifest(str(path)))
+            else:
+                discoverable.append(str(item))
+        else:
+            raise LightweightResumeUnavailable(
+                f"unsupported in-memory batch input for lightweight resume: {type(item)!r}"
+            )
+    if parquet_spectra:
+        try:
+            yield from scan_parquet_spectrum_inputs(
+                parquet_spectra,
+                row_indices=row_indices,
+                batch_size=parquet_identity_batch_size,
+            )
+        except ValueError:
+            raise
+        except Exception as error:
+            raise LightweightResumeUnavailable(str(error)) from error
+    yield from descriptors
+    if discoverable:
+        yield from discover_fits_inputs(discoverable)
+
+
+def _descriptor_identity(descriptor: SpectrumInput) -> dict[str, Any]:
+    return {
+        "source": descriptor.source,
+        "row_index": descriptor.row_index,
+        "object_id": descriptor.object_id,
+        "redshift": descriptor.redshift,
+        "reader": descriptor.reader,
+        "explicit_object_key": descriptor.explicit_object_key,
+        "object_key": descriptor.object_key,
+        "metadata": dict(descriptor.metadata),
+    }
+
+
+def _plan_batch_resume(
+    inputs,
+    store: Optional[RunStore],
+    *,
+    authoritative: Optional[Mapping[str, Any]] = None,
+    row_indices=None,
+    filter_expression=None,
+    retry_failures: bool = False,
+    num_shards: Optional[int] = None,
+    shard_index: Optional[int] = None,
+    parquet_identity_batch_size: int = 4096,
+) -> BatchResumePlan:
+    started = time.perf_counter()
+    actual_num_shards = 1 if num_shards is None else int(num_shards)
+    actual_shard_index = 0 if shard_index is None else int(shard_index)
+    if actual_num_shards < 1 or not 0 <= actual_shard_index < actual_num_shards:
+        raise ValueError("Require num_shards >= 1 and a valid shard_index")
+
+    identity_started = time.perf_counter()
+    descriptors: list[SpectrumInput] = []
+    seen: set[str] = set()
+    identity_hash = hashlib.sha256()
+    for descriptor in _identity_iterator(
+        inputs,
+        row_indices=row_indices,
+        filter_expression=filter_expression,
+        parquet_identity_batch_size=parquet_identity_batch_size,
     ):
-        os.environ[variable] = "1"
+        digest = int(hashlib.sha256(descriptor.object_key.encode("utf-8")).hexdigest(), 16)
+        if digest % actual_num_shards != actual_shard_index:
+            continue
+        if descriptor.object_key in seen:
+            raise ValueError(f"Duplicate spectrum object key: {descriptor.object_key!r}")
+        seen.add(descriptor.object_key)
+        descriptors.append(descriptor)
+        identity_hash.update(
+            json.dumps(
+                _descriptor_identity(descriptor),
+                sort_keys=True,
+                separators=(",", ":"),
+                default=repr,
+            ).encode("utf-8")
+        )
+        identity_hash.update(b"\n")
+    identity_seconds = time.perf_counter() - identity_started
+
+    manifest_started = time.perf_counter()
+    if authoritative is None:
+        authoritative = (
+            store.reconcile_expected_keys(item.object_key for item in descriptors)
+            if store is not None
+            else {"completed_keys": set(), "failed_keys": set()}
+        )
+    manifest_seconds = time.perf_counter() - manifest_started
+    completed = set(authoritative["completed_keys"])
+    failed = set(authoritative["failed_keys"])
+
+    unfinished: list[SpectrumInput] = []
+    completed_count = failed_terminal_count = retry_failed_count = 0
+    for descriptor in descriptors:
+        key = descriptor.object_key
+        if key in completed:
+            completed_count += 1
+        elif key in failed and not retry_failures:
+            failed_terminal_count += 1
+        else:
+            if key in failed:
+                retry_failed_count += 1
+            unfinished.append(descriptor)
+    rows: dict[str, list[int]] = {}
+    for descriptor in unfinished:
+        if descriptor.reader == "parquet" and descriptor.row_index is not None:
+            rows.setdefault(descriptor.source, []).append(int(descriptor.row_index))
+    expected_count = len(descriptors)
+    unfinished_count = len(unfinished)
+    status = (
+        "empty_input" if expected_count == 0
+        else "all_complete" if unfinished_count == 0
+        else "partial"
+    )
+    plan_seconds = time.perf_counter() - started
+    return BatchResumePlan(
+        expected_count=expected_count,
+        completed_count=completed_count,
+        failed_terminal_count=failed_terminal_count,
+        retry_failed_count=retry_failed_count,
+        unfinished_count=unfinished_count,
+        skipped_count=completed_count + failed_terminal_count,
+        unfinished_row_indices={key: tuple(value) for key, value in rows.items()},
+        unfinished_object_keys=tuple(item.object_key for item in unfinished),
+        completed_object_keys=tuple(
+            item.object_key for item in descriptors if item.object_key in completed
+        ),
+        failed_object_keys=tuple(
+            item.object_key for item in descriptors if item.object_key in failed
+        ),
+        input_identity_sha256=identity_hash.hexdigest(),
+        status=status,
+        timings={
+            "resume_manifest_seconds": manifest_seconds,
+            "resume_identity_scan_seconds": identity_seconds,
+            "resume_plan_seconds": plan_seconds,
+            "identity_columns_projected": (
+                "object_key,object_id,targetid,redshift,input_row_index,qsospec_shard_id"
+            ),
+        },
+    )
+
+
+def plan_batch_resume(
+    inputs,
+    run_directory: str,
+    *,
+    row_indices=None,
+    filter_expression=None,
+    retry_failures: bool = False,
+    num_shards: Optional[int] = None,
+    shard_index: Optional[int] = None,
+    parquet_identity_batch_size: int = 4096,
+) -> BatchResumePlan:
+    """Plan a resume using scalar identities and authoritative stored state."""
+
+    root = Path(run_directory).expanduser()
+    store = RunStore.open(str(root)) if (root / "manifest.json").exists() else None
+    return _plan_batch_resume(
+        inputs,
+        store,
+        row_indices=row_indices,
+        filter_expression=filter_expression,
+        retry_failures=retry_failures,
+        num_shards=num_shards,
+        shard_index=shard_index,
+        parquet_identity_batch_size=parquet_identity_batch_size,
+    )
+
+
+_WORKER_STORES: Dict[str, RunStore] = {}
+
+
+def _worker_initializer() -> None:
+    _WORKER_STORES.clear()
+
+
+def _worker_store(run_directory: str) -> RunStore:
+    store = _WORKER_STORES.get(run_directory)
+    if store is None:
+        store = RunStore.open(run_directory)
+        _WORKER_STORES[run_directory] = store
+    return store
 
 
 def _process_pool_available() -> bool:
@@ -129,162 +365,47 @@ def _fit_spectrum_data(
     uncertainty_config,
     complexes,
 ):
-    spectrum_data = correct_spectrum_data(
-        spectrum_data, galactic_extinction_config
+    # Preserve the stable input-record identity for exact object-specific
+    # template products.  ``SpectrumData.object_id`` can be a survey or Euclid
+    # identifier, whereas ``descriptor.object_key`` also disambiguates source
+    # file and row.
+    spectrum_data = replace(
+        spectrum_data,
+        metadata={
+            **dict(spectrum_data.metadata),
+            "host_preconvolution_object_key": descriptor.object_key,
+        },
     )
     source = (
         f"{descriptor.source}:row_index={descriptor.row_index}"
         if descriptor.row_index is not None else descriptor.source
     )
-    host_decomp_enabled, host_skip_reason = _host_decomp_decision(
-        run_host_decomp, spectrum_data.redshift
-    )
-    if host_decomp_enabled:
-        (
-            total_spectrum,
-            fit_spectrum,
-            host_fit,
-            host_sed,
-            host_on_grid,
-            _,
-            host_fit_mask,
-            host_emission_mask,
-            host_warnings,
-        ) = _host_subtracted_spectrum(
-            spectrum_data,
-            redshift=float(spectrum_data.redshift),
-            template_root=template_root,
-            template_file=template_file,
-            fit_range=host_fit_range,
-            host_config=host_config,
-            source=source,
-        )
-    else:
-        total_spectrum = _spectrum_from_spectrum_data(
-            spectrum_data, source=source
-        )
-        fit_spectrum = total_spectrum
-        host_fit = None
-        host_sed = None
-        host_on_grid = None
-        host_warnings = []
-    result = fit_global_lines(
-        fit_spectrum,
-        global_config,
-        hbeta_config,
-        mgii_config,
-        halpha_config,
-        uncertainty_config,
-        lya_nv_config=lya_nv_config,
-        host_model_on_grid=host_on_grid,
-        complexes=complexes,
-    )
-    result.host_decomp_enabled = host_decomp_enabled
-    result.total_spectrum = total_spectrum
-    result.host_fit = host_fit
-    result.host_sed = host_sed
-    result.host_model_on_quasar_grid = host_on_grid
-    result.host_fit_mask = (
-        np.asarray(host_fit_mask, dtype=bool).copy()
-        if host_fit is not None else None
-    )
-    result.host_emission_mask = (
-        np.asarray(host_emission_mask, dtype=bool).copy()
-        if host_fit is not None else None
-    )
-    result.host_warnings = [str(item) for item in host_warnings]
     object_id = (
         descriptor.object_id
         or spectrum_data.object_id
         or spectrum_data.targetid
         or Path(descriptor.source).stem
     )
-    result.metadata.update(
-        {
-            "input_path": descriptor.source,
-            "row_index": descriptor.row_index,
-            "object_id": str(object_id),
-            "targetid": spectrum_data.targetid,
-            "ra": spectrum_data.ra,
-            "dec": spectrum_data.dec,
-            "redshift": fit_spectrum.z,
-            "fit_kind": "global",
-            "host_decomp_requested": bool(run_host_decomp),
-            "host_decomp_enabled": host_decomp_enabled,
-            "host_decomp_skip_reason": host_skip_reason,
-            "host_model_source": (
-                "template_weighted_sed_on_quasar_grid"
-                if host_decomp_enabled else None
-            ),
-            "host_fit_range": list(host_fit_range),
-            "host_mask_provenance": (
-                "exact" if host_decomp_enabled else "unavailable"
-            ),
-            "host_ppxf_status": (
-                host_fit.status if host_fit is not None else None
-            ),
-            "host_ppxf_reduced_chi2": (
-                float(host_fit.reduced_chi2)
-                if host_fit is not None else None
-            ),
-            "host_fit_reliable": (
-                bool(host_fit.host_fit_reliable)
-                if host_fit is not None else None
-            ),
-            "host_fit_reliability_reasons": (
-                list(host_fit.host_fit_reliability_reasons)
-                if host_fit is not None else []
-            ),
-            "host_fit_quality": (
-                dict(host_fit.quality_metrics)
-                if host_fit is not None else {}
-            ),
-            "host_noise_rescale_factors": (
-                dict(host_fit.noise_rescale_factors)
-                if host_fit is not None else {}
-            ),
-            "host_mask_components_log": (
-                {
-                    key: np.asarray(value, dtype=bool).tolist()
-                    for key, value in host_fit.preprocessed.mask_provenance.items()
-                    if str(key).endswith("_log")
-                    or str(key) == "log_grid_valid"
-                }
-                if host_fit is not None else {}
-            ),
-            "host_mask_component_counts": (
-                {
-                    key: int(np.count_nonzero(value))
-                    for key, value in host_fit.preprocessed.mask_provenance.items()
-                }
-                if host_fit is not None else {}
-            ),
-            "host_template_file": (
-                host_fit.templates.source_path
-                if host_fit is not None else None
-            ),
-            "host_template_wavelength_coverage": (
-                list(host_fit.templates.wavelength_coverage)
-                if host_fit is not None else None
-            ),
-            "galactic_extinction": dict(
-                spectrum_data.metadata.get("galactic_extinction", {})
-            ),
-        }
+    result = _run_global_fit_with_optional_host(
+        spectrum_data,
+        source=source,
+        input_path=descriptor.source,
+        row_index=descriptor.row_index,
+        object_id=str(object_id),
+        run_host_decomp=run_host_decomp,
+        template_root=template_root,
+        template_file=template_file,
+        host_fit_range=host_fit_range,
+        host_config=host_config,
+        galactic_extinction_config=galactic_extinction_config,
+        global_config=global_config,
+        hbeta_config=hbeta_config,
+        mgii_config=mgii_config,
+        halpha_config=halpha_config,
+        lya_nv_config=lya_nv_config,
+        uncertainty_config=uncertainty_config,
+        complexes=complexes,
     )
-    if run_host_decomp and not host_decomp_enabled:
-        result.warnings.append(
-            FitWarning(
-                code="host_decomp_skipped_redshift",
-                message="Host decomposition was requested but skipped by the redshift gate.",
-                severity="info",
-                context={
-                    "redshift": spectrum_data.redshift,
-                    "threshold": 1.2,
-                    "reason": host_skip_reason,
-                },
-            )
-        )
     return result, str(object_id)
 
 
@@ -332,10 +453,10 @@ def _failure_payload(
 
 
 def _run_task(task: _Task) -> Dict[str, Any]:
-    _worker_initializer()
-    store = RunStore.open(task.run_directory)
+    store = _worker_store(task.run_directory)
     descriptor = task.descriptor
     try:
+        load_started = time.perf_counter()
         spectrum_data = task.spectrum_data or read_spectrum(
             descriptor.source,
             row_index=descriptor.row_index,
@@ -343,6 +464,7 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             object_id=descriptor.object_id,
             reader=descriptor.reader,
         )
+        load_seconds = time.perf_counter() - load_started
         options = dict(task.fit_options)
         uncertainty = options["uncertainty_config"]
         options["uncertainty_config"] = UncertaintyConfig(
@@ -355,11 +477,14 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             ),
             refit_host_in_mc=uncertainty.refit_host_in_mc,
         )
+        fit_started = time.perf_counter()
         result, object_id = _fit_spectrum_data(
             spectrum_data,
             descriptor=descriptor,
             **options,
         )
+        fit_seconds = time.perf_counter() - fit_started
+        serialization_started = time.perf_counter()
         payload = workflow_payload(
             result,
             run_id=store.run_id,
@@ -373,6 +498,7 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             },
         )
         staging = store.stage_payload(payload)
+        serialization_seconds = time.perf_counter() - serialization_started
         legacy_files = {}
         if task.legacy_output:
             legacy_files = write_global_line_products(
@@ -385,6 +511,11 @@ def _run_task(task: _Task) -> Dict[str, Any]:
             "object_id": object_id,
             "staging": str(staging),
             "legacy_files": legacy_files,
+            "timings": {
+                "input_load_seconds": load_seconds,
+                "numerical_fit_seconds": fit_seconds,
+                "serialization_staging_seconds": serialization_seconds,
+            },
         }
     except Exception as exception:
         staging = store.stage_payload(
@@ -421,17 +552,21 @@ def _configuration(
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
+    resolved_host = _host_config_with_global_iron(
+        resolve_host_runtime_config(host_config, template_root=template_root,
+                                    template_file=template_file, host_fit_range=host_fit_range), global_config)
     return {
+        "global_model_id": global_config.model_id if global_config is not None else DEFAULT_GLOBAL_MODEL_ID,
         "run_host_decomp": bool(run_host_decomp),
-        "template_root": str(template_root),
-        "template_file": str(template_file),
-        "host_fit_range": tuple(host_fit_range),
-        "host_config": host_config,
+        "template_root": resolved_host.template_root,
+        "template_file": resolved_host.template_file,
+        "host_fit_range": resolved_host.fit_range,
+        "host_config": asdict(resolved_host),
         "galactic_extinction_config": asdict(galactic_extinction_config),
         "global_config": (
             asdict(global_config)
             if global_config is not None
-            else {"preset": "automatic_lya_safe"}
+            else {"preset": "automatic_lya_safe", "model_id": DEFAULT_GLOBAL_MODEL_ID}
         ),
         "hbeta_config": asdict(hbeta_config),
         "mgii_config": asdict(mgii_config),
@@ -448,9 +583,9 @@ def _configuration(
 def _configuration_overrides(configuration: Dict[str, Any]) -> Dict[str, Any]:
     defaults = _configuration(
         run_host_decomp=False,
-        template_root="~/tools/ppxf_data",
-        template_file="spectra_emiles_9.0.npz",
-        host_fit_range=(3600.0, 7000.0),
+        template_root=None,
+        template_file=None,
+        host_fit_range=None,
         host_config=None,
         galactic_extinction_config=GalacticExtinctionConfig(),
         global_config=None,
@@ -485,6 +620,10 @@ def _configuration_overrides(configuration: Dict[str, Any]) -> Dict[str, Any]:
             changed = diff(value, default_value)
             if changed != {}:
                 overrides[key] = changed
+    # Keep the stable model identity even when all settings are defaults.
+    overrides["global_model_id"] = configuration["global_model_id"]
+    if configuration["run_host_decomp"]:
+        overrides["host_config"] = configuration["host_config"]
     return overrides
 
 
@@ -504,11 +643,13 @@ def _fit_options(
     uncertainty_config,
     complexes,
 ) -> Dict[str, Any]:
+    host_config = resolve_host_runtime_config(host_config, template_root=template_root,
+                                            template_file=template_file, host_fit_range=host_fit_range)
     return {
         "run_host_decomp": bool(run_host_decomp),
-        "template_root": template_root,
-        "template_file": template_file,
-        "host_fit_range": tuple(host_fit_range),
+        "template_root": host_config.template_root,
+        "template_file": host_config.template_file,
+        "host_fit_range": host_config.fit_range,
         "host_config": host_config,
         "galactic_extinction_config": galactic_extinction_config,
         "global_config": global_config,
@@ -532,9 +673,9 @@ def fit_object_to_store(
     flux_unit: Optional[str] = None,
     flux_scale: Optional[float] = None,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range=(3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range=None,
     host_config=None,
     galactic_extinction_config: Optional[
         GalacticExtinctionConfig
@@ -633,6 +774,7 @@ def fit_object_to_store(
                 "rest_frame_conversion": dict(
                     prepared_spectrum.metadata.rest_frame_conversion
                 ),
+                "survey": prepared_spectrum.metadata.survey,
                 "spectrum_metadata": (
                     prepared_spectrum.metadata.to_dict()
                 ),
@@ -731,6 +873,7 @@ def _iter_inputs(
     row_indices,
     filter_expression,
     parquet_batch_size,
+    object_keys: Optional[set[str]] = None,
 ) -> Iterator[tuple[SpectrumInput, Optional[SpectrumData]]]:
     items = [inputs] if isinstance(inputs, (str, Path)) else list(inputs)
     parquet_spectra = []
@@ -748,17 +891,7 @@ def _iter_inputs(
         if suffix == ".csv":
             manifest_descriptors.extend(read_input_manifest(str(path)))
         elif suffix == ".parquet":
-            import pyarrow.parquet as pq
-
-            columns = {name.lower() for name in pq.read_schema(path).names}
-            has_wave = any(
-                alias in columns
-                for alias in ("wavelength", "wave", "lambda", "lam", "obs_wave")
-            )
-            has_flux = any(
-                alias in columns for alias in ("flux", "flam", "flux_lambda")
-            )
-            if has_wave and has_flux:
+            if _is_spectral_parquet(path):
                 parquet_spectra.append(str(path))
             else:
                 manifest_descriptors.extend(read_input_manifest(str(path)))
@@ -772,7 +905,8 @@ def _iter_inputs(
             batch_size=parquet_batch_size,
         )
     for descriptor in manifest_descriptors:
-        yield descriptor, None
+        if object_keys is None or descriptor.object_key in object_keys:
+            yield descriptor, None
     discoverable = [
         str(item)
         for item in remaining
@@ -780,7 +914,8 @@ def _iter_inputs(
     ]
     if discoverable:
         for descriptor in discover_fits_inputs(discoverable):
-            yield descriptor, None
+            if object_keys is None or descriptor.object_key in object_keys:
+                yield descriptor, None
 
 
 def fit_batch(
@@ -795,9 +930,9 @@ def fit_batch(
     num_shards: int = 1,
     shard_index: int = 0,
     run_host_decomp: bool = False,
-    template_root: str = "~/tools/ppxf_data",
-    template_file: str = "spectra_emiles_9.0.npz",
-    host_fit_range=(3600.0, 7000.0),
+    template_root: Optional[str] = None,
+    template_file: Optional[str] = None,
+    host_fit_range=None,
     host_config=None,
     galactic_extinction_config: Optional[
         GalacticExtinctionConfig
@@ -815,11 +950,26 @@ def fit_batch(
     finalize: bool = True,
     compact_models: bool = False,
     write_legacy_products: bool = False,
+    manifest_update_interval: int = 128,
+    show_progress: bool = True,
+    progress_total: Optional[int] = None,
+    resume_planning: str = "auto",
+    parquet_identity_batch_size: int = 4096,
 ) -> BatchResult:
     """Fit a Parquet or FITS sample with resumable process parallelism."""
 
+    batch_started = time.perf_counter()
     if num_shards < 1 or not 0 <= shard_index < num_shards:
         raise ValueError("Require num_shards >= 1 and 0 <= shard_index < num_shards.")
+    if manifest_update_interval < 1:
+        raise ValueError("manifest_update_interval must be positive.")
+    if resume_planning not in {"auto", "lightweight", "legacy"}:
+        raise ValueError("resume_planning must be 'auto', 'lightweight', or 'legacy'")
+    if compact_models:
+        raise ValueError(
+            "compact_models is not implemented for schema-v5 per-object shards; "
+            "the misleading no-op has been disabled."
+        )
     hbeta_config = hbeta_config or HbetaComplexConfig()
     mgii_config = mgii_config or MgIIComplexConfig()
     halpha_config = halpha_config or HalphaComplexConfig()
@@ -828,7 +978,6 @@ def fit_batch(
     galactic_extinction_config = (
         galactic_extinction_config or GalacticExtinctionConfig()
     )
-    preflight_galactic_extinction(galactic_extinction_config)
     configuration = _configuration(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
@@ -852,8 +1001,78 @@ def fit_batch(
         run_id=run_id,
         resume=resume,
     )
-    completed = store.completed_keys() if resume else set()
-    failed = store.failed_keys() if resume and not retry_failures else set()
+    startup_started = time.perf_counter()
+    authoritative = None
+    startup_reconcile_seconds = 0.0
+    resume_plan: Optional[BatchResumePlan] = None
+    effective_resume_mode = "legacy"
+    if resume and resume_planning != "legacy":
+        try:
+            resume_plan = _plan_batch_resume(
+                inputs,
+                store,
+                row_indices=row_indices,
+                filter_expression=filter_expression,
+                retry_failures=retry_failures,
+                num_shards=num_shards,
+                shard_index=shard_index,
+                parquet_identity_batch_size=parquet_identity_batch_size,
+            )
+            effective_resume_mode = "lightweight"
+        except LightweightResumeUnavailable:
+            if resume_planning == "lightweight":
+                raise
+            resume_plan = None
+            effective_resume_mode = "legacy"
+    if resume_plan is None:
+        authoritative = store.reconcile_manifest()
+        startup_reconcile_seconds = time.perf_counter() - startup_started
+        completed = set(authoritative["completed_keys"]) if resume else set()
+        all_failed = set(authoritative["failed_keys"]) if resume else set()
+    else:
+        startup_reconcile_seconds = float(
+            resume_plan.timings["resume_manifest_seconds"]
+        )
+        completed = set(resume_plan.completed_object_keys)
+        all_failed = set(resume_plan.failed_object_keys)
+    failed = set(all_failed) if resume and not retry_failures else set()
+
+    worker_count = _auto_workers(None) if n_workers == "auto" else int(n_workers)
+    worker_count = max(worker_count, 1)
+    if worker_count > 1 and not _process_pool_available():
+        worker_count = 1
+    if resume_plan is not None and resume_plan.unfinished_count == 0:
+        timings = {
+            **dict(resume_plan.timings),
+            "startup_manifest_reconciliation_seconds": startup_reconcile_seconds,
+            "resume_spectral_load_seconds": 0.0,
+            "worker_startup_seconds": 0.0,
+            "numerical_fit_seconds": 0.0,
+            "serialization_seconds": 0.0,
+            "total_seconds": time.perf_counter() - batch_started,
+            "resume_expected_count": resume_plan.expected_count,
+            "resume_terminal_count": resume_plan.skipped_count,
+            "resume_unfinished_count": 0,
+            "resume_vector_rows_loaded": 0,
+            "resume_vector_rows_avoided": resume_plan.skipped_count,
+            "resume_mode": effective_resume_mode,
+            "spectral_columns_projected": "none",
+        }
+        store.manifest["performance_timings_last_invocation"] = timings
+        store._write_manifest(reconcile=False)
+        return BatchResult(
+            run_directory=str(store.path),
+            run_id=store.run_id,
+            n_submitted=0,
+            n_completed=0,
+            n_failed=0,
+            n_skipped=resume_plan.skipped_count,
+            n_workers=worker_count,
+            datasets={},
+            timings=timings,
+        )
+
+    preflight_galactic_extinction(galactic_extinction_config)
     options = _fit_options(
         run_host_decomp=run_host_decomp,
         template_root=template_root,
@@ -869,15 +1088,27 @@ def fit_batch(
         uncertainty_config=uncertainty_config,
         complexes=complexes,
     )
+    planned_object_keys = (
+        set(resume_plan.unfinished_object_keys) if resume_plan is not None else None
+    )
     iterator = _iter_inputs(
         inputs,
-        row_indices=row_indices,
+        row_indices=(
+            resume_plan.unfinished_row_indices
+            if resume_plan is not None and resume_plan.unfinished_row_indices
+            else row_indices
+        ),
         filter_expression=filter_expression,
         parquet_batch_size=parquet_batch_size,
+        object_keys=planned_object_keys,
     )
+    vector_rows_loaded = 0
 
     def selected():
+        nonlocal vector_rows_loaded
         for descriptor, spectrum_data in iterator:
+            if spectrum_data is not None:
+                vector_rows_loaded += 1
             digest = int(
                 hashlib.sha256(descriptor.object_key.encode("utf-8")).hexdigest(),
                 16,
@@ -887,6 +1118,8 @@ def fit_batch(
             if descriptor.object_key in completed or descriptor.object_key in failed:
                 yield None
                 continue
+            if spectrum_data is None:
+                vector_rows_loaded += 1
             yield _Task(
                 descriptor=descriptor,
                 spectrum_data=spectrum_data,
@@ -915,25 +1148,72 @@ def fit_batch(
             yield parquet_group
 
     task_iterator = iter(grouped_tasks())
-    worker_count = _auto_workers(None) if n_workers == "auto" else int(n_workers)
-    worker_count = max(worker_count, 1)
-    if worker_count > 1 and not _process_pool_available():
-        worker_count = 1
-    submitted = completed_count = failed_count = skipped_count = 0
+    submitted = completed_count = failed_count = 0
+    skipped_count = resume_plan.skipped_count if resume_plan is not None else 0
+    promoted_since_manifest = 0
+    promotion_seconds = 0.0
+    lightweight_manifest_seconds = 0.0
+    worker_timings: Dict[str, list[float]] = {
+        "input_load_seconds": [],
+        "numerical_fit_seconds": [],
+        "serialization_staging_seconds": [],
+    }
+    worker_startup_seconds = 0.0
+    progress = None
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        progress = tqdm(
+            total=int(progress_total) if progress_total is not None else None,
+            desc="qsospec fits",
+            unit="object",
+            dynamic_ncols=True,
+        )
+
+    def update_progress() -> None:
+        if progress is not None:
+            progress.update(1)
+            progress.set_postfix(
+                completed=completed_count,
+                failed=failed_count,
+                skipped=skipped_count,
+                refresh=False,
+            )
 
     def handle(output):
-        nonlocal completed_count, failed_count
-        store.promote(output["staging"])
+        nonlocal completed_count, failed_count, promoted_since_manifest
+        nonlocal promotion_seconds, lightweight_manifest_seconds
+        promotion_started = time.perf_counter()
+        store.promote(output["staging"], update_manifest=False)
+        promotion_seconds += time.perf_counter() - promotion_started
+        object_key = output["object_key"]
         if output["success"]:
-            store.clear_failure(output["object_key"])
+            store.clear_failure(object_key)
+            completed.add(object_key)
+            all_failed.discard(object_key)
             completed_count += 1
         else:
+            completed.discard(object_key)
+            all_failed.add(object_key)
             failed_count += 1
+        update_progress()
+        for name, value in output.get("timings", {}).items():
+            worker_timings.setdefault(name, []).append(float(value))
+        promoted_since_manifest += 1
+        if promoted_since_manifest % manifest_update_interval == 0:
+            update_started = time.perf_counter()
+            store.update_manifest_counts(
+                completed_count=len(completed),
+                failed_count=len(all_failed),
+                promoted_since_reconciliation=promoted_since_manifest,
+            )
+            lightweight_manifest_seconds += time.perf_counter() - update_started
 
     if worker_count == 1:
         for task_group in task_iterator:
             if task_group is None:
                 skipped_count += 1
+                update_progress()
                 continue
             submitted += len(task_group)
             for output in _run_task_group(task_group):
@@ -942,11 +1222,13 @@ def fit_batch(
         _worker_initializer()
         import multiprocessing as mp
 
+        worker_startup_started = time.perf_counter()
         with ProcessPoolExecutor(
             max_workers=worker_count,
             mp_context=mp.get_context("spawn"),
             initializer=_worker_initializer,
         ) as executor:
+            worker_startup_seconds = time.perf_counter() - worker_startup_started
             pending = {}
             exhausted = False
             while pending or not exhausted:
@@ -958,6 +1240,7 @@ def fit_batch(
                         break
                     if task_group is None:
                         skipped_count += 1
+                        update_progress()
                         continue
                     submitted += len(task_group)
                     future = executor.submit(_run_task_group, task_group)
@@ -973,18 +1256,76 @@ def fit_batch(
                         except Exception as exception:
                             outputs = []
                             for task in task_group:
-                                store.write_payload(
-                                    _failure_payload(
-                                        store, task.descriptor, exception
-                                    )
+                                staged = store.stage_payload(
+                                    _failure_payload(store, task.descriptor, exception)
                                 )
-                                failed_count += 1
+                                handle(
+                                    {
+                                        "success": False,
+                                        "object_key": task.descriptor.object_key,
+                                        "staging": str(staged),
+                                    }
+                                )
                         for output in outputs:
                             handle(output)
-    datasets = (
-        finalize_run(store)
-        if finalize and num_shards == 1 else {}
-    )
+    if progress is not None:
+        progress.close()
+    if promoted_since_manifest % manifest_update_interval:
+        update_started = time.perf_counter()
+        store.update_manifest_counts(
+            completed_count=len(completed),
+            failed_count=len(all_failed),
+            promoted_since_reconciliation=promoted_since_manifest,
+        )
+        lightweight_manifest_seconds += time.perf_counter() - update_started
+    final_reconcile_started = time.perf_counter()
+    datasets = finalize_run(store) if finalize and num_shards == 1 else {}
+    final_reconcile_seconds = time.perf_counter() - final_reconcile_started
+
+    def summarize(values: Sequence[float]) -> Dict[str, float]:
+        array = np.asarray(values, dtype=float)
+        if not array.size:
+            return {"count": 0, "sum": 0.0, "median": np.nan, "p95": np.nan}
+        return {
+            "count": int(array.size),
+            "sum": float(np.sum(array)),
+            "median": float(np.median(array)),
+            "p95": float(np.percentile(array, 95.0)),
+        }
+
+    timings = {
+        **(dict(resume_plan.timings) if resume_plan is not None else {}),
+        "startup_manifest_reconciliation_seconds": startup_reconcile_seconds,
+        "parent_promotion_seconds": promotion_seconds,
+        "lightweight_manifest_update_seconds": lightweight_manifest_seconds,
+        "finalization_reconciliation_seconds": final_reconcile_seconds,
+        "worker": {
+            name: summarize(values) for name, values in worker_timings.items()
+        },
+        "manifest_update_interval": int(manifest_update_interval),
+        "resume_spectral_load_seconds": float(sum(worker_timings["input_load_seconds"])),
+        "worker_startup_seconds": worker_startup_seconds,
+        "numerical_fit_seconds": float(sum(worker_timings["numerical_fit_seconds"])),
+        "serialization_seconds": float(
+            sum(worker_timings["serialization_staging_seconds"]) + promotion_seconds
+        ),
+        "total_seconds": time.perf_counter() - batch_started,
+        "resume_expected_count": (
+            resume_plan.expected_count if resume_plan is not None else submitted + skipped_count
+        ),
+        "resume_terminal_count": skipped_count,
+        "resume_unfinished_count": (
+            resume_plan.unfinished_count if resume_plan is not None else submitted
+        ),
+        "resume_vector_rows_loaded": vector_rows_loaded,
+        "resume_vector_rows_avoided": (
+            skipped_count if effective_resume_mode == "lightweight" else 0
+        ),
+        "resume_mode": effective_resume_mode,
+        "spectral_columns_projected": "selected spectrum columns",
+    }
+    store.manifest["performance_timings_last_invocation"] = timings
+    store._write_manifest(reconcile=False)
     return BatchResult(
         run_directory=str(store.path),
         run_id=store.run_id,
@@ -994,4 +1335,5 @@ def fit_batch(
         n_skipped=skipped_count,
         n_workers=worker_count,
         datasets=datasets,
+        timings=timings,
     )

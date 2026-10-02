@@ -42,6 +42,7 @@ class PackedParameters:
     iron_template: Optional[IronTemplate] = None
     iron_template_name: Optional[str] = None
     iron_velocity_step_kms: float = 25.0
+    iron_width_mode: str = "legacy"
 
     def unpack(self, theta: np.ndarray) -> Dict[str, float]:
         """Return ``{parameter_name: value}`` for a packed vector."""
@@ -166,7 +167,9 @@ def pack_line_complex_parameters(
         initial.append(_clip_initial(config.iron.amp, amp_lo, amp_hi))
         lower.append(amp_lo)
         upper.append(amp_hi)
-        fwhm_lo, fwhm_hi = _normalize_bounds(config.iron.fwhm_bounds, "iron.fwhm_kms")
+        from .templates.iron import resolve_iron_bounds
+        bounds = resolve_iron_bounds(iron_template, config.iron.fwhm_bounds, config.iron.width_mode) if iron_template is not None else config.iron.fwhm_bounds
+        fwhm_lo, fwhm_hi = _normalize_bounds(bounds, "iron.fwhm_kms")
         iron_fwhm_index = len(names)
         names.append("iron.fwhm_kms")
         initial.append(_clip_initial(config.iron.fwhm_kms, fwhm_lo, fwhm_hi))
@@ -190,4 +193,5 @@ def pack_line_complex_parameters(
         iron_basis=basis,
         iron_template=iron_template,
         iron_template_name=iron_template_name,
+        iron_width_mode=config.iron.width_mode if config.iron is not None else "legacy",
     )

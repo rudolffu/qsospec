@@ -9,7 +9,9 @@ Configuration API
    GalacticExtinctionConfig
    GlobalContinuumConfig
    PowerLawConfig
+   PolynomialContinuumConfig
    IronTemplateConfig
+   RegionalIronConfig
    BalmerPseudoContinuumConfig
    HbetaComplexConfig
    MgIIComplexConfig
@@ -23,3 +25,7 @@ Configuration API
    ComponentRecipe
    ComplexRecipe
    GlobalQAPlotConfig
+   HostDecompConfig
+   HostBroadLinePrefitConfig
+   HostAgnPseudoContinuumConfig
+   HostCoverageConfig

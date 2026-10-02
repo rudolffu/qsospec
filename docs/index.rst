@@ -104,6 +104,7 @@ What is included
    :caption: Contributing
 
    contributing/index
+   benchmarks/FAST_RESUME_BENCHMARK
 
 Project links
 -------------

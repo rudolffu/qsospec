@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from .measurement_vocabulary import is_final_host_fraction_name
 from .spectrum import Spectrum
 from .warnings import FitWarning
 
@@ -43,6 +44,8 @@ class GlobalContinuumResult:
             "message": self.message,
             "param_values": dict(self.param_values),
             "param_errors": dict(self.param_errors),
+            "covariance": None if self.covariance is None else self.covariance.tolist(),
+            "covariance_parameter_names": list(self.param_values),
             "chi2": float(self.chi2),
             "dof": int(self.dof),
             "reduced_chi2": float(self.reduced_chi2),
@@ -92,6 +95,8 @@ class EmissionComplexResult:
             "selected_model": self.selected_model,
             "param_values": dict(self.param_values),
             "param_errors": dict(self.param_errors),
+            "covariance": None if self.covariance is None else self.covariance.tolist(),
+            "covariance_parameter_names": list(self.param_values),
             "metrics": dict(self.metrics),
             "metric_errors": dict(self.metric_errors),
             "chi2": float(self.chi2),
@@ -124,7 +129,9 @@ class WorkflowResult:
     total_spectrum: Optional[Spectrum] = None
     host_fit: Optional[Any] = None
     host_sed: Optional[Any] = None
+    host_reconstruction_state: Optional[Dict[str, Any]] = None
     host_model_on_quasar_grid: Optional[np.ndarray] = None
+    host_component_models: Dict[str, np.ndarray] = field(default_factory=dict)
     host_fit_mask: Optional[np.ndarray] = None
     host_emission_mask: Optional[np.ndarray] = None
     host_warnings: List[str] = field(default_factory=list)
@@ -240,10 +247,27 @@ class WorkflowResult:
                     "host_ppxf_reduced_chi2"
                 ),
                 "template_file": self.metadata.get("host_template_file"),
+                "strategy_requested": self.metadata.get(
+                    "host_strategy_requested"
+                ),
+                "strategy_used": self.metadata.get("host_strategy_used"),
+                "strategy_fallback": self.metadata.get(
+                    "host_strategy_fallback"
+                ),
+                "coverage_class": self.metadata.get(
+                    "host_coverage_class"
+                ),
+                "agn_fraction_flux_global": self.metadata.get(
+                    "ppxf_agn_fraction_flux_global"
+                ),
+                "pseudocontinuum_width_kms": self.metadata.get(
+                    "host_fit_quality", {}
+                ).get("pseudocontinuum_width_final_kms"),
+                "closure": self.metadata.get("host_closure", {}),
                 "fractions": {
                     name: value
                     for name, value in continuum_samples.items()
-                    if name.startswith("fracHost_")
+                    if is_final_host_fraction_name(name)
                 },
             },
             "power_law_mode": self.metadata.get(

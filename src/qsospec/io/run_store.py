@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timezone
-from contextlib import contextmanager
 import hashlib
-from importlib.metadata import PackageNotFoundError, version
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from collections import Counter
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 from uuid import uuid4
 
@@ -27,11 +28,22 @@ from ..global_result import (
     WorkflowResult,
 )
 from ..metadata import resolve_spectrum_metadata
+from ..fitting.line_lsf import resolution_to_dict, resolution_from_dict
+from ..measurement_vocabulary import (
+    HOST_FRACTION_DELTA_DEFINITION_ID,
+    MEASUREMENT_VOCABULARY_VERSION,
+    canonicalize_host_fit_samples,
+    canonicalize_legacy_measurement_name,
+    delta_host_fraction_name,
+    host_sample_measurement_descriptor,
+    is_final_host_fraction_name,
+    ppxf_host_sample_name,
+)
 from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "7"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -278,7 +290,7 @@ def _float(value: Any) -> Optional[float]:
 
 def _feature_and_role(name: str) -> tuple[Optional[str], Optional[str]]:
     lowered = name.lower()
-    roles = ("very_broad", "broad", "narrow", "wing", "blend")
+    roles = ("very_broad", "broad", "narrow", "wing", "full", "blend")
     for role in roles:
         token = f"_{role}_"
         if token in lowered:
@@ -301,12 +313,19 @@ def _measurement_rows(
         values: Mapping[str, Any],
         errors: Mapping[str, Any],
         method: str,
+        units: Optional[Mapping[str, str]] = None,
+        metadata_by_quantity: Optional[
+            Mapping[str, Mapping[str, Any]]
+        ] = None,
     ) -> None:
+        from ..uncertainties import measurement_key
         for quantity, value in values.items():
             numeric = _float(value)
             if numeric is None:
                 continue
             feature_id, role = _feature_and_role(str(quantity))
+            scope = "line" if section == "complex_metric" else "continuum_sample" if section == "continuum_sample" else "derived"
+            uncertainty_key = measurement_key(scope, str(quantity), recipe_id=recipe_id if scope == "line" else None)
             rows.append(
                 {
                     "run_id": run_id,
@@ -319,9 +338,18 @@ def _measurement_rows(
                     "quantity": str(quantity),
                     "value": numeric,
                     "error": _float(errors.get(quantity)),
-                    "unit": None,
+                    "unit": (units or {}).get(str(quantity)),
                     "method": method,
-                    "metadata": [],
+                    "metadata": _key_values({
+                        "uncertainty_status": "available" if _float(errors.get(quantity)) is not None else "unavailable",
+                        "uncertainty_method": ("local_gaussian" if section.endswith("_parameter") else (result.metadata.get("continuum_sample_uncertainty_method", "local_gaussian") if section == "continuum_sample" else method)) if _float(errors.get(quantity)) is not None else "unavailable",
+                        "uncertainty_interval": ({} if section.endswith("_parameter") else result.monte_carlo.get("percentiles", {})).get(
+                            uncertainty_key),
+                        "valid_uncertainty_trials": ({} if section.endswith("_parameter") else result.monte_carlo.get("valid_trial_counts", {})).get(
+                            uncertainty_key),
+                        "uncertainty_conditioning": "fixed_host" if section == "continuum_parameter" else "see_scope_covariance_block",
+                        **((metadata_by_quantity or {}).get(str(quantity), {})),
+                    }),
                 }
             )
 
@@ -360,16 +388,269 @@ def _measurement_rows(
             fit.param_errors,
             "covariance",
         )
+        peak_units, peak_metadata = {}, {}
+        for key, peak in fit.metadata.get("line_peaks", {}).get("measurements", {}).items():
+            for suffix, unit in (("rest_angstrom", "Angstrom"), ("observed_angstrom", "Angstrom"),
+                                 ("velocity_kms", "km/s"), ("selection_flux", "input_flux")):
+                quantity = f"{key}_peak_{suffix}"
+                peak_units[quantity] = unit
+                peak_metadata[quantity] = {
+                    "peak_status": peak["status"],
+                    "uncertainty_status": peak["uncertainty_status"],
+                    "uncertainty_method": peak["uncertainty_method"],
+                    "component_ids": peak["component_ids"],
+                    "vacuum_wavelength": True,
+                    "reference_wave": peak["reference_wave"],
+                }
         add(
             "complex_metric",
             recipe_id,
             fit.metrics,
             fit.metric_errors,
-            "covariance",
+            fit.metadata.get("measurement_uncertainty_method", "covariance"),
+            units=peak_units,
+            metadata_by_quantity=peak_metadata,
         )
-    for quantity, value in result.metadata.get("continuum_samples", {}).items():
-        add("continuum_sample", None, {quantity: value}, {}, "interpolation")
+    host_strategy = result.metadata.get("host_strategy_used")
+    continuum_samples = result.metadata.get("continuum_samples", {})
+    for quantity, value in continuum_samples.items():
+        descriptor = host_sample_measurement_descriptor(
+            "continuum_sample",
+            str(quantity),
+            host_strategy_used=host_strategy,
+        )
+        add(
+            "continuum_sample",
+            None,
+            {quantity: value},
+            result.metadata.get("continuum_sample_errors", {}),
+            descriptor["method"] if descriptor else "interpolation",
+            units=(
+                {quantity: descriptor["unit"]}
+                if descriptor else None
+            ),
+            metadata_by_quantity=(
+                {quantity: descriptor["metadata"]}
+                if descriptor else None
+            ),
+        )
+    host_fit_samples = result.metadata.get("host_fit_samples", {})
+    for quantity, value in host_fit_samples.items():
+        descriptor = host_sample_measurement_descriptor(
+            "host_sample",
+            str(quantity),
+            host_strategy_used=host_strategy,
+        )
+        add(
+            "host_sample",
+            None,
+            {quantity: value},
+            {},
+            descriptor["method"] if descriptor else "ppxf_component_interpolation",
+            units={quantity: (
+                descriptor["unit"]
+                if descriptor else "input_flux_density"
+            )},
+            metadata_by_quantity=(
+                {quantity: descriptor["metadata"]}
+                if descriptor else None
+            ),
+        )
+    for final_name, final_value in continuum_samples.items():
+        if not is_final_host_fraction_name(str(final_name)):
+            continue
+        suffix = str(final_name).removeprefix("fracHost_")
+        ppxf_name = ppxf_host_sample_name("host_fraction", suffix)
+        ppxf_value = host_fit_samples.get(ppxf_name)
+        final_numeric = _float(final_value)
+        ppxf_numeric = _float(ppxf_value)
+        if (
+            final_numeric is None
+            or ppxf_numeric is None
+            or not np.isfinite(final_numeric)
+            or not np.isfinite(ppxf_numeric)
+        ):
+            continue
+        delta_name = delta_host_fraction_name(suffix)
+        descriptor = host_sample_measurement_descriptor(
+            "continuum_sample",
+            str(final_name),
+            host_strategy_used=host_strategy,
+        )
+        wavelength = (
+            descriptor["metadata"].get("wavelength_rest_angstrom")
+            if descriptor else None
+        )
+        add(
+            "host_metric",
+            None,
+            {delta_name: final_numeric - ppxf_numeric},
+            {},
+            "derived_host_fraction_comparison",
+            units={delta_name: "dimensionless"},
+            metadata_by_quantity={
+                delta_name: {
+                    "measurement_vocabulary_version": (
+                        MEASUREMENT_VOCABULARY_VERSION
+                    ),
+                    "definition_id": HOST_FRACTION_DELTA_DEFINITION_ID,
+                    "final_quantity": str(final_name),
+                    "ppxf_quantity": ppxf_name,
+                    "wavelength_rest_angstrom": wavelength,
+                    "sign_convention": (
+                        "positive means the final qsospec-refined fraction "
+                        "is more host-dominated than the direct pPXF fraction"
+                    ),
+                    "host_strategy_used": host_strategy,
+                }
+            },
+        )
+    host_quality = result.metadata.get("host_fit_quality", {})
+    host_scalars = {
+        "ppxf_agn_fraction_flux_global": result.metadata.get(
+            "ppxf_agn_fraction_flux_global"
+        ),
+    }
+    for quantity in (
+        "broad_prefit_fwhm_kms",
+        "broad_prefit_fwhm_error_kms",
+        "broad_prefit_flux_snr",
+        "broad_prefit_fwhm_snr",
+        "pseudocontinuum_width_initial_kms",
+        "pseudocontinuum_width_final_kms",
+        "pseudocontinuum_width_iterations",
+        "pseudocontinuum_width_change_kms",
+        "closure_rms",
+        "closure_median_absolute",
+        "closure_p95_absolute",
+        "closure_max_absolute",
+        "closure_relative_to_normalization",
+        "broad_line_prefit_seconds",
+        "agn_template_build_seconds",
+        "stellar_template_prepare_seconds",
+        "ppxf_fit_seconds",
+        "host_ppxf_total_seconds",
+        "host_decomposition_seconds",
+        "pseudowidth_refit_seconds",
+        "host_sed_prediction_seconds",
+        "final_qsospec_seconds",
+        "total_host_workflow_seconds",
+        "template_sharper_than_data_fraction",
+        "template_equal_to_data_fraction",
+        "template_coarser_than_data_fraction",
+        "template_coarser_than_data_fraction_goodpixels",
+        "template_coarser_wave_min",
+        "template_coarser_wave_max",
+        "median_template_minus_data_sigma_angstrom",
+        "p95_template_minus_data_sigma_angstrom",
+        "maximum_template_minus_data_sigma_angstrom",
+        "median_template_minus_data_sigma_kms",
+        "p95_template_minus_data_sigma_kms",
+        "maximum_template_minus_data_sigma_kms",
+        "additional_template_sigma_nonzero_fraction",
+        "additional_template_sigma_median_angstrom",
+        "additional_template_sigma_p95_angstrom",
+        "source_template_load_seconds",
+        "lsf_interpolation_seconds",
+        "runtime_convolution_seconds",
+        "preconvolved_cache_read_seconds",
+        "preconvolved_validation_seconds",
+        "host_sed_reconstruction_seconds",
+    ):
+        if quantity in host_quality:
+            host_scalars[quantity] = host_quality[quantity]
+    width_metrics = {
+        "broad_prefit_fwhm_kms",
+        "broad_prefit_fwhm_error_kms",
+        "pseudocontinuum_width_initial_kms",
+        "pseudocontinuum_width_final_kms",
+        "pseudocontinuum_width_change_kms",
+    }
+    timing_metrics = {
+        name for name in host_scalars
+        if name.endswith("_seconds")
+    }
+    host_units = {
+        **{name: "km/s" for name in width_metrics},
+        **{name: "s" for name in timing_metrics},
+        "ppxf_agn_fraction_flux_global": "dimensionless",
+        "closure_relative_to_normalization": "dimensionless",
+        "template_coarser_wave_min": "Angstrom",
+        "template_coarser_wave_max": "Angstrom",
+        "median_template_minus_data_sigma_angstrom": "Angstrom",
+        "p95_template_minus_data_sigma_angstrom": "Angstrom",
+        "maximum_template_minus_data_sigma_angstrom": "Angstrom",
+        "additional_template_sigma_median_angstrom": "Angstrom",
+        "additional_template_sigma_p95_angstrom": "Angstrom",
+        "median_template_minus_data_sigma_kms": "km/s",
+        "p95_template_minus_data_sigma_kms": "km/s",
+        "maximum_template_minus_data_sigma_kms": "km/s",
+    }
+    add(
+        "host_metric",
+        None,
+        host_scalars,
+        {},
+        "host_decomposition",
+        units=host_units,
+    )
     return rows
+
+
+def canonicalize_measurement_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return vocabulary-v2 measurement rows without mutating stored rows."""
+
+    output: list[dict[str, Any]] = []
+    host_keys: dict[tuple[str, str], tuple[str, float | None]] = {}
+    for raw_row in rows:
+        row = dict(raw_row)
+        section = str(row.get("section", ""))
+        stored_quantity = str(row.get("quantity", ""))
+        quantity, legacy_metadata = canonicalize_legacy_measurement_name(
+            section, stored_quantity
+        )
+        row["quantity"] = quantity
+        metadata = _from_key_values(row.get("metadata"))
+        descriptor = host_sample_measurement_descriptor(
+            section,
+            quantity,
+            host_strategy_used=metadata.get("host_strategy_used"),
+        )
+        if descriptor is not None:
+            metadata = {**descriptor["metadata"], **metadata}
+            row["unit"] = descriptor["unit"]
+            row["method"] = descriptor["method"]
+        metadata.update(legacy_metadata)
+        row["metadata"] = _key_values(metadata)
+
+        if descriptor is not None:
+            key = (str(row.get("object_key", "")), quantity)
+            value = _float(row.get("value"))
+            if key in host_keys:
+                previous_section, previous_value = host_keys[key]
+                raise ValueError(
+                    "Canonical host-measurement collision for object "
+                    f"{key[0]!r}, quantity {quantity!r}: sections "
+                    f"{previous_section!r} and {section!r}, values "
+                    f"{previous_value!r} and {value!r}. Explicit source "
+                    "resolution is required."
+                )
+            host_keys[key] = (section, value)
+        output.append(row)
+    return output
+
+
+def canonicalize_measurement_table(table: pa.Table) -> pa.Table:
+    """Return a vocabulary-v2 Arrow view of a raw measurement table."""
+
+    if table.num_rows == 0:
+        return _empty_table("measurements")
+    return pa.Table.from_pylist(
+        canonicalize_measurement_rows(table.to_pylist()),
+        schema=SCHEMAS["measurements"],
+    )
 
 
 def _warning_rows(
@@ -419,6 +700,8 @@ def _warning_rows(
 
 def _component_role(name: str) -> str:
     lowered = name.lower()
+    if lowered.endswith("_core"):
+        return "narrow"
     for role in ("very_broad", "broad", "narrow", "wing", "blend"):
         if role in lowered:
             return role
@@ -431,6 +714,17 @@ def _model_row(
     object_key: str,
     object_id: str,
 ) -> dict[str, Any]:
+    from ..uncertainties import covariance_block
+    workflow_metadata = dict(result.metadata)
+    workflow_metadata["covariance_blocks"] = {
+        "continuum": covariance_block(result.continuum, "continuum"),
+        **{key: covariance_block(fit, key) for key, fit in result.line_complexes.items()},
+    }
+    workflow_metadata["matched_uncertainty_draws"] = result.monte_carlo
+    if result.host_reconstruction_state is not None:
+        workflow_metadata["host_reconstruction_state"] = dict(
+            result.host_reconstruction_state
+        )
     components = [
         {
             "section": "continuum",
@@ -441,6 +735,16 @@ def _model_row(
         }
         for name, values in result.continuum.component_models.items()
     ]
+    components.extend(
+        {
+            "section": "host",
+            "recipe_id": "ppxf_host",
+            "name": name,
+            "role": "host" if name == "stellar" else "agn",
+            "values": np.asarray(values, dtype=float).tolist(),
+        }
+        for name, values in result.host_component_models.items()
+    )
     complexes = []
     for recipe_id, fit in result.line_complexes.items():
         components.extend(
@@ -511,8 +815,9 @@ def _model_row(
         ).tolist(),
         "components": components,
         "complexes": complexes,
-        "spectrum_metadata": _key_values(result.spectrum.metadata.to_dict()),
-        "workflow_metadata": _key_values(result.metadata),
+        "spectrum_metadata": _key_values({**result.spectrum.metadata.to_dict(),
+            "spectral_resolution": resolution_to_dict(result.spectrum.resolution)}),
+        "workflow_metadata": _key_values(workflow_metadata),
     }
 
 
@@ -637,6 +942,16 @@ class RunStore:
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             cls._require_current_schema(manifest)
+            vocabulary_version = str(
+                manifest.get("measurement_vocabulary_version", "1")
+            )
+            if vocabulary_version != MEASUREMENT_VOCABULARY_VERSION:
+                raise ValueError(
+                    "Cannot resume a run written with measurement vocabulary "
+                    f"{vocabulary_version!r} using vocabulary "
+                    f"{MEASUREMENT_VOCABULARY_VERSION!r}. The historical run "
+                    "remains readable; use a new run directory for new fits."
+                )
             if manifest.get("configuration_hash") != config_hash:
                 raise ValueError(
                     "Run configuration does not match the immutable manifest. "
@@ -654,6 +969,9 @@ class RunStore:
         )
         manifest = {
             "schema_version": SCHEMA_VERSION,
+            "measurement_vocabulary_version": (
+                MEASUREMENT_VOCABULARY_VERSION
+            ),
             "run_id": actual_run_id,
             "configuration_hash": config_hash,
             "configuration": _jsonable(
@@ -693,7 +1011,7 @@ class RunStore:
     @staticmethod
     def _require_current_schema(manifest: Mapping[str, Any]) -> None:
         found = str(manifest.get("schema_version", "missing"))
-        if found != SCHEMA_VERSION:
+        if found not in ("5", "6", SCHEMA_VERSION):
             raise ValueError(
                 "Unsupported qsospec run schema "
                 f"{found!r}; this version requires schema {SCHEMA_VERSION}. "
@@ -710,7 +1028,18 @@ class RunStore:
     def _staging_path(self) -> Path:
         return self.path / ".staging"
 
-    def _write_manifest(self) -> None:
+    def _write_manifest(self, *, reconcile: bool = True) -> None:
+        """Atomically write the manifest.
+
+        ``reconcile=False`` is deliberately cheap: it never scans datasets or
+        globs table directories.  The authoritative schema-v5 shards remain
+        the source of truth and are scanned by :meth:`reconcile_manifest` at
+        resume and finalization boundaries.
+        """
+
+        reconciled = None
+        if reconcile and self._table_path("objects").exists():
+            reconciled = self._authoritative_state()
         with self._manifest_lock():
             manifest_path = self.path / "manifest.json"
             if manifest_path.exists():
@@ -718,21 +1047,100 @@ class RunStore:
                 existing.update(self.manifest)
                 self.manifest = existing
             self.manifest["updated_at"] = _now()
-            if self._table_path("objects").exists():
-                self.manifest["completed_objects"] = len(self.completed_keys())
-                self.manifest["failed_objects"] = len(self.failed_keys())
-                self.manifest["shard_state"] = {
-                    name: len(
-                        tuple(self._table_path(name).glob("*.parquet"))
-                    )
-                    for name in TABLE_NAMES
-                }
+            if reconciled is not None:
+                self.manifest["completed_objects"] = len(
+                    reconciled["completed_keys"]
+                )
+                self.manifest["failed_objects"] = len(
+                    reconciled["failed_keys"]
+                )
+                self.manifest["shard_state"] = reconciled["shard_state"]
+                self.manifest["last_full_reconciliation_at"] = _now()
             temporary = self.path / f"manifest.{uuid4().hex}.tmp"
             temporary.write_text(
                 json.dumps(self.manifest, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
             os.replace(temporary, manifest_path)
+
+    def _authoritative_state(self) -> Dict[str, Any]:
+        """Scan authoritative shards once and return exact run state."""
+
+        completed = self.completed_keys()
+        failed = self.failed_keys()
+        shard_state = {
+            name: sum(1 for _ in self._table_path(name).glob("*.parquet"))
+            for name in TABLE_NAMES
+        }
+        return {
+            "completed_keys": completed,
+            "failed_keys": failed,
+            "shard_state": shard_state,
+        }
+
+    def reconcile_manifest(self, *, persist: bool = True) -> Dict[str, Any]:
+        """Return authoritative state and optionally persist manifest counters.
+
+        ``persist=False`` is a read-only planning profile used when validating
+        an external completion marker; it scans the same authoritative shards
+        without changing the manifest hash.
+        """
+
+        state = self._authoritative_state()
+        if not persist:
+            return state
+        self.manifest["completed_objects"] = len(state["completed_keys"])
+        self.manifest["failed_objects"] = len(state["failed_keys"])
+        self.manifest["shard_state"] = state["shard_state"]
+        self.manifest["last_full_reconciliation_at"] = _now()
+        self.manifest["manifest_count_mode"] = "authoritative_reconciliation"
+        self._write_manifest(reconcile=False)
+        return state
+
+    def reconcile_expected_keys(self, object_keys: Sequence[str]) -> Dict[str, Any]:
+        """Classify expected keys from deterministic shard paths only.
+
+        Schema-v5 promotion atomically writes one content-addressed file per
+        object and table.  Existence of the deterministic ``objects`` or
+        ``failures`` shard is therefore the cheapest authoritative membership
+        test during resume planning.  Strict completion still uses
+        :meth:`reconcile_manifest` to inspect stored object-key columns.
+        """
+
+        expected = tuple(dict.fromkeys(map(str, object_keys)))
+        completed = {
+            key for key in expected
+            if self.object_shard_path("objects", key).is_file()
+        }
+        failed = {
+            key for key in expected
+            if self.object_shard_path("failures", key).is_file()
+        }
+        return {
+            "completed_keys": completed,
+            "failed_keys": failed,
+            "shard_state": {
+                "expected_objects_present": len(completed),
+                "expected_failures_present": len(failed),
+            },
+        }
+
+    def update_manifest_counts(
+        self,
+        *,
+        completed_count: int,
+        failed_count: int,
+        promoted_since_reconciliation: int = 0,
+    ) -> None:
+        """Write parent-known counters without touching table directories."""
+
+        self.manifest["completed_objects"] = int(completed_count)
+        self.manifest["failed_objects"] = int(failed_count)
+        self.manifest["manifest_count_mode"] = "parent_in_memory"
+        self.manifest["promoted_since_reconciliation"] = int(
+            promoted_since_reconciliation
+        )
+        self._write_manifest(reconcile=False)
 
     @contextmanager
     def _manifest_lock(self):
@@ -764,10 +1172,80 @@ class RunStore:
         return set(table.column("object_key").to_pylist()) if table.num_rows else set()
 
     def clear_failure(self, object_key: str) -> None:
-        digest = hashlib.sha256(object_key.encode("utf-8")).hexdigest()[:20]
-        path = self._table_path("failures") / f"part-{digest}.parquet"
+        path = self.object_shard_path("failures", object_key)
         if path.exists():
             path.unlink()
+
+    def object_shard_path(self, table_name: str, object_key: str) -> Path:
+        """Return the permanent schema-v5 shard path for one object key."""
+
+        if table_name not in SCHEMAS:
+            raise ValueError(f"Unknown run table: {table_name!r}")
+        digest = hashlib.sha256(str(object_key).encode("utf-8")).hexdigest()[:20]
+        return self._table_path(table_name) / f"part-{digest}.parquet"
+
+    def read_object_table(
+        self,
+        table_name: str,
+        object_key: str,
+        *,
+        columns: Optional[Sequence[str]] = None,
+    ) -> pa.Table:
+        """Read and validate only one object's permanent shard."""
+
+        path = self.object_shard_path(table_name, object_key)
+        if not path.exists():
+            table = _empty_table(table_name)
+            return table.select(columns) if columns else table
+        table = pq.read_table(path, columns=columns)
+        if "object_key" in table.column_names:
+            found = set(map(str, table.column("object_key").to_pylist()))
+            if found != {str(object_key)}:
+                raise ValueError(
+                    f"Shard {path} does not match object_key {object_key!r}: "
+                    f"{sorted(found)[:5]}"
+                )
+        return table
+
+    def object_row_by_key(
+        self,
+        table_name: str,
+        object_key: str,
+    ) -> Mapping[str, Any]:
+        """Return the unique row in one object's direct shard."""
+
+        table = self.read_object_table(table_name, object_key)
+        rows = table.to_pylist()
+        if not rows:
+            raise KeyError(f"Object not found in {table_name}: {object_key!r}")
+        if len(rows) != 1:
+            raise ValueError(
+                f"Expected one {table_name} row for {object_key!r}; "
+                f"found {len(rows)}"
+            )
+        return rows[0]
+
+    def build_object_index(self) -> Dict[str, str]:
+        """Build a unique ``object_id -> object_key`` mapping in one scan."""
+
+        table = self.read_table("objects", columns=["object_id", "object_key"])
+        grouped: Dict[str, list[str]] = {}
+        for row in table.to_pylist():
+            grouped.setdefault(str(row["object_id"]), []).append(
+                str(row["object_key"])
+            )
+        ambiguous = {
+            object_id: keys
+            for object_id, keys in grouped.items()
+            if len(set(keys)) != 1
+        }
+        if ambiguous:
+            sample = list(ambiguous.items())[:5]
+            raise ValueError(
+                "Duplicate/ambiguous object IDs in run; use object_key: "
+                f"{sample}"
+            )
+        return {object_id: keys[0] for object_id, keys in grouped.items()}
 
     def stage_payload(
         self,
@@ -809,7 +1287,12 @@ class RunStore:
         )
         return staging
 
-    def promote(self, staging: Union[str, Path]) -> Dict[str, str]:
+    def promote(
+        self,
+        staging: Union[str, Path],
+        *,
+        update_manifest: bool = True,
+    ) -> Dict[str, str]:
         """Validate and atomically promote a worker staging directory."""
 
         source = Path(staging)
@@ -850,14 +1333,19 @@ class RunStore:
             os.replace(file_path, destination)
             promoted[name] = str(destination)
         shutil.rmtree(source, ignore_errors=True)
-        self._write_manifest()
+        if update_manifest:
+            self._write_manifest()
         return promoted
 
     def write_payload(
         self,
         payload: Mapping[str, Sequence[Mapping[str, Any]]],
+        *,
+        update_manifest: bool = True,
     ) -> Dict[str, str]:
-        return self.promote(self.stage_payload(payload))
+        return self.promote(
+            self.stage_payload(payload), update_manifest=update_manifest
+        )
 
     def read_table(
         self,
@@ -875,25 +1363,53 @@ class RunStore:
         dataset = pads.dataset([str(path) for path in files], format="parquet")
         return dataset.to_table(columns=columns, filter=filter_expression)
 
+    def read_measurements(
+        self,
+        *,
+        canonical: bool = True,
+        filter_expression: Any = None,
+    ) -> pa.Table:
+        """Read measurements, using vocabulary v2 unless raw access is requested.
+
+        ``read_table("measurements")`` and ``canonical=False`` preserve the
+        exact strings stored in historical Parquet shards.
+        """
+
+        table = self.read_table(
+            "measurements", filter_expression=filter_expression
+        )
+        return canonicalize_measurement_table(table) if canonical else table
+
     def object_row(
         self,
         identifier: str,
         *,
         table_name: str = "models",
     ) -> Mapping[str, Any]:
-        table = self.read_table(table_name)
-        matches = [
-            row
-            for row in table.to_pylist()
-            if row["object_key"] == identifier or row["object_id"] == identifier
-        ]
-        if not matches:
-            raise KeyError(f"Object not found in {table_name}: {identifier!r}")
-        if len(matches) > 1:
-            raise ValueError(
-                f"Object identifier is ambiguous; use object_key: {identifier!r}"
-            )
-        return matches[0]
+        direct = self.object_shard_path(table_name, identifier)
+        if direct.exists():
+            return self.object_row_by_key(table_name, identifier)
+        index = self.build_object_index()
+        try:
+            object_key = index[str(identifier)]
+        except KeyError:
+            # Failed objects do not have an ``objects`` row.  Preserve the
+            # legacy display-ID fallback for non-model tables while keeping
+            # the normal completed-object path direct.
+            matches = [
+                row for row in self.read_table(table_name).to_pylist()
+                if str(row.get("object_id")) == str(identifier)
+            ]
+            if not matches:
+                raise KeyError(
+                    f"Object not found in {table_name}: {identifier!r}"
+                ) from None
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Object identifier is ambiguous; use object_key: {identifier!r}"
+                )
+            return matches[0]
+        return self.object_row_by_key(table_name, object_key)
 
 
 def open_run(path: str) -> RunStore:
@@ -903,20 +1419,18 @@ def open_run(path: str) -> RunStore:
 
 
 def _measurement_maps(
-    store: RunStore,
-    object_key: str,
+    rows: Sequence[Mapping[str, Any]],
     section: str,
     recipe_id: Optional[str],
 ) -> tuple[Dict[str, float], Dict[str, float]]:
-    rows = [
+    selected = [
         row
-        for row in store.read_table("measurements").to_pylist()
-        if row["object_key"] == object_key
-        and row["section"] == section
+        for row in rows
+        if row["section"] == section
         and row["recipe_id"] == recipe_id
     ]
-    values = {row["quantity"]: row["value"] for row in rows}
-    errors = {row["quantity"]: row["error"] for row in rows}
+    values = {row["quantity"]: row["value"] for row in selected}
+    errors = {row["quantity"]: row["error"] for row in selected}
     return values, errors
 
 
@@ -936,13 +1450,36 @@ def _archived_host_masks(
     return None, None, "unavailable"
 
 
-def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
-    """Reconstruct a workflow result from the Parquet model archive."""
+def load_model_by_key(
+    run: Union[str, RunStore], object_key: str
+) -> WorkflowResult:
+    """Reconstruct one workflow using only its schema-v5 object shards."""
 
     store = open_run(run) if isinstance(run, str) else run
-    row = store.object_row(identifier, table_name="models")
-    object_row = store.object_row(row["object_key"], table_name="objects")
+    row = store.object_row_by_key("models", object_key)
+    object_row = store.object_row_by_key("objects", object_key)
+    measurement_rows = canonicalize_measurement_table(
+        store.read_object_table("measurements", object_key)
+    ).to_pylist()
+    warning_rows = store.read_object_table("warnings", object_key).to_pylist()
     workflow_metadata = _from_key_values(row["workflow_metadata"])
+    raw_host_fit_samples = workflow_metadata.get("host_fit_samples", {})
+    if isinstance(raw_host_fit_samples, Mapping):
+        canonical_samples, legacy_mappings = canonicalize_host_fit_samples(
+            raw_host_fit_samples
+        )
+        workflow_metadata["host_fit_samples"] = canonical_samples
+        if legacy_mappings:
+            workflow_metadata[
+                "host_fit_sample_legacy_name_mappings"
+            ] = legacy_mappings
+    workflow_metadata.setdefault(
+        "measurement_vocabulary_version",
+        str(store.manifest.get("measurement_vocabulary_version", "1")),
+    )
+    host_reconstruction_state = workflow_metadata.pop(
+        "host_reconstruction_state", None
+    )
     spectrum_metadata_values = _from_key_values(row["spectrum_metadata"])
     extinction = dict(
         spectrum_metadata_values.get("galactic_extinction")
@@ -964,6 +1501,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     spectrum_metadata = resolve_spectrum_metadata(
         metadata=spectrum_metadata_values
     )
+    resolution = resolution_from_dict(spectrum_metadata_values.get("spectral_resolution"))
     spectrum = Spectrum.from_arrays(
         np.asarray(row["wave_rest"], dtype=float),
         np.asarray(row["flux"], dtype=float),
@@ -975,6 +1513,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
             if row["input_mask"] is not None else None
         ),
         metadata=spectrum_metadata,
+        resolution=resolution,
     )
     total_spectrum = None
     if row["total_flux"] is not None:
@@ -989,24 +1528,25 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
                 if row["input_mask"] is not None else None
             ),
             metadata=spectrum_metadata,
+            resolution=resolution,
         )
     continuum_components = {
         item["name"]: np.asarray(item["values"], dtype=float)
         for item in row["components"]
         if item["section"] == "continuum"
     }
+    host_components = {
+        item["name"]: np.asarray(item["values"], dtype=float)
+        for item in row["components"]
+        if item["section"] == "host"
+    }
     continuum_model = sum(
         continuum_components.values(),
         np.zeros_like(spectrum.flux, dtype=float),
     )
     continuum_values, continuum_errors = _measurement_maps(
-        store, row["object_key"], "continuum_parameter", None
+        measurement_rows, "continuum_parameter", None
     )
-    warning_rows = [
-        item
-        for item in store.read_table("warnings").to_pylist()
-        if item["object_key"] == row["object_key"]
-    ]
 
     def archived_warnings(section: str, recipe_id=None) -> list[FitWarning]:
         return [
@@ -1022,17 +1562,24 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         ]
 
     host_enabled = bool(object_row["host_decomp_enabled"])
+    if host_reconstruction_state is None and host_enabled:
+        workflow_metadata["host_sed_reconstruction_status"] = (
+            "unavailable_legacy_run"
+        )
     host_fit_mask, host_emission_mask, host_mask_provenance = (
         _archived_host_masks(row, spectrum.wave_rest)
     )
     workflow_metadata["host_mask_provenance"] = host_mask_provenance
+    from ..uncertainties import restore_covariance
+    blocks = workflow_metadata.get("covariance_blocks", {})
+    workflow_metadata["covariance_status"] = "available" if blocks else "unavailable_legacy_run"
     continuum = GlobalContinuumResult(
         success=bool(object_row["continuum_success"]),
         status=1 if object_row["continuum_success"] else -1,
         message="Loaded from Parquet model archive.",
         param_values=continuum_values,
         param_errors=continuum_errors,
-        covariance=None,
+        covariance=restore_covariance(blocks.get("continuum"), continuum_values),
         chi2=np.nan,
         dof=0,
         reduced_chi2=float(object_row["continuum_reduced_chi2"]),
@@ -1042,7 +1589,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         fit_mask=np.asarray(row["continuum_fit_mask"], dtype=bool),
         clip_mask=np.asarray(row["continuum_clip_mask"], dtype=bool),
         warnings=archived_warnings("continuum"),
-        metadata=workflow_metadata,
+        metadata={**workflow_metadata, **blocks.get("continuum", {}).get("model_metadata", {})},
     )
     complex_components: Dict[str, Dict[str, np.ndarray]] = {}
     for component in row["components"]:
@@ -1054,10 +1601,10 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
     for item in row["complexes"]:
         recipe_id = item["recipe_id"]
         parameters, parameter_errors = _measurement_maps(
-            store, row["object_key"], "complex_parameter", recipe_id
+            measurement_rows, "complex_parameter", recipe_id
         )
         metrics, metric_errors = _measurement_maps(
-            store, row["object_key"], "complex_metric", recipe_id
+            measurement_rows, "complex_metric", recipe_id
         )
         complex_metadata = _from_key_values(item["metadata"])
         component_models = complex_components.get(recipe_id, {})
@@ -1072,7 +1619,7 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
             selected_model=str(item["selected_model"]),
             param_values=parameters,
             param_errors=parameter_errors,
-            covariance=None,
+            covariance=restore_covariance(blocks.get(recipe_id), parameters),
             metrics=metrics,
             metric_errors=metric_errors,
             chi2=float(item["chi2"]),
@@ -1098,8 +1645,12 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         for item in warning_rows
         if item["section"] == "host"
     ]
+    from ..uncertainties import canonicalize_matched_draws
+    matched_draws = canonicalize_matched_draws(workflow_metadata.get("matched_uncertainty_draws", {}),
+                                              complexes, workflow_metadata.get("continuum_samples", {}))
     workflow = WorkflowResult(
         spectrum=spectrum,
+        monte_carlo=matched_draws,
         continuum_initial=continuum,
         continuum=continuum,
         hbeta=complexes.get("hbeta_oiii"),
@@ -1115,10 +1666,12 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         },
         host_decomp_enabled=host_enabled,
         total_spectrum=total_spectrum,
+        host_reconstruction_state=host_reconstruction_state,
         host_model_on_quasar_grid=(
             np.asarray(row["host_model"], dtype=float)
             if row["host_model"] is not None else None
         ),
+        host_component_models=host_components,
         host_fit_mask=host_fit_mask,
         host_emission_mask=host_emission_mask,
         host_warnings=host_warnings,
@@ -1126,6 +1679,107 @@ def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
         metadata=workflow_metadata,
     )
     return workflow
+
+
+def load_model(run: Union[str, RunStore], identifier: str) -> WorkflowResult:
+    """Load by object key directly or resolve a unique object ID once."""
+
+    store = open_run(run) if isinstance(run, str) else run
+    if store.object_shard_path("models", identifier).exists():
+        object_key = str(identifier)
+    else:
+        index = store.build_object_index()
+        try:
+            object_key = index[str(identifier)]
+        except KeyError as error:
+            raise KeyError(f"Object not found: {identifier!r}") from error
+    return load_model_by_key(store, object_key)
+
+
+def load_host_reconstruction_state(
+    run: Union[str, RunStore], object_key: str
+) -> Dict[str, Any]:
+    """Load compact HostSED state through one direct model-shard lookup."""
+
+    from ..workflows.host.ppxf_host import HostSEDReconstructionError
+
+    store = open_run(run) if isinstance(run, str) else run
+    object_key = str(object_key)
+    table = store.read_object_table(
+        "models",
+        object_key,
+        columns=["object_key", "workflow_metadata"],
+    )
+    rows = table.to_pylist()
+    if not rows:
+        raise KeyError(f"Object not found in models: {object_key!r}")
+    if len(rows) != 1:
+        raise ValueError(
+            f"Expected one models row for {object_key!r}; found {len(rows)}"
+        )
+    row = rows[0]
+    metadata = _from_key_values(row.get("workflow_metadata"))
+    state = metadata.get("host_reconstruction_state")
+    if not isinstance(state, Mapping):
+        raise HostSEDReconstructionError(
+            "unavailable_legacy_run",
+            "the model row has no compact HostSED reconstruction state",
+        )
+    return dict(state)
+
+
+def reconstruct_host_sed_from_model_row(
+    model_row: Mapping[str, Any],
+    *,
+    template_root: str,
+    template_file: Optional[str] = None,
+    verify_hash: bool = True,
+):
+    """Reconstruct a HostSED from one already loaded model row."""
+
+    from ..workflows.host.ppxf_host import (
+        HostSEDReconstructionError,
+        reconstruct_host_sed_from_state,
+    )
+
+    raw_metadata = model_row.get("workflow_metadata")
+    metadata = (
+        _from_key_values(raw_metadata)
+        if not isinstance(raw_metadata, Mapping)
+        else dict(raw_metadata)
+    )
+    state = metadata.get("host_reconstruction_state")
+    if not isinstance(state, Mapping):
+        raise HostSEDReconstructionError(
+            "unavailable_legacy_run",
+            "the model row has no compact HostSED reconstruction state",
+        )
+    return reconstruct_host_sed_from_state(
+        state,
+        template_root=template_root,
+        template_file=template_file,
+        verify_hash=verify_hash,
+    )
+
+
+def reconstruct_host_sed_from_run(
+    run: Union[str, RunStore],
+    object_key: str,
+    *,
+    template_root: str,
+    template_file: Optional[str] = None,
+    verify_hash: bool = True,
+):
+    """Directly load compact state and reconstruct one stellar HostSED."""
+
+    from ..workflows.host.ppxf_host import reconstruct_host_sed_from_state
+
+    return reconstruct_host_sed_from_state(
+        load_host_reconstruction_state(run, object_key),
+        template_root=template_root,
+        template_file=template_file,
+        verify_hash=verify_hash,
+    )
 
 
 def finalize_run(
@@ -1141,7 +1795,7 @@ def finalize_run(
         "object_key"
     ).to_pylist()
     duplicates = sorted(
-        {key for key in object_keys if object_keys.count(key) > 1}
+        key for key, count in Counter(object_keys).items() if count > 1
     )
     if duplicates:
         raise ValueError(f"Duplicate object keys in run: {duplicates[:10]}")
@@ -1151,13 +1805,24 @@ def finalize_run(
         if table_path.exists():
             outputs[name] = str(table_path)
     staging = store._staging_path()
-    if staging.exists() and not any(staging.iterdir()):
+    staged_entries = sorted(staging.iterdir()) if staging.exists() else []
+    if staged_entries:
+        store.manifest["unpromoted_staging"] = [
+            str(path.relative_to(store.path)) for path in staged_entries
+        ]
+        store._write_manifest(reconcile=False)
+        raise RuntimeError(
+            "Run has unpromoted staging directories; reconcile or remove them "
+            f"explicitly before finalization: {store.manifest['unpromoted_staging'][:5]}"
+        )
+    if staging.exists():
         staging.rmdir()
     store.manifest["status"] = "complete"
     store.manifest["finalized_at"] = _now()
     store.manifest["datasets"] = outputs
     store.manifest.pop("compact_outputs", None)
-    store._write_manifest()
+    store.manifest.pop("unpromoted_staging", None)
+    store.reconcile_manifest()
     return outputs
 
 
@@ -1173,13 +1838,24 @@ def build_science_catalog(
     objects = store.read_table("objects").to_pandas()
     if not specification:
         return objects
-    measurements = store.read_table("measurements").to_pandas()
+    measurements = store.read_measurements(canonical=True).to_pandas()
     catalog = objects.copy()
     for output_name, selector in specification.items():
         selected = measurements.copy()
         for key in ("section", "recipe_id", "feature_id", "role", "quantity"):
             if selector.get(key) is not None:
                 selected = selected[selected[key] == selector[key]]
+        duplicated = selected["object_key"].duplicated(keep=False)
+        if bool(duplicated.any()):
+            collisions = selected.loc[
+                duplicated,
+                ["object_key", "section", "recipe_id", "quantity", "value"],
+            ].to_dict("records")
+            raise ValueError(
+                f"Catalog selector {output_name!r} is not unique per object; "
+                "add explicit section/recipe/source constraints. Sample: "
+                f"{collisions[:5]}"
+            )
         values = selected.set_index("object_key")["value"]
         errors = selected.set_index("object_key")["error"]
         catalog[output_name] = catalog["object_key"].map(values)

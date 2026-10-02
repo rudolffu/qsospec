@@ -116,16 +116,19 @@ class IronTemplateConfig:
     fwhm_kms: float = 3000.0
     fwhm_bounds: Bounds = (500.0, 10000.0)
     normalization: str = "area"
+    width_mode: str = "legacy"
 
     def __post_init__(self) -> None:
+        if self.width_mode not in ("legacy", "kernel", "target"):
+            raise ValueError("Iron width_mode must be legacy, kernel, or target")
         if not self.template:
             raise ValueError("IronTemplateConfig.template must be non-empty.")
         if not np.isfinite(self.amp):
             raise ValueError("IronTemplateConfig.amp must be finite.")
-        if not np.isfinite(self.fwhm_kms) or self.fwhm_kms <= 0:
+        if not np.isfinite(self.fwhm_kms) or self.fwhm_kms < 0:
             raise ValueError("IronTemplateConfig.fwhm_kms must be positive and finite.")
         fwhm_lo, fwhm_hi = self.fwhm_bounds
-        if fwhm_lo is not None and (not np.isfinite(fwhm_lo) or fwhm_lo <= 0):
+        if fwhm_lo is not None and (not np.isfinite(fwhm_lo) or fwhm_lo < 0):
             raise ValueError("IronTemplateConfig.fwhm_bounds lower bound must be positive and finite.")
         if fwhm_hi is not None and (not np.isfinite(fwhm_hi) or fwhm_hi <= 0):
             raise ValueError("IronTemplateConfig.fwhm_bounds upper bound must be positive and finite.")
@@ -133,6 +136,13 @@ class IronTemplateConfig:
             raise ValueError("IronTemplateConfig.fwhm_bounds upper bound must be greater than lower bound.")
         if self.normalization != "area":
             raise ValueError("Only IronTemplateConfig.normalization='area' is supported.")
+        if self.width_mode == "target":
+            from .templates.registry import load_iron_template
+            from .templates.iron import resolve_iron_width, resolve_iron_bounds
+
+            template = load_iron_template(self.template, template_path=self.template_path)
+            resolve_iron_width(template, self.fwhm_kms, self.width_mode)
+            object.__setattr__(self, "fwhm_bounds", resolve_iron_bounds(template, self.fwhm_bounds, self.width_mode))
 
     @classmethod
     def bg92(cls, fwhm_kms: float = 1500.0, **kwargs) -> "IronTemplateConfig":
@@ -149,6 +159,20 @@ class IronTemplateConfig:
     @classmethod
     def vw01(cls, fwhm_kms: float = 3000.0, **kwargs) -> "IronTemplateConfig":
         return cls(template="vw01", fwhm_kms=fwhm_kms, **kwargs)
+
+    @classmethod
+    def verner09(
+        cls,
+        fwhm_kms: float = 3000.0,
+        **kwargs,
+    ) -> "IronTemplateConfig":
+        """Return the full-range Verner et al. (2009) Fe II template."""
+
+        bounds = (910.0, 10000.0)
+        if kwargs.get("width_mode") == "kernel":
+            bounds = tuple(float(np.sqrt((value - 900.) * (value + 900.))) for value in bounds)
+        kwargs.setdefault("fwhm_bounds", bounds)
+        return cls(template="verner09", fwhm_kms=fwhm_kms, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -300,6 +324,55 @@ class PowerLawConfig:
 
 
 @dataclass(frozen=True)
+class PolynomialContinuumConfig:
+    """Additive pivot-normalized polynomial continuum correction.
+
+    ``off`` disables correction; ``auto`` assesses a baseline-anchored
+    quadratic for eligible SDSS spectra. ``on`` bypasses the BIC gate while
+    retaining fractional and numerical safeguards. Slopes come from the baseline.
+    """
+
+    mode: str = "off"
+    degree: int = 2
+    max_fraction: float = 0.10
+    max_norm_fraction: float = 0.10
+    auto_delta_bic: float = 10.0
+    pivot: Optional[float] = None
+    scale: Optional[float] = None
+    coefficient_bounds: Bounds = (None, None)
+    min_pixels: int = 20
+    min_leverage: float = 0.08
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("off", "auto", "on"):
+            raise ValueError("PolynomialContinuumConfig.mode must be 'off', 'auto', or 'on'.")
+        if not isinstance(self.degree, int) or isinstance(self.degree, bool) or self.degree < 1:
+            raise ValueError("PolynomialContinuumConfig.degree must be a positive integer.")
+        for name in ("max_fraction", "max_norm_fraction"):
+            value = getattr(self, name)
+            if not np.isfinite(value) or not 0 < value < 1:
+                raise ValueError(f"PolynomialContinuumConfig.{name} must be between 0 and 1.")
+        if not np.isfinite(self.auto_delta_bic) or self.auto_delta_bic < 0:
+            raise ValueError("PolynomialContinuumConfig.auto_delta_bic must be nonnegative.")
+        for name, value in (("pivot", self.pivot), ("scale", self.scale)):
+            if value is not None and (not np.isfinite(value) or value <= 0):
+                raise ValueError(f"PolynomialContinuumConfig.{name} must be positive or None.")
+        lower, upper = self.coefficient_bounds
+        if lower is not None and not np.isfinite(lower):
+            raise ValueError("Polynomial coefficient lower bound must be finite or None.")
+        if upper is not None and not np.isfinite(upper):
+            raise ValueError("Polynomial coefficient upper bound must be finite or None.")
+        if lower is not None and upper is not None and upper <= lower:
+            raise ValueError("Polynomial coefficient bounds must be increasing.")
+        if self.min_pixels < self.degree + 1:
+            raise ValueError(
+                "PolynomialContinuumConfig.min_pixels must exceed the polynomial degree."
+            )
+        if not np.isfinite(self.min_leverage) or self.min_leverage <= 0:
+            raise ValueError("PolynomialContinuumConfig.min_leverage must be positive.")
+
+
+@dataclass(frozen=True)
 class BalmerPseudoContinuumConfig:
     """Continuous Kovačević-style Balmer pseudo-continuum."""
 
@@ -319,7 +392,8 @@ class BalmerPseudoContinuumConfig:
     velocity_bounds: Bounds = (-2000.0, 2000.0)
     sync_with_hbeta: str = "auto"
     sync_min_fwhm_snr: Optional[float] = 3.0
-    sync_with_hgamma: str = "auto"
+    sync_with_hgamma: str = "soft"
+    hgamma_ratio_scatter_dex: float = 0.30
     sync_min_hgamma_flux_snr: Optional[float] = 3.0
 
     def __post_init__(self) -> None:
@@ -364,10 +438,12 @@ class BalmerPseudoContinuumConfig:
                 "BalmerPseudoContinuumConfig.sync_min_fwhm_snr must be "
                 "non-negative or None."
             )
-        if self.sync_with_hgamma not in ("auto", "never", "require"):
+        aliases = {"none": "off", "never": "off", "auto": "hard", "hard_legacy": "hard"}
+        object.__setattr__(self, "sync_with_hgamma", aliases.get(self.sync_with_hgamma, self.sync_with_hgamma))
+        if self.sync_with_hgamma not in ("off", "soft", "hard", "require"):
             raise ValueError(
                 "BalmerPseudoContinuumConfig.sync_with_hgamma must be "
-                "'auto', 'never', or 'require'."
+                "'off', 'soft', 'hard', or 'require' (aliases: none, never, auto, hard_legacy)."
             )
         if (
             self.sync_min_hgamma_flux_snr is not None
@@ -380,6 +456,30 @@ class BalmerPseudoContinuumConfig:
 
 
 @dataclass(frozen=True)
+class RegionalIronConfig:
+    """Regional Verner09 bridge; one amplitude and a shared additional kernel."""
+    enabled: bool = True
+    amp: float = 1.0
+    uv_interval: Tuple[float, float] = (3300.0, 3450.0)
+    optical_interval: Tuple[float, float] = (4100.0, 4250.0)
+    fixed_kernel_fwhm_kms: float = 3000.0
+
+    def __post_init__(self) -> None:
+        for name in ("amp", "fixed_kernel_fwhm_kms"):
+            value = getattr(self, name)
+            if not np.isfinite(value) or value < 0:
+                raise ValueError(f"RegionalIronConfig.{name} must be finite and nonnegative.")
+        if len(self.uv_interval) != 2 or len(self.optical_interval) != 2:
+            raise ValueError("RegionalIronConfig handoff intervals must each have two endpoints.")
+        bounds = (*self.uv_interval, *self.optical_interval)
+        if not all(np.isfinite(value) for value in bounds) or not 0 < bounds[0] < bounds[1] <= bounds[2] < bounds[3]:
+            raise ValueError("RegionalIronConfig handoff intervals must be positive, ordered and nonoverlapping.")
+
+
+DEFAULT_GLOBAL_MODEL_ID = "global_v2"
+
+
+@dataclass(frozen=True)
 class GlobalContinuumConfig:
     """Configuration for the first qsospec global AGN continuum."""
 
@@ -389,6 +489,14 @@ class GlobalContinuumConfig:
     )
     optical_iron: Optional[IronTemplateConfig] = field(
         default_factory=lambda: IronTemplateConfig.park22(fwhm_kms=3000.0)
+    )
+    full_iron: Optional[IronTemplateConfig] = None
+    regional_iron: RegionalIronConfig = field(default_factory=RegionalIronConfig)
+    iron_width_coupling: str = "independent"
+    iron_width_prior_center_dex: float = 0.0
+    iron_width_prior_scatter_dex: float = 0.25
+    polynomial: PolynomialContinuumConfig = field(
+        default_factory=PolynomialContinuumConfig
     )
     balmer_pseudocontinuum: BalmerPseudoContinuumConfig = field(
         default_factory=BalmerPseudoContinuumConfig
@@ -409,6 +517,16 @@ class GlobalContinuumConfig:
     optimizer_method: str = "auto"
     jacobian_method: str = "semi_analytic"
     max_nfev: Optional[int] = 1000
+    model_id: str = DEFAULT_GLOBAL_MODEL_ID
+
+    @classmethod
+    def legacy_v1(cls, **changes) -> "GlobalContinuumConfig":
+        """Reproduce the pre-0.2 default continuum model with hard-auto Hγ."""
+        defaults = dict(model_id="global_v1", regional_iron=RegionalIronConfig(enabled=False),
+                        balmer_pseudocontinuum=BalmerPseudoContinuumConfig(sync_with_hgamma="hard"),
+                        polynomial=PolynomialContinuumConfig(mode="off"))
+        defaults.update(changes)
+        return cls(**defaults)
 
     @classmethod
     def lya_safe(cls, **changes) -> "GlobalContinuumConfig":
@@ -416,7 +534,55 @@ class GlobalContinuumConfig:
 
         return cls(continuum_windows=LYA_SAFE_CONTINUUM_WINDOWS, **changes)
 
+    @classmethod
+    def with_single_iron(
+        cls,
+        template: Union[str, IronTemplateConfig] = "verner09",
+        **changes,
+    ) -> "GlobalContinuumConfig":
+        """Return a continuum config using one exclusive iron template."""
+
+        if "uv_iron" in changes or "optical_iron" in changes or "full_iron" in changes:
+            raise ValueError(
+                "with_single_iron configures iron exclusively; do not also pass "
+                "uv_iron, optical_iron, or full_iron."
+            )
+        if isinstance(template, str):
+            normalized = template.strip().lower().replace("-", "_")
+            if normalized in {"verner09", "verner_2009", "v09", "verner"}:
+                iron = IronTemplateConfig.verner09()
+            else:
+                iron = IronTemplateConfig(template=template)
+        else:
+            iron = template
+        if not isinstance(iron, IronTemplateConfig):
+            raise TypeError("template must be a template name or IronTemplateConfig.")
+        return cls(uv_iron=None, optical_iron=None, full_iron=iron, **changes)
+
     def __post_init__(self) -> None:
+        if self.iron_width_coupling not in ("independent", "soft"):
+            raise ValueError("iron_width_coupling must be independent or soft")
+        if not np.isfinite(self.iron_width_prior_scatter_dex) or self.iron_width_prior_scatter_dex <= 0:
+            raise ValueError("Iron prior scatter must be positive")
+        if self.iron_width_coupling == "soft":
+            for item in (self.uv_iron, self.optical_iron):
+                if item is not None:
+                    from .templates.registry import load_iron_template
+                    from .templates.iron import resolve_iron_width, resolve_iron_bounds
+
+                    template = load_iron_template(item.template, template_path=item.template_path)
+                    lower, _ = resolve_iron_bounds(template, item.fwhm_bounds, item.width_mode)
+                    if lower is None or resolve_iron_width(template, lower, item.width_mode)["kernel_fwhm_kms"] <= 0:
+                        raise ValueError("Soft log-kernel coupling requires positive lower bounds in effective kernel coordinates")
+
+        if self.full_iron is not None and (
+            self.uv_iron is not None or self.optical_iron is not None
+        ):
+            raise ValueError(
+                "GlobalContinuumConfig.full_iron is exclusive with uv_iron "
+                "and optical_iron. Use with_single_iron() or set both split "
+                "templates to None."
+            )
         if self.optimizer_method not in ("auto", "variable_projection", "legacy_joint"):
             raise ValueError(
                 "optimizer_method must be 'auto', 'variable_projection', or 'legacy_joint'."
@@ -541,6 +707,8 @@ class HbetaComplexConfig:
     narrow_fwhm_bounds_kms: Tuple[float, float] = (70.0, 1200.0)
     narrow_velocity_bounds_kms: Tuple[float, float] = (-1000.0, 1000.0)
     oiii_ratio_5007_4959: float = 2.98
+    oiii_profile_mode: str = "adaptive"
+    oiii_random_seed: int = 1729
     fit_oiii_wings: bool = True
     wing_bic_delta: float = 20.0
     wing_min_snr: float = 5.0
@@ -553,6 +721,8 @@ class HbetaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
+        if self.oiii_profile_mode not in ("adaptive", "legacy"):
+            raise ValueError("oiii_profile_mode must be 'adaptive' or 'legacy'.")
         for value, name in (
             (self.wing_bic_delta, "wing_bic_delta"),
             (self.wing_min_snr, "wing_min_snr"),
@@ -625,8 +795,20 @@ class HalphaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
-        if len(self.broad_fwhm_bands_kms) != 3:
-            raise ValueError("HalphaComplexConfig requires three broad FWHM bands.")
+        if len(self.broad_fwhm_bands_kms) > 3:
+            raise ValueError(
+                "HalphaComplexConfig supports between zero and three broad "
+                "FWHM bands."
+            )
+        for lower, upper in self.broad_fwhm_bands_kms:
+            if lower <= 0 or upper <= lower:
+                raise ValueError(
+                    "Halpha broad FWHM bands must be positive and increasing."
+                )
+        if self.narrow_fwhm_bounds_kms[0] <= 0:
+            raise ValueError("Halpha narrow FWHM bounds must be positive.")
+        if self.narrow_fwhm_bounds_kms[1] <= self.narrow_fwhm_bounds_kms[0]:
+            raise ValueError("Halpha narrow FWHM bounds must be increasing.")
         if self.nii_ratio_6585_6549 <= 0:
             raise ValueError("nii_ratio_6585_6549 must be positive.")
         _validate_complex_optimizer_config(self)
@@ -655,3 +837,4 @@ class UncertaintyConfig:
     monte_carlo_trials: int = 0
     random_seed: Optional[int] = 12345
     refit_host_in_mc: bool = True
+    pixel_covariance: Optional[np.ndarray] = None

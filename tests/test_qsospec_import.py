@@ -1,5 +1,7 @@
 """Standalone import and compatibility checks."""
 
+from importlib.metadata import version
+
 
 def test_qsospec_public_imports_work():
     import qsospec
@@ -7,7 +9,7 @@ def test_qsospec_public_imports_work():
 
     assert qsospec.Spectrum is Spectrum
     assert fit_line_complex is qsospec.fit_line_complex
-    assert qsospec.__version__ == "0.1.1"
+    assert qsospec.__version__ == version("qsospec")
     assert hasattr(qsospec, "BalmerPseudoContinuumConfig")
     assert hasattr(qsospec, "EuclidHostScaleConfig")
     assert hasattr(qsospec, "EuclidHostScaleFit")

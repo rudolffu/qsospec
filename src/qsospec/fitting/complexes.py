@@ -32,10 +32,19 @@ class RecipeCoverage:
     covered_line_ids: Tuple[str, ...]
     qa_all_lines_covered: bool
     warnings: Tuple[FitWarning, ...]
+    component_status: Tuple[Tuple[str, str], ...] = ()
+    window_coverage: Tuple[Tuple[float, float, float, int], ...] = ()
+    active_windows: Tuple[Tuple[float, float], ...] = ()
 
     @property
     def covered(self) -> bool:
         return self.status in ("covered", "partially_covered")
+
+    def component_status_for(self, component_id: str) -> Optional[str]:
+        for identity, status in self.component_status:
+            if identity == component_id:
+                return status
+        return None
 
 
 @dataclass(frozen=True)
@@ -60,6 +69,283 @@ def _center_covered(center: float, valid_min: float, valid_max: float, margin: f
     )
 
 
+def _local_window_valid_mask(
+    spectrum: Spectrum,
+    recipe: ComplexRecipe,
+    window: Tuple[float, float],
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Return (window pixels, valid pixels after masks, window pixel count)."""
+
+    wave = spectrum.wave_rest
+    in_window = (wave >= window[0]) & (wave <= window[1])
+    valid = spectrum.valid_mask & in_window
+    for mask_window in recipe.mask_windows:
+        valid &= ~(
+            (wave >= mask_window[0]) & (wave <= mask_window[1])
+        )
+    return in_window, valid, int(np.count_nonzero(in_window))
+
+
+def _local_component_status(
+    spectrum: Spectrum,
+    recipe: ComplexRecipe,
+    component: ComponentRecipe,
+    window: Tuple[float, float],
+) -> str:
+    """Classify one component using actual valid pixels inside its window."""
+
+    in_window, valid, _ = _local_window_valid_mask(spectrum, recipe, window)
+    if not np.any(valid):
+        return "not_observed"
+    wave = spectrum.wave_rest
+    valid_wave = wave[valid]
+    window_wave = wave[in_window]
+    dispersion = (
+        float(np.median(np.diff(window_wave)))
+        if window_wave.size > 1
+        else np.nan
+    )
+    status = "observed"
+    for line_id in component.line_ids:
+        center = lines.get(line_id).vacuum_wavelength
+        if (
+            valid_wave.min() > center * np.exp(-recipe.edge_margin_kms / C_KMS)
+            or valid_wave.max() < center * np.exp(recipe.edge_margin_kms / C_KMS)
+        ):
+            return "not_observed"
+        core_lo = center * np.exp(-recipe.core_margin_kms / C_KMS)
+        core_hi = center * np.exp(recipe.core_margin_kms / C_KMS)
+        n_core = int(np.count_nonzero(valid & (wave >= core_lo) & (wave <= core_hi)))
+        expected_core = (
+            (core_hi - core_lo) / dispersion
+            if np.isfinite(dispersion) and dispersion > 0
+            else float(recipe.min_core_pixels)
+        )
+        required_core = max(
+            float(recipe.min_core_pixels), 0.5 * expected_core
+        )
+        if n_core < required_core:
+            return "masked_core"
+        half_fwhm = 0.5 * max(band[1] for band in component.fwhm_bands_kms)
+        half_wave = half_fwhm * center / C_KMS
+        if (
+            valid_wave.min() > center - half_wave
+            or valid_wave.max() < center + half_wave
+        ):
+            status = "truncated"
+    return status
+
+
+def _component_membership(
+    component: ComponentRecipe,
+    recipe: ComplexRecipe,
+) -> Tuple[Tuple[float, float], ...]:
+    windows = recipe.fit_windows or (recipe.fit_window,)
+    assigned = tuple(
+        window
+        for window in windows
+        if any(
+            window[0] <= lines.get(line_id).vacuum_wavelength <= window[1]
+            for line_id in component.line_ids
+        )
+    )
+    return assigned or windows
+
+
+def _resolve_local_coverage(
+    spectrum: Spectrum,
+    recipe: ComplexRecipe,
+    valid_min: float,
+    valid_max: float,
+    coverage_fraction: float,
+) -> RecipeCoverage:
+    """Resolve component-adaptive coverage from local valid-pixel support."""
+
+    component_lookup = {component.id: component for component in recipe.components}
+    component_status: Dict[str, str] = {}
+    window_records: List[Tuple[float, float, float, int]] = []
+    active_windows: List[Tuple[float, float]] = []
+    active: List[str] = []
+    for window in recipe.fit_windows or (recipe.fit_window,):
+        _, valid, n_pixels = _local_window_valid_mask(spectrum, recipe, window)
+        n_valid = int(np.count_nonzero(valid))
+        fraction = n_valid / n_pixels if n_pixels else 0.0
+        window_records.append((float(window[0]), float(window[1]), fraction, n_valid))
+        window_ok = (
+            n_valid >= recipe.min_valid_pixels
+            and fraction >= recipe.min_coverage_fraction
+        )
+        window_active: List[str] = []
+        for component in recipe.components:
+            if not component.enabled:
+                continue
+            if window not in _component_membership(component, recipe):
+                continue
+            status = (
+                _local_component_status(spectrum, recipe, component, window)
+                if window_ok
+                else "not_observed"
+            )
+            previous = component_status.get(component.id)
+            if previous is None or _component_status_rank(status) > _component_status_rank(previous):
+                component_status[component.id] = status
+            if status in ("observed", "truncated"):
+                window_active.append(component.id)
+        if window_active:
+            active_windows.append((float(window[0]), float(window[1])))
+            active.extend(window_active)
+    active = list(dict.fromkeys(active))
+    active_set = set(active)
+    active = [
+        component_id
+        for component_id in active
+        if (
+            component_lookup[component_id].fixed_ratio_to is None
+            or component_lookup[component_id].fixed_ratio_to in active_set
+        )
+    ]
+    active_set = set(active)
+    disabled = tuple(
+        component.id
+        for component in recipe.components
+        if component.id not in active_set
+    )
+    for component_id in disabled:
+        component_status.setdefault(component_id, "not_selected")
+    covered_lines = {
+        line_id
+        for component_id in active
+        for line_id in component_lookup[component_id].line_ids
+    }
+    missing_required = tuple(
+        line_id for line_id in recipe.required_line_ids if line_id not in covered_lines
+    )
+    qa_line_ids = tuple(
+        member
+        for qa_label in recipe.qa_labels
+        for member in (lines.get(qa_label).blend_members or (lines.resolve(qa_label),))
+    )
+    qa_all_lines_covered = bool(qa_line_ids) and all(
+        line_id in covered_lines for line_id in qa_line_ids
+    )
+    if missing_required and active:
+        status = "missing_required"
+    elif active:
+        status = "partially_covered" if disabled else "covered"
+    else:
+        status = "not_covered"
+
+    warnings: List[FitWarning] = []
+    if status == "not_covered":
+        warnings.append(
+            FitWarning(
+                code="complex_not_covered",
+                message=f"{recipe.id} is outside usable wavelength coverage.",
+                severity="info",
+                context={
+                    "recipe": recipe.id,
+                    "coverage_fraction": float(coverage_fraction),
+                    "minimum_coverage_fraction": float(recipe.min_coverage_fraction),
+                    "window_coverage": window_records,
+                },
+            )
+        )
+    elif status == "missing_required":
+        warnings.append(
+            FitWarning(
+                code="required_line_not_covered",
+                message=f"{recipe.id} is missing one or more required lines.",
+                context={"recipe": recipe.id, "line_ids": missing_required},
+            )
+        )
+    if disabled and status in ("partially_covered", "not_covered"):
+        warning = FitWarning(
+            code="complex_partially_covered",
+            message=(
+                f"{recipe.id} will fit only covered component groups."
+                if status == "partially_covered"
+                else f"{recipe.id} has no locally covered component."
+            ),
+            severity="info",
+            context={"recipe": recipe.id, "disabled_components": disabled},
+        )
+        warnings.append(warning)
+        for component_id in disabled:
+            warnings.append(
+                FitWarning(
+                    code="recipe_component_disabled_by_coverage",
+                    message=f"{component_id} was disabled by local wavelength coverage.",
+                    severity="info",
+                    context={
+                        "recipe": recipe.id,
+                        "component": component_id,
+                        "component_status": component_status.get(component_id),
+                    },
+                )
+            )
+    if any(item == "truncated" for item in component_status.values()):
+        warnings.append(
+            FitWarning(
+                code="recipe_component_profile_truncated",
+                message=(
+                    f"{recipe.id} has at least one component whose half-maximum "
+                    "crossings are not fully supported by valid pixels."
+                ),
+                severity="info",
+                context={
+                    "recipe": recipe.id,
+                    "components": tuple(
+                        component_id
+                        for component_id, item in component_status.items()
+                        if item == "truncated"
+                    ),
+                },
+            )
+        )
+    if valid_min <= 9231.546 <= valid_max and recipe.id == "siii_nir":
+        warnings.append(
+            FitWarning(
+                code="siii_9533_pazeta_wing_contamination",
+                message=(
+                    "The [S III] NIR windows exclude the Paζ 9232 Å core but its "
+                    "broad wings may contaminate the local [S III] fit."
+                ),
+                severity="info",
+                context={"pa_zeta_vacuum_angstrom": 9231.546},
+            )
+        )
+    return RecipeCoverage(
+        status=status,
+        recipe=recipe,
+        active_component_ids=tuple(active),
+        disabled_component_ids=disabled,
+        missing_required_line_ids=missing_required,
+        coverage_fraction=float(coverage_fraction),
+        n_valid_pixels=int(sum(record[3] for record in window_records)),
+        fit_windows=tuple(active_windows),
+        covered_line_ids=tuple(sorted(covered_lines)),
+        qa_all_lines_covered=qa_all_lines_covered,
+        warnings=tuple(warnings),
+        component_status=tuple(sorted(component_status.items())),
+        window_coverage=tuple(window_records),
+        active_windows=tuple(active_windows),
+    )
+
+
+_STATUS_RANK = {
+    "not_observed": 0,
+    "not_selected": 0,
+    "masked_core": 1,
+    "too_few_valid_pixels": 1,
+    "truncated": 2,
+    "observed": 3,
+}
+
+
+def _component_status_rank(status: str) -> int:
+    return _STATUS_RANK.get(status, 0)
+
+
 def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> RecipeCoverage:
     """Resolve component-adaptive coverage before constructing a model."""
 
@@ -79,6 +365,10 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
     lo, hi = recipe.fit_window
     overlap = max(0.0, min(hi, valid_max) - max(lo, valid_min))
     coverage_fraction = overlap / (hi - lo) if hi > lo else 0.0
+    if recipe.coverage_mode == "component_adaptive" and recipe.local_support:
+        return _resolve_local_coverage(
+            spectrum, recipe, valid_min, valid_max, coverage_fraction
+        )
     fit_windows = tuple(
         window
         for window in (recipe.fit_windows or (recipe.fit_window,))
@@ -203,10 +493,25 @@ def resolve_recipe_coverage(spectrum: Spectrum, recipe: ComplexRecipe) -> Recipe
                     context={"recipe": recipe.id, "component": component_id},
                 )
             )
+    active_set = set(active)
+    component_status = tuple(
+        (component.id, "observed" if component.id in active_set else "not_selected")
+        for component in recipe.components
+    )
+    window_records = tuple(
+        (
+            float(window[0]),
+            float(window[1]),
+            float(coverage_fraction),
+            n_valid_pixels,
+        )
+        for window in fit_windows
+    )
     return RecipeCoverage(
         status, recipe, active, disabled, missing_required, float(coverage_fraction),
         n_valid_pixels, fit_windows, tuple(sorted(covered_lines)),
-        qa_all_lines_covered, tuple(warnings)
+        qa_all_lines_covered, tuple(warnings), component_status, window_records,
+        tuple(fit_windows),
     )
 
 
@@ -430,6 +735,7 @@ class GenericComplexContext:
 
     def __init__(self, recipe: ComplexRecipe, component_ids: Sequence[str], flux_scale: float):
         self.recipe = recipe
+        self.line_lsf = None
         selected = set(component_ids)
         self.components_config = tuple(
             item for item in recipe.components if item.enabled and item.id in selected
@@ -489,9 +795,9 @@ class GenericComplexContext:
                 if width_name not in self.names:
                     band = bands[min(index, len(bands) - 1)]
                     self._add(width_name, 0.5 * (band[0] + band[1]), band[0], band[1])
-        if recipe.continuum_mode in ("constant", "linear"):
+        if recipe.continuum_mode in ("constant", "linear", "residual_linear"):
             self._add("continuum.constant", 0.0, -np.inf, np.inf)
-        if recipe.continuum_mode == "linear":
+        if recipe.continuum_mode in ("linear", "residual_linear"):
             self._add("continuum.slope", 0.0, -np.inf, np.inf)
         self.initial = np.asarray(self.initial, dtype=float)
         self.lower = np.asarray(self.lower, dtype=float)
@@ -536,6 +842,15 @@ class GenericComplexContext:
     def _value(self, theta, name):
         return float(theta[self.index[name]])
 
+    def profile(self, wave, rest_center, velocity, width, profile, *, integrated=None):
+        if self.line_lsf is None:
+            return _profile(wave, rest_center, velocity, width, profile)
+        native = self.line_lsf.native_wave
+        ids = np.searchsorted(native, wave)
+        if integrated is None:
+            integrated = np.all(ids < len(native)) and np.array_equal(native[np.minimum(ids,len(native)-1)], wave)
+        return self.line_lsf.profile(wave, rest_center, velocity, width, profile, integrated=integrated)
+
     def _instance_basis(self, instance, nonlinear_values, wave):
         _, component, line_ids, velocity_group, width_group = instance
         velocity_name = f"{velocity_group}.velocity_kms"
@@ -545,7 +860,7 @@ class GenericComplexContext:
         d_width = np.zeros_like(wave)
         for line_id in line_ids:
             line = lines.get(line_id)
-            values = _profile(
+            values = self.profile(
                 wave, line.vacuum_wavelength,
                 nonlinear_values[velocity_name], nonlinear_values[width_name],
                 component.profile,
@@ -655,6 +970,8 @@ def _failed_result(
             "coverage_fraction": coverage.coverage_fraction,
             "covered_line_ids": coverage.covered_line_ids,
             "qa_all_lines_covered": coverage.qa_all_lines_covered,
+            "component_coverage_status": coverage.component_status,
+            "window_coverage": coverage.window_coverage,
         }
     )
 
@@ -667,6 +984,16 @@ def fit_generic_complex(
     compute_covariance: bool = True,
     coverage_override: Optional[RecipeCoverage] = None,
     fit_mask_override: Optional[np.ndarray] = None,
+    defer_peaks: bool = False,
+    initial_values: Optional[Dict[str, float]] = None,
+    n_starts: int = 1,
+    random_seed: int = 1729,
+    start_values=None,
+    max_starts=None,
+    expand_search=None,
+    optimizer_config=None,
+    forward_resolution=False,
+    measure_metrics=True,
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
@@ -697,23 +1024,29 @@ def fit_generic_complex(
     if np.count_nonzero(mask) < recipe.min_valid_pixels:
         return _failed_result(spectrum, continuum, recipe, coverage)
     line_flux = spectrum.flux - continuum.model
-    if recipe.continuum_mode != "fixed_global":
-        fit_flux = spectrum.flux if recipe.continuum_mode != "absent" else line_flux
-    else:
+    if recipe.continuum_mode in ("fixed_global", "residual_linear", "absent"):
         fit_flux = line_flux
-    positive = np.clip(line_flux[mask], 0.0, np.inf)
-    scale = float(np.trapezoid(positive, spectrum.wave_rest[mask]))
+    else:
+        fit_flux = spectrum.flux
+    scale = _contiguous_masked_flux(spectrum.wave_rest, line_flux, mask)
     context = GenericComplexContext(recipe, coverage.active_component_ids, scale)
-    optimizer_config = SimpleNamespace(
+    optimizer_config = optimizer_config or SimpleNamespace(
         optimizer_method="auto", jacobian_method="semi_analytic", max_nfev=1500
     )
-    result, optimizer_used, fallback_reason = _solve_once_with_fallback(
-        context,
-        spectrum.wave_rest[mask],
-        fit_flux[mask],
-        spectrum.err[mask],
-        context.initial,
-        optimizer_config,
+    lsf_metadata = {}
+    if forward_resolution:
+        from .line_lsf import build_line_lsf
+        minimum_width = min(b[0] for c in context.components_config for b in c.fwhm_bands_kms)
+        context.line_lsf, lsf_metadata = build_line_lsf(spectrum, recipe.fit_window, min_fwhm_kms=minimum_width)
+    if n_starts > 1 and any(c.selection_rule for c in context.components_config):
+        raise ValueError("Multistart selection requires explicit candidate recipes")
+    from .multistart import solve_multistart
+    result, optimizer_used, fallback_reason, multistart = solve_multistart(
+        context, spectrum.wave_rest[mask], fit_flux[mask], spectrum.err[mask],
+        optimizer_config, n_starts=n_starts, max_starts=max_starts,
+        seed=random_seed, initial_values=initial_values, start_values=start_values,
+        expand_search=(lambda solution, starts: expand_search(context, solution, starts, mask))
+            if expand_search else None,
     )
     residual = (
         fit_flux[mask] - context.model(result.x, spectrum.wave_rest[mask])
@@ -872,7 +1205,7 @@ def fit_generic_complex(
                 context={"reason": fallback_reason},
             )
         )
-    if recipe.id == "paschen_nir" and {
+    if recipe.id in ("paschen_nir", "hei10833_pgamma") and {
         "HeI10833_broad", "Pagamma_broad"
     }.issubset(coverage.active_component_ids):
         fit_warnings.append(
@@ -884,105 +1217,88 @@ def fit_generic_complex(
         )
 
     def metrics(theta):
-        values: Dict[str, float] = {}
-        grouped: Dict[
-            Tuple[str, str],
-            List[Tuple[float, float, float, str]],
-        ] = {}
-        for (
-            instance_id,
-            component,
-            line_ids,
-            velocity_group,
-            width_group,
-        ) in context.instances:
-            flux_name = (
-                f"{component.fixed_ratio_to}.flux"
-                if component.fixed_ratio_to is not None
-                else f"{instance_id}.flux"
-            )
-            ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
-            flux = context._value(theta, flux_name) / ratio
-            velocity = context._value(
-                theta, f"{velocity_group}.velocity_kms"
-            )
-            width = context._value(theta, f"{width_group}.fwhm_kms")
-            for feature in line_ids:
-                grouped.setdefault((feature, component.role), []).append(
-                    (flux, velocity, width, component.profile)
-                )
+        return generic_complex_metrics(context, theta, continuum, spectrum)
 
-        for (feature, role), entries in grouped.items():
-            definition = lines.get(feature)
-            reference_wave = definition.vacuum_wavelength
-            maximum_width = max(entry[2] for entry in entries)
-            half_span = max(
-                50.0,
-                5.0 * maximum_width * reference_wave / C_KMS,
-            )
-            grid = np.linspace(
-                reference_wave - half_span,
-                reference_wave + half_span,
-                2401,
-            )
-            profile = np.zeros_like(grid)
-            for flux, velocity, width, profile_name in entries:
-                basis, _, _ = _profile(
-                    grid,
-                    reference_wave,
-                    velocity,
-                    width,
-                    profile_name,
-                )
-                profile += flux * basis
-            integrated_flux = float(np.trapezoid(profile, grid))
-            centroid = (
-                float(np.trapezoid(grid * profile, grid) / integrated_flux)
-                if integrated_flux > 0
-                else np.nan
-            )
-            variance = (
-                float(
-                    np.trapezoid(
-                        (grid - centroid) ** 2 * profile,
-                        grid,
-                    )
-                    / integrated_flux
-                )
-                if integrated_flux > 0
-                else np.nan
-            )
-            sigma_kms = (
-                np.sqrt(max(variance, 0.0)) / reference_wave * C_KMS
-                if np.isfinite(variance)
-                else np.nan
-            )
-            fwhm_kms = _numerical_profile_fwhm(
-                grid, profile, reference_wave
-            )
-            continuum_at_line = float(
-                np.interp(centroid, continuum.wave_rest, continuum.model)
-            )
-            prefix = f"{feature}_{role}"
-            values[f"{prefix}_flux_input"] = integrated_flux
-            values[f"{prefix}_flux_cgs"] = (
-                integrated_flux
-                * spectrum.flux_density_scale_to_cgs
-                if spectrum.flux_density_scale_to_cgs is not None else np.nan
-            )
-            values[f"{prefix}_fwhm_kms"] = fwhm_kms
-            values[f"{prefix}_sigma_kms"] = float(sigma_kms)
-            values[f"{prefix}_centroid"] = centroid
-            values[f"{prefix}_ew_rest"] = (
-                integrated_flux / continuum_at_line
-                if continuum_at_line > 0 else np.nan
-            )
-        return values
+    metric_values = metrics(result.x) if measure_metrics else {}
+    metric_errors = _metric_errors(result.x, covariance, metrics) if measure_metrics else {}
 
-    metric_values = metrics(result.x)
-    metric_errors = _metric_errors(result.x, covariance, metrics)
+    component_flux_names = {}
+    for (
+        instance_id,
+        component,
+        _line_ids,
+        _velocity_group,
+        _width_group,
+    ) in context.instances:
+        component_flux_names[instance_id] = (
+            f"{component.fixed_ratio_to}.flux"
+            if component.fixed_ratio_to is not None
+            else f"{instance_id}.flux"
+        )
+    component_detection_status = []
+    for component_id, flux_name in component_flux_names.items():
+        flux_value = float(result.x[context.index[flux_name]])
+        flux_error = errors.get(flux_name, np.nan)
+        if not np.isfinite(flux_error) or flux_error <= 0:
+            detection = "unconstrained"
+        elif flux_value > 0 and flux_value / flux_error >= 3.0:
+            detection = "detected"
+        else:
+            detection = "weak_not_detected"
+        component_detection_status.append((component_id, detection))
+    blend_quality: Dict[str, Any] = {}
+    for blend_name, member_ids, metric_features in (
+        (
+            "siii_9533_paepsilon",
+            ("SIII9533_narrow", "PaEpsilon_narrow"),
+            ("siii_9533_narrow", "paepsilon_9549_narrow"),
+        ),
+    ):
+        if not set(member_ids).issubset(component_flux_names):
+            continue
+        names = [component_flux_names[member] for member in member_ids]
+        flux_values = [float(result.x[context.index[name]]) for name in names]
+        flux_errors = [errors.get(name, np.nan) for name in names]
+        correlation = np.nan
+        if covariance is not None:
+            indices = [context.index[name] for name in names]
+            variances = [covariance[i, i] for i in indices]
+            if all(np.isfinite(var) and var > 0 for var in variances):
+                correlation = float(
+                    covariance[indices[0], indices[1]]
+                    / np.sqrt(variances[0] * variances[1])
+                )
+        unresolved = (
+            not np.isfinite(correlation)
+            or abs(correlation) >= 0.95
+            or any(not np.isfinite(error) or error <= 0 for error in flux_errors)
+        )
+        blend_quality[blend_name] = {
+            "members": member_ids,
+            "flux_values": tuple(flux_values),
+            "flux_errors": tuple(float(error) for error in flux_errors),
+            "flux_correlation": correlation,
+            "status": "unresolved_or_unreliable" if unresolved else "resolved",
+        }
+        if unresolved:
+            for feature in metric_features:
+                metric_errors[f"{feature}_flux_input"] = np.nan
+                metric_errors[f"{feature}_flux_cgs"] = np.nan
+            fit_warnings.append(
+                FitWarning(
+                    code="siii_9533_paepsilon_blend_unresolved",
+                    message=(
+                        "The [S III] 9533 / Paε decomposition is unresolved or "
+                        "unreliable; individual deblended errors are withheld."
+                    ),
+                    severity="info",
+                    context={"correlation": correlation},
+                )
+            )
     metadata = spectrum.metadata.to_dict()
     metadata.update({
+        "multistart": multistart,
+        "line_lsf": lsf_metadata,
         "recipe_id": recipe.id,
         "recipe_label": recipe.label,
         "recipe_backend": recipe.backend,
@@ -1003,10 +1319,16 @@ def fit_generic_complex(
         "nonlinear_nfev": int(getattr(result, "nfev", 0) or 0),
         "nonlinear_njev": int(getattr(result, "njev", 0) or 0),
         "linear_solve_count": int(getattr(result, "linear_solve_count", 0) or 0),
-        "decomposition_dependent": recipe.id == "paschen_nir",
+        "decomposition_dependent": recipe.id
+        in ("paschen_nir", "hei10833_pgamma", "siii_nir"),
         "optional_component_selection": selection_metadata,
+        "component_coverage_status": coverage.component_status,
+        "window_coverage": coverage.window_coverage,
+        "component_detection_status": tuple(component_detection_status),
+        "blend_quality": blend_quality,
     })
-    return EmissionComplexResult(
+    from ..line_peaks import profile_definitions, record_fit_peaks
+    fitted = EmissionComplexResult(
         bool(result.success), int(result.status), str(result.message), recipe.id,
         {name: float(result.x[index]) for index, name in enumerate(context.names)},
         errors, covariance, metric_values, metric_errors, chi2, dof, float(reduced),
@@ -1014,6 +1336,21 @@ def fit_generic_complex(
         context.model(result.x, spectrum.wave_rest),
         context.components(result.x, spectrum.wave_rest), mask, fit_warnings, metadata,
         result,
+    )
+    peak_bounds = (
+        (
+            min(w[0] for w in coverage.fit_windows),
+            max(w[1] for w in coverage.fit_windows),
+        )
+        if coverage.fit_windows
+        else recipe.fit_window
+    )
+    return record_fit_peaks(
+        fitted,
+        spectrum.z,
+        definitions=profile_definitions(context),
+        bounds=peak_bounds,
+        measure=not defer_peaks,
     )
 
 
@@ -1248,3 +1585,138 @@ def fit_lya_nv_complex(
         }
     )
     return result
+
+
+def _contiguous_masked_flux(wave, flux, mask):
+    """Integrate disjoint valid blocks without bridging unobserved gaps."""
+
+    selected = np.flatnonzero(np.asarray(mask, dtype=bool))
+    if selected.size == 0:
+        return 0.0
+    values = np.clip(np.asarray(flux, dtype=float)[selected], 0.0, np.inf)
+    wave_values = np.asarray(wave, dtype=float)[selected]
+    total = 0.0
+    breaks = np.flatnonzero(np.diff(selected) > 1) + 1
+    for group in np.split(np.arange(selected.size), breaks):
+        if group.size < 2:
+            continue
+        total += float(np.trapezoid(values[group], wave_values[group]))
+    return total
+
+
+def generic_complex_metrics(context, theta, continuum, spectrum):
+    """Evaluate native generic metrics on a supplied final model state."""
+    values: Dict[str, float] = {}
+    grouped: Dict[
+        Tuple[str, str],
+        List[Tuple[float, float, float, str]],
+    ] = {}
+    for (
+        instance_id,
+        component,
+        line_ids,
+        velocity_group,
+        width_group,
+    ) in context.instances:
+        flux_name = (
+            f"{component.fixed_ratio_to}.flux"
+            if component.fixed_ratio_to is not None
+            else f"{instance_id}.flux"
+        )
+        ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
+        flux = context._value(theta, flux_name) / ratio
+        velocity = context._value(
+            theta, f"{velocity_group}.velocity_kms"
+        )
+        width = context._value(theta, f"{width_group}.fwhm_kms")
+        for feature in line_ids:
+            grouped.setdefault((feature, component.role), []).append(
+                (flux, velocity, width, component.profile)
+            )
+
+    for (feature, role), entries in grouped.items():
+        definition = lines.get(feature)
+        reference_wave = definition.vacuum_wavelength
+        maximum_width = max(entry[2] for entry in entries)
+        half_span = max(
+            50.0,
+            5.0 * maximum_width * reference_wave / C_KMS,
+        )
+        grid = np.linspace(
+            reference_wave - half_span,
+            reference_wave + half_span,
+            2401,
+        )
+        profile = np.zeros_like(grid)
+        for flux, velocity, width, profile_name in entries:
+            basis, _, _ = context.profile(
+                grid,
+                reference_wave,
+                velocity,
+                width,
+                profile_name,
+                integrated=False,
+            )
+            profile += flux * basis
+        # Gaussian/Lorentzian bases integrate to one over the full domain, so
+        # the exact integrated flux is the direct sum of the component fluxes.
+        integrated_flux = float(sum(entry[0] for entry in entries))
+        centroid = (
+            float(np.trapezoid(grid * profile, grid) / integrated_flux)
+            if integrated_flux > 0
+            else np.nan
+        )
+        variance = (
+            float(
+                np.trapezoid(
+                    (grid - centroid) ** 2 * profile,
+                    grid,
+                )
+                / integrated_flux
+            )
+            if integrated_flux > 0
+            else np.nan
+        )
+        sigma_kms = (
+            np.sqrt(max(variance, 0.0)) / reference_wave * C_KMS
+            if np.isfinite(variance)
+            else np.nan
+        )
+        fwhm_kms = _numerical_profile_fwhm(
+            grid, profile, reference_wave
+        )
+        fit_windows = (
+            context.recipe.fit_windows or (context.recipe.fit_window,)
+        )
+        window_mask = np.zeros_like(grid, dtype=bool)
+        for window in fit_windows:
+            window_mask |= (grid >= window[0]) & (grid <= window[1])
+        measured_flux = (
+            float(np.trapezoid(profile[window_mask], grid[window_mask]))
+            if np.count_nonzero(window_mask) >= 2
+            else np.nan
+        )
+        continuum_at_line = float(
+            np.interp(centroid, continuum.wave_rest, continuum.model)
+        )
+        prefix = f"{feature}_{role}"
+        values[f"{prefix}_flux_input"] = integrated_flux
+        values[f"{prefix}_flux_window_input"] = measured_flux
+        values[f"{prefix}_flux_window_fraction"] = (
+            measured_flux / integrated_flux
+            if integrated_flux > 0 and np.isfinite(measured_flux)
+            else np.nan
+        )
+        values[f"{prefix}_flux_cgs"] = (
+            integrated_flux
+            * spectrum.flux_density_scale_to_cgs
+            if spectrum.flux_density_scale_to_cgs is not None else np.nan
+        )
+        values[f"{prefix}_fwhm_kms"] = fwhm_kms
+        values[f"{prefix}_sigma_kms"] = float(sigma_kms)
+        values[f"{prefix}_centroid"] = centroid
+        values[f"{prefix}_ew_rest"] = (
+            integrated_flux / continuum_at_line
+            if continuum_at_line > 0 else np.nan
+        )
+    return values

@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from .config import GaussianComponent, IronTemplateConfig, LineComplexConfig, LocalFitConfig, LorentzianComponent
 from .complex_recipes import (
+    EXTENDED_QUASAR_PRESET_ID,
+    EXTENDED_QUASAR_RECIPE_IDS,
     ComponentRecipe,
     ComplexRecipe,
     describe,
     generic_narrow_lines,
     get,
     list_complexes,
+    extended_quasar_recipes,
     resolve,
 )
 
 __all__ = [
+    "EXTENDED_QUASAR_PRESET_ID",
+    "EXTENDED_QUASAR_RECIPE_IDS",
     "ComponentRecipe",
     "ComplexRecipe",
     "describe",
@@ -26,8 +31,19 @@ __all__ = [
     "local_halpha",
     "local_hbeta",
     "local_mgii",
+    "extended_quasar",
     "resolve",
 ]
+
+
+def extended_quasar() -> Tuple[ComplexRecipe, ...]:
+    """Return the versioned extended-quasar emission-line recipe preset.
+
+    The returned tuple is directly accepted by
+    :func:`qsospec.fit_global_lines` through its ``complexes`` argument.
+    """
+
+    return extended_quasar_recipes()
 
 
 def _iron_config(

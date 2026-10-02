@@ -13,17 +13,81 @@ import pandas as pd
 from astropy.io import fits
 from astropy.table import Table
 
+from ...resolution import SpectralResolution
+
 
 WAVE_ALIASES = ("wavelength", "wave", "lambda", "lam", "obs_wave")
 FLUX_ALIASES = ("flux", "flam", "flux_lambda")
 IVAR_ALIASES = ("ivar", "inverse_variance", "inverse_var")
 ERR_ALIASES = ("error", "err", "sigma", "flux_error")
 MASK_ALIASES = ("mask", "and_mask", "or_mask")
-REDSHIFT_ALIASES = ("redshift", "z", "z_desi", "z_vi")
-OBJECT_ID_ALIASES = ("targetid", "target_id", "object_id", "sparcl_id", "specid")
+RESOLVING_POWER_ALIASES = ("resolving_power", "resolution_r", "spectral_resolution_r")
+SIGMA_LAMBDA_ALIASES = (
+    "sigma_lambda",
+    "resolution_sigma_lambda",
+    "lsf_sigma_angstrom",
+)
+FWHM_LAMBDA_ALIASES = ("fwhm_lambda", "resolution_fwhm_lambda")
+SIGMA_KMS_ALIASES = ("sigma_kms", "resolution_sigma_kms")
+RESOLUTION_MODE_ALIASES = ("resolution_mode",)
+REDSHIFT_ALIASES = ("redshift", "z_optical_fit", "z", "z_desi", "z_vi")
+OBJECT_ID_ALIASES = ("object_id", "optical_object_id", "targetid", "target_id", "sparcl_id", "specid", "catalogid")
 RA_ALIASES = ("ra", "ra_deg")
 DEC_ALIASES = ("dec", "dec_deg", "declination")
 DEFAULT_FLUX_SCALE = 1e-17
+PROVENANCE_SCALAR_COLUMNS = (
+    "survey",
+    "spectrum_key",
+    "optical_survey",
+    "optical_object_id",
+    "catalogid",
+    "release",
+    "run2d",
+    "coadd",
+    "observatory",
+    "obs",
+    "mjd",
+    "source_url",
+    "source_checksum",
+    "source_fits",
+    "fits_checksum_status",
+    "z_optical_fit",
+    "z_optical_fit_error",
+    "z_optical_source",
+    "z_pipeline",
+    "z_euclid",
+    "wresl_wdisp_sigma_ratio",
+    "source_backend",
+    "source_backend_version",
+    "resolution_status",
+    "resolution_source",
+    "resolution_is_object_specific",
+    "resolution_reason",
+    "pixel_cleaning",
+    "merge_algorithm",
+    "merge_version",
+    "wavelength_unit",
+    "wavelength_frame",
+    "flux_density_unit",
+    "flux_scale",
+    "flux_frame",
+    "galactic_extinction_corrected",
+    "qsospec_shard_id",
+    "input_row_index",
+)
+
+
+def _survey_from_provenance(provenance: Mapping[str, Any]) -> Optional[str]:
+    """Return an explicitly declared supported survey, if present."""
+
+    for key in ("survey", "optical_survey", "source_backend"):
+        value = provenance.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized in {"sdss", "desi"}:
+            return normalized
+    return None
 
 
 @dataclass
@@ -41,6 +105,7 @@ class SpectrumData:
     ra: Optional[float] = None
     dec: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    resolution: Optional[SpectralResolution] = None
 
     def uncertainty(self) -> np.ndarray:
         """Return 1-sigma uncertainty, deriving it from ivar when possible."""
@@ -169,16 +234,32 @@ def read_sparcli_spectrum(
     ra_col = _find_column(columns, RA_ALIASES)
     dec_col = _find_column(columns, DEC_ALIASES)
     targetid_col = _find_column(columns, ("targetid", "target_id"))
+    resolution_mode_col = _find_column(columns, RESOLUTION_MODE_ALIASES)
+    resolution_columns = {
+        "sigma_lambda": _find_column(columns, SIGMA_LAMBDA_ALIASES),
+        "fwhm_lambda": _find_column(columns, FWHM_LAMBDA_ALIASES),
+        "resolving_power": _find_column(columns, RESOLVING_POWER_ALIASES),
+        "sigma_kms": _find_column(columns, SIGMA_KMS_ALIASES),
+    }
 
     z_value = redshift if redshift is not None else _extract_scalar(table, z_col, row_index=row_index)
     obj_value = object_id if object_id is not None else _extract_scalar(table, obj_col, row_index=row_index)
     targetid_value = _extract_scalar(table, targetid_col, row_index=row_index)
+    provenance = {
+        name: _extract_scalar(
+            table, _find_column(columns, (name,)), row_index=row_index
+        )
+        for name in PROVENANCE_SCALAR_COLUMNS
+        if _find_column(columns, (name,)) is not None
+    }
+    survey = _survey_from_provenance(provenance)
 
     metadata = {
         "input_file": str(input_path),
         "file_type": file_type,
         "flux_unit": "cgs",
-        "flux_scale": DEFAULT_FLUX_SCALE,
+        "flux_scale": float(provenance.get("flux_scale") or DEFAULT_FLUX_SCALE),
+        "survey": survey,
         "columns": list(map(str, columns)),
         "selected_columns": {
             "wavelength": wave_col,
@@ -192,11 +273,36 @@ def read_sparcli_spectrum(
             "dec": dec_col,
         },
         "row_index": row_index,
+        **provenance,
     }
 
     ivar = _extract_vector(table, ivar_col, row_index=row_index) if ivar_col else None
     error = _extract_vector(table, err_col, row_index=row_index) if err_col else None
     mask = _extract_vector(table, mask_col, row_index=row_index) if mask_col else None
+    resolution = None
+    declared_mode = _extract_scalar(table, resolution_mode_col, row_index=row_index)
+    for mode, column in resolution_columns.items():
+        if column is not None:
+            resolution = SpectralResolution(
+                mode=mode,
+                values=_extract_vector(table, column, row_index=row_index),
+                wavelength=_extract_vector(table, wave_col, row_index=row_index),
+                source=str(
+                    provenance.get("resolution_source")
+                    or "input_spectrum_column"
+                ),
+                is_object_specific=bool(
+                    provenance.get("resolution_is_object_specific", True)
+                ),
+                is_approximate=not bool(provenance.get("resolution_is_object_specific", True)),
+            )
+            break
+    if resolution is None:
+        resolution = SpectralResolution(
+            mode="missing",
+            source=f"input_manifest_declared_{declared_mode or 'missing'}_without_values",
+            is_approximate=True,
+        )
 
     return SpectrumData(
         wave_obs=_extract_vector(table, wave_col, row_index=row_index),
@@ -210,6 +316,7 @@ def read_sparcli_spectrum(
         ra=float(_extract_scalar(table, ra_col, row_index=row_index)) if ra_col else None,
         dec=float(_extract_scalar(table, dec_col, row_index=row_index)) if dec_col else None,
         metadata=metadata,
+        resolution=resolution,
     )
 
 

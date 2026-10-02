@@ -9,6 +9,11 @@
 coverage-aware emission-line recipes, continuum decomposition, optional pPXF
 host subtraction, QA figures, and resumable Parquet run bundles.
 
+Polynomial continuum correction is opt-in; it is disabled by default for all
+surveys, including SDSS. See the
+[configuration guide](https://qsospec.readthedocs.io/en/latest/reference/configuration.html)
+for optional correction settings.
+
 ## Installation
 
 ```bash
@@ -56,6 +61,9 @@ Fitzpatrick (1999) law. This requires locally configured
 data; already-corrected spectra can be declared with
 `galactic_extinction_corrected=True`.
 
+qsospec can consume normalized SDSS/DESI spectral Parquet inputs; see the
+[survey-input guide](https://qsospec.readthedocs.io/en/latest/how_to/sdss_parquet_inputs.html).
+
 ## Features
 
 - Single or automatically selected broken power-law continua, Fe II, and a
@@ -70,3 +78,7 @@ workflows, model definitions, examples, and API reference.
 
 `qsospec` is distributed under the
 [GPLv3 license](https://github.com/rudolffu/qsospec/blob/main/LICENSE).
+
+Version 0.2.0 uses the `global_v2` continuum model by default. See the
+[migration guide](https://qsospec.readthedocs.io/en/latest/getting_started/migration_0_2.html)
+for model provenance, the legacy preset, and API changes.

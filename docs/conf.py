@@ -1,8 +1,5 @@
 import os
-import sys
 from importlib.metadata import PackageNotFoundError, version
-
-sys.path.insert(0, os.path.abspath("../src"))
 
 project = "qsospec"
 copyright = "2026, Yuming Fu"
@@ -42,6 +39,8 @@ intersphinx_mapping = {
     "matplotlib": ("https://matplotlib.org/stable/", None),
     "astropy": ("https://docs.astropy.org/en/stable/", None),
 }
+if os.environ.get("QSOSPEC_DOCS_OFFLINE") == "1":
+    intersphinx_mapping = {}
 
 myst_enable_extensions = [
     "colon_fence",
@@ -77,7 +76,7 @@ html_context = {
 
 rst_prolog = """
 .. |project_name| replace:: qsospec
-.. |python_versions| replace:: 3.9–3.13
+.. |python_versions| replace:: 3.10-3.13
 .. |repository| replace:: https://github.com/rudolffu/qsospec
 .. |issues| replace:: https://github.com/rudolffu/qsospec/issues
 .. |pypi| replace:: https://pypi.org/project/qsospec/

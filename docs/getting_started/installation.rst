@@ -24,7 +24,9 @@ For development and documentation:
 |project_name| supports Python |python_versions|. Scientific templates for
 Fe II and the Balmer pseudo-continuum are included in the package. Galactic
 dust maps and pPXF stellar templates are external data and must be configured
-separately.
+separately. Download the E-MILES NPZ bundle needed for host decomposition from
+`micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__ and pass its local
+directory through ``template_root``.
 
 Next steps
 ----------

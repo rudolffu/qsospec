@@ -224,4 +224,9 @@ __marimo__/
 # Generated qsospec products
 /outputs/
 /runs/
-/benchmarks/
+/benchmarks/results/
+
+# Local implementation notes and reports
+/.local-notes/
+
+/validation/
