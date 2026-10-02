@@ -228,3 +228,5 @@ __marimo__/
 
 # Local implementation notes and reports
 /.local-notes/
+
+/validation/

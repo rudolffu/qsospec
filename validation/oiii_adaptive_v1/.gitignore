@@ -1,8 +1,0 @@
-# Keep reproducible scripts and summary reports; full local audit products remain on disk.
-control_inputs/
-*.tar.gz
-**/*.pkl
-**/adaptive.json
-**/hbeta.json
-**/*.png
-**/*.pdf
