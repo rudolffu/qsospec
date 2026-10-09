@@ -320,7 +320,7 @@ def prepare_spectrum_for_host_decomp(
     input_mask_rejected = np.zeros_like(valid)
     if spectrum.mask is not None:
         mask = np.asarray(spectrum.mask)
-        input_mask_rejected = mask != 0
+        input_mask_rejected = ~mask if mask.dtype.kind == "b" else mask != 0
         valid &= ~input_mask_rejected
     artifact_rejected = _window_mask(wave_obs, observed_artifact_windows)
     valid &= ~artifact_rejected

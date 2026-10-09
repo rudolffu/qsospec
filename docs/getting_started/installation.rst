@@ -32,5 +32,5 @@ Next steps
 ----------
 
 - Configure the default foreground correction in :doc:`dustmaps`.
-- Fit an in-memory spectrum in :doc:`quickstart`.
+- Fit a real SDSS quasar spectrum in :doc:`quickstart`.
 - See :doc:`choose_workflow` before processing files or samples.

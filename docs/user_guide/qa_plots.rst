@@ -7,11 +7,17 @@ residual masks that show which pixels constrained the fit.
 Overview semantics
 ------------------
 
-- Thin grey: input spectrum, with Milky Way extinction correction identified
-  in the legend when applied.
+- Thin grey: all input pixels with finite wavelength and flux, including
+  excluded pixels. Milky Way extinction correction is identified in the
+  legend when applied.
+- Optional red crosses: excluded input pixels with finite wavelength and flux, including
+  flagged pixels and pixels with unusable uncertainties. NaN/Inf flux cannot
+  be placed on the plot. These points do not enter residuals or fit statistics.
 - Darker grey: input spectrum smoothed for display when the input has more
   than 4,000 wavelength pixels.
-- Solid near-black: total model across all valid displayed pixels.
+- Solid near-black: total model across the complete input grid wherever its
+  evaluation is finite, including excluded pixels. This is evaluation of the
+  fitted model, without interpolation of the data, new optimization or refits.
 - Grey shading: pixels masked during the earlier pPXF host fit.
 - Hatched blue-grey: selected but failed, truncated, or explicitly unmodelled
   regions.
@@ -33,6 +39,13 @@ Zooms show only locally relevant broad, narrow, and wing components. The
 optical-blue adaptive complex receives a zoom only when all display lines are
 covered. Red-side-only Lyα panels are labeled limited and
 continuum-extrapolated.
+
+Excluded input pixels also appear in the normal zoom traces, with the total
+model drawn across them. Optional red markers are included in both views. Previously fitted or reloaded full-grid model arrays are
+used directly; unsupported historical model gaps remain gaps. A model drawn
+through an excluded pixel does not mean that pixel constrained the fit.
+Fit-window selection, continuum clipping and the separately labeled Lyα
+absorption masks retain their existing meanings.
 
 Scaling
 -------
@@ -61,6 +74,16 @@ Configuration
 Use :class:`qsospec.GlobalQAPlotConfig` to select raw-plus-smoothed,
 smoothed-only, or raw-only display; residuals; fitted-region shading; output
 format; and zoom count.
+
+Excluded pixels are drawn as ordinary spectrum pixels by default. Add red
+crosses with ``result.plot_qa(mark_excluded_pixels=True)`` or
+``result.show_qa(mark_excluded_pixels=True)``. For saved workflow plots use
+``GlobalQAPlotConfig(mark_excluded_pixels=True)``. Run bundles accept the same
+keyword, for example ``run.plot_qa(object_id, mark_excluded_pixels=True)``.
+An explicit keyword overrides the configuration; omitting it uses the
+configuration default (``False``). The full-grid model display is unchanged. The shared rendering applies to ``plot_qa()``, ``show_qa()``,
+saved workflow QA and QA generated from run bundles. Smoothing and residuals
+continue to use valid pixels only.
 
 In notebooks, call ``result.plot_qa()`` for an open Matplotlib figure or
 ``result.show_qa()`` to display it immediately. Opened run bundles provide the

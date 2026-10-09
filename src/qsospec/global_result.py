@@ -185,6 +185,7 @@ class WorkflowResult:
         *,
         overview_yscale=None,
         overview_log_min_fraction=None,
+        mark_excluded_pixels=None,
     ):
         """Return an open Matplotlib QA figure for notebook use."""
 
@@ -195,6 +196,7 @@ class WorkflowResult:
             plot_config,
             overview_yscale=overview_yscale,
             overview_log_min_fraction=overview_log_min_fraction,
+            mark_excluded_pixels=mark_excluded_pixels,
         )
 
     def show_qa(
@@ -203,6 +205,7 @@ class WorkflowResult:
         *,
         overview_yscale=None,
         overview_log_min_fraction=None,
+        mark_excluded_pixels=None,
     ):
         """Display and return the QA figure in an interactive session."""
 
@@ -212,6 +215,7 @@ class WorkflowResult:
             plot_config,
             overview_yscale=overview_yscale,
             overview_log_min_fraction=overview_log_min_fraction,
+            mark_excluded_pixels=mark_excluded_pixels,
         )
         plt.show()
         return figure

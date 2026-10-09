@@ -60,6 +60,19 @@ def test_sparcli_parquet_vector_row_selection(tmp_path):
     assert report["n_valid_pixels"] == 2
 
 
+def test_boolean_valid_mask_matches_integer_rejection_flags():
+    wave = np.arange(3500., 7500., 2.)
+    flags = np.zeros(wave.size, dtype=int)
+    flags[100:120] = 1
+    common = dict(wave_obs=wave, flux=np.ones_like(wave), error=np.full_like(wave, .1), redshift=0.)
+    integer = prepare_spectrum_for_host_decomp(SpectrumData(**common, mask=flags))
+    boolean = prepare_spectrum_for_host_decomp(SpectrumData(**common, mask=flags == 0))
+    for name in ("wave_log", "flux_log", "noise_log", "emission_mask_log", "validity_mask_log"):
+        np.testing.assert_array_equal(getattr(integer, name), getattr(boolean, name))
+    for name in integer.mask_provenance:
+        np.testing.assert_array_equal(integer.mask_provenance[name], boolean.mask_provenance[name])
+
+
 def test_preprocessing_preserves_native_mask_gaps_and_observed_artifacts():
     wave = np.arange(3500.0, 9001.0, 1.0)
     flux = np.ones_like(wave)

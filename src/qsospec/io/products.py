@@ -40,6 +40,7 @@ class GlobalQAPlotConfig:
     show_coordinates: bool = True
     output_format: str = "png"
     write_other_diagnostics: bool = False
+    mark_excluded_pixels: bool = False
 
     def __post_init__(self) -> None:
         if self.figure_width <= 0 or self.figure_height <= 0:
@@ -69,6 +70,7 @@ def resolve_qa_plot_config(
     *,
     overview_yscale: Optional[str] = None,
     overview_log_min_fraction: Optional[float] = None,
+    mark_excluded_pixels: Optional[bool] = None,
 ) -> GlobalQAPlotConfig:
     """Return a QA plot config with optional convenience overrides applied."""
 
@@ -78,6 +80,8 @@ def resolve_qa_plot_config(
         updates["overview_yscale"] = overview_yscale
     if overview_log_min_fraction is not None:
         updates["overview_log_min_fraction"] = overview_log_min_fraction
+    if mark_excluded_pixels is not None:
+        updates["mark_excluded_pixels"] = mark_excluded_pixels
     return replace(config, **updates) if updates else config
 
 
@@ -1222,18 +1226,24 @@ def _plot_qa(
     fit_data_display = display_scale * spectrum.flux
     fit_error_display = display_scale * spectrum.err
     host_model_display = display_scale * host_model
-    overview_model_valid = valid.copy()
+    # Models are evaluated on the complete input grid, including excluded
+    # pixels. Display that evaluation without changing fit/residual masks.
+    overview_model_valid = np.isfinite(wave) & np.isfinite(overview_full_model)
     overview_data_valid = valid & np.isfinite(overview_data_native)
     if host_overview:
         overview_data_valid = (
             result.total_spectrum.valid_mask
             & np.isfinite(overview_data_native)
         )
-        overview_model_valid &= (
-            result.total_spectrum.valid_mask
-            & np.isfinite(host_model)
-            & np.isfinite(overview_data_native)
-        )
+        overview_model_valid &= np.isfinite(host_model)
+    overview_invalid = (
+        ~result.total_spectrum.valid_mask if host_overview else ~valid
+    )
+    overview_masked_data = overview_invalid & np.isfinite(wave) & np.isfinite(overview_data)
+    fit_masked_data = ~valid & np.isfinite(wave) & np.isfinite(fit_data_display)
+    result.metadata["qa_excluded_pixels_marked"] = bool(config.mark_excluded_pixels)
+    result.metadata["qa_n_marked_excluded_pixels"] = int(overview_masked_data.sum()) if config.mark_excluded_pixels else 0
+    result.metadata["qa_n_model_pixels"] = int(overview_model_valid.sum())
     smoothing_requested = bool(
         config.show_smoothed_data
         or config.smooth_original_spectrum_for_display
@@ -1304,8 +1314,8 @@ def _plot_qa(
         data_mask = np.asarray(panel_mask, dtype=bool) & np.isfinite(data_values)
         if not replace_original_with_smoothed:
             ax.plot(
-                wave[data_mask],
-                data_values[data_mask],
+                wave,
+                np.where(data_mask, data_values, np.nan),
                 color=_TCC_COLORS["data"],
                 lw=0.8,
                 alpha=0.8,
@@ -1323,8 +1333,8 @@ def _plot_qa(
                 & np.isfinite(smoothed_values)
             )
             ax.plot(
-                wave[smoothed_mask],
-                smoothed_values[smoothed_mask],
+                wave,
+                np.where(smoothed_mask, smoothed_values, np.nan),
                 color=_TCC_COLORS["data_smooth"],
                 lw=0.9,
                 alpha=0.9,
@@ -1333,6 +1343,15 @@ def _plot_qa(
                     _input_spectrum_label(result, smoothed=True)
                     if labels else "_nolegend_"
                 ),
+            )
+
+    def plot_masked_pixels(ax, panel_mask, data_values, *, labels):
+        if config.mark_excluded_pixels and np.any(panel_mask):
+            ax.scatter(
+                wave[panel_mask], data_values[panel_mask],
+                color="#c62828", marker="x", s=10, linewidths=0.7,
+                alpha=0.8, zorder=8,
+                label="excluded input pixels" if labels else "_nolegend_",
             )
 
     def plot_continuum_components(ax, panel_mask, *, labels):
@@ -1370,8 +1389,8 @@ def _plot_qa(
                     else "_nolegend_"
                 )
             ax.plot(
-                wave[panel_mask],
-                display_scale * component[panel_mask],
+                wave,
+                np.where(panel_mask, display_scale * component, np.nan),
                 color=color,
                 ls=linestyle,
                 lw=0.8,
@@ -1382,11 +1401,12 @@ def _plot_qa(
 
     plot_observed(
         overview_axis,
-        overview_data_valid,
+        np.isfinite(wave) & np.isfinite(overview_data),
         data_values=overview_data,
         smoothed_values=smoothed_overview_data,
         labels=True,
     )
+    plot_masked_pixels(overview_axis, overview_masked_data, overview_data, labels=True)
     overview_model_plot = np.where(
         overview_model_valid,
         overview_full_model,
@@ -1429,7 +1449,10 @@ def _plot_qa(
         if not fit.success:
             continue
         fit = result.line_complexes[complex_name]
-        component_mask = valid & np.asarray(fit.fit_mask, dtype=bool)
+        bounds = _COMPLEX_WINDOWS.get(complex_name)
+        component_mask = np.asarray(fit.fit_mask, dtype=bool).copy()
+        if bounds is not None:
+            component_mask = np.isfinite(wave) & (wave >= bounds[0]) & (wave <= bounds[1])
         combined = _combined_broad_profile(fit)
         overview_axis.plot(
             wave[component_mask],
@@ -1642,6 +1665,7 @@ def _plot_qa(
     if residual_axis is not None:
         residual_mask = (
             fitted_mask
+            & overview_data_valid
             & overview_model_valid
             & np.isfinite(overview_data)
             & np.isfinite(overview_full_model)
@@ -1722,7 +1746,9 @@ def _plot_qa(
 
     for zoom_index, (axis, complex_name) in enumerate(zip(zoom_axes, available)):
         lo, hi = _COMPLEX_WINDOWS[complex_name]
-        panel_mask = valid & (wave >= lo) & (wave <= hi)
+        panel_domain = np.isfinite(wave) & (wave >= lo) & (wave <= hi)
+        panel_mask = valid & panel_domain
+        panel_model_mask = panel_domain & np.isfinite(full_model_display)
         try:
             title = complex_recipes.get(complex_name).label
         except ValueError:
@@ -1751,26 +1777,27 @@ def _plot_qa(
         result.metadata.setdefault("qa_zoom_titles", {})[complex_name] = title
         plot_observed(
             axis,
-            panel_mask,
+            panel_domain,
             data_values=fit_data_display,
             smoothed_values=smoothed_fit_data,
             labels=False,
         )
+        plot_masked_pixels(axis, fit_masked_data & panel_domain, fit_data_display, labels=False)
         axis.plot(
             wave,
-            np.where(panel_mask & valid, full_model_display, np.nan),
+            np.where(panel_model_mask, full_model_display, np.nan),
             color=_TCC_COLORS["total_model"],
             lw=1.8,
             label="_nolegend_",
             zorder=6,
         )
-        plot_continuum_components(axis, panel_mask, labels=False)
+        plot_continuum_components(axis, panel_model_mask, labels=False)
         axis.set_title(title, fontsize=12)
         _configure_qa_axis(axis)
         combined = _combined_broad_profile(fit)
         axis.plot(
-            wave[panel_mask],
-            display_scale * combined[panel_mask],
+            wave[panel_model_mask],
+            display_scale * combined[panel_model_mask],
             label="broad-line model",
             **_COMBINED_BROAD_STYLE,
         )
@@ -1793,8 +1820,8 @@ def _plot_qa(
                         else "_nolegend_"
                     )
                 axis.plot(
-                    wave[panel_mask],
-                    display_scale * component[panel_mask],
+                    wave[panel_model_mask],
+                    display_scale * component[panel_model_mask],
                     label=component_label,
                     **_BROAD_COMPONENT_STYLE,
                 )
@@ -1803,8 +1830,8 @@ def _plot_qa(
             kind = "wing" if "wing" in component_name else "narrow"
             style = _WING_STYLE if kind == "wing" else _NARROW_STYLE
             axis.plot(
-                wave[panel_mask],
-                display_scale * component[panel_mask],
+                wave[panel_model_mask],
+                display_scale * component[panel_model_mask],
                 label=(
                     "additional component"
                     if kind == "wing"
@@ -1896,6 +1923,7 @@ def plot_qa_figure(
     *,
     overview_yscale: Optional[str] = None,
     overview_log_min_fraction: Optional[float] = None,
+    mark_excluded_pixels: Optional[bool] = None,
 ):
     """Return an open Matplotlib QA figure without writing a file."""
 
@@ -1906,6 +1934,7 @@ def plot_qa_figure(
             plot_config,
             overview_yscale=overview_yscale,
             overview_log_min_fraction=overview_log_min_fraction,
+            mark_excluded_pixels=mark_excluded_pixels,
         ),
         return_figure=True,
     )

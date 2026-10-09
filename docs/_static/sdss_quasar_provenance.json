@@ -1,0 +1,78 @@
+{
+  "source_url": "https://sas.sdss.org/sas/dr17/sdss/spectro/redux/26/spectra/lite/1198/spec-1198-52669-0040.fits",
+  "input_file": "spec-1198-52669-0040.fits",
+  "sha256": "8fa02a4f9b59aad58e13d31db9f4edd5b77f0496fcbe4812baedfa719d75b08c",
+  "python_version": "3.12.11",
+  "qsospec_version": "0.2.0",
+  "pipeline": {
+    "class": "QSO",
+    "zwarning": "0"
+  },
+  "redshift": 0.5764288306236267,
+  "fitted_redshift": 0.5764288306236267,
+  "ra_deg": 135.92077,
+  "dec_deg": 39.286062,
+  "flux_unit": "cgs",
+  "flux_scale": 1e-17,
+  "pixels": 3829,
+  "valid_pixels": 3465,
+  "fitted_valid_pixels": 3465,
+  "observed_wavelength_range_angstrom": [
+    3803.644825753192,
+    9183.327215116415
+  ],
+  "continuum_success": true,
+  "complex_statuses": {
+    "halpha_nii_sii": "not_covered",
+    "hbeta_oiii": "fit",
+    "mgii": "fit",
+    "lya_nv": "not_covered",
+    "ciii": "not_covered",
+    "civ": "not_covered",
+    "oii_nev_neiii_hgamma": "fit",
+    "paschen_nir": "not_covered"
+  },
+  "host_decomp_enabled": false,
+  "galactic_extinction": {
+    "enabled": true,
+    "map_name": "planck",
+    "law": "f99",
+    "wavelength_out_of_range": "skip",
+    "rv": 3.1,
+    "sfd_recalibration": 0.86,
+    "ebv_override": null,
+    "clip_negative_ebv": true,
+    "map_path": "COM_CompMap_Dust-GNILC-Model-Opacity_2048_R2.01.fits",
+    "requested": true,
+    "ra": 135.92077,
+    "dec": 39.286062,
+    "applied": true,
+    "status": "applied",
+    "source": "planck",
+    "raw_ebv": 0.024079106748104095,
+    "applied_ebv": 0.024079106748104095,
+    "warning": null,
+    "correction_factor_min": 1.0304736093455176,
+    "correction_factor_max": 1.1072403335868402
+  },
+  "warning_codes": [
+    "balmer_high_n_extension_model_dependent",
+    "parameter_at_bound",
+    "parameter_at_bound",
+    "parameter_at_bound",
+    "recipe_fixed_ratio_applied",
+    "oiii_incomplete_doublet_coverage",
+    "oiii_observed_profile_resolution_unavailable",
+    "parameter_at_bound",
+    "parameter_at_bound",
+    "parameter_at_bound",
+    "statistical_uncertainty_excludes_continuum_host"
+  ],
+  "qa_file": "sdss_quasar_qa.png",
+  "qa_display": {
+    "excluded_pixels_in_normal_trace": true,
+    "mark_excluded_pixels": false,
+    "model_covers_excluded_pixels": true,
+    "residuals_use_fitted_valid_pixels_only": true
+  }
+}

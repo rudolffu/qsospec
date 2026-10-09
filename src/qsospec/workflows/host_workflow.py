@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
@@ -108,7 +109,10 @@ def _good_mask_from_spectrum_data(spectrum_data: Any, extra_mask: Optional[np.nd
         ivar = np.asarray(spectrum_data.ivar, dtype=float)
         good &= np.isfinite(ivar) & (ivar > 0)
     if spectrum_data.mask is not None:
-        good &= np.asarray(spectrum_data.mask) == 0
+        input_mask = np.asarray(spectrum_data.mask)
+        # Format-aware readers return boolean valid-pixel masks; legacy
+        # table inputs retain integer flags with zero meaning unflagged.
+        good &= input_mask if input_mask.dtype.kind == "b" else input_mask == 0
     if extra_mask is not None:
         good &= np.asarray(extra_mask, dtype=bool)
     return good
@@ -1380,9 +1384,12 @@ def fit_global_lines_workflow(
 ) -> WorkflowResult:
     """Read one spectrum and use the shared host/global-fit orchestration."""
 
+    from ..io.readers import read_spectrum
     from .host.io import read_sparcli_spectrum
 
-    spectrum_data = read_sparcli_spectrum(
+    # Keep the legacy scalar-table formats while adding format-aware FITS.
+    reader = read_sparcli_spectrum if Path(input_path).suffix.lower() in {".csv", ".ecsv", ".npz"} else read_spectrum
+    spectrum_data = reader(
         input_path,
         row_index=row_index,
         redshift=redshift,

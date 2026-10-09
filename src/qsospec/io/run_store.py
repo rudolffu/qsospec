@@ -912,6 +912,7 @@ class RunStore:
         *,
         overview_yscale=None,
         overview_log_min_fraction=None,
+        mark_excluded_pixels=None,
     ):
         """Load one archived object and return its open QA figure."""
 
@@ -919,6 +920,7 @@ class RunStore:
             plot_config,
             overview_yscale=overview_yscale,
             overview_log_min_fraction=overview_log_min_fraction,
+            mark_excluded_pixels=mark_excluded_pixels,
         )
 
     def show_qa(
@@ -928,6 +930,7 @@ class RunStore:
         *,
         overview_yscale=None,
         overview_log_min_fraction=None,
+        mark_excluded_pixels=None,
     ):
         """Display and return one archived object's QA figure."""
 
@@ -935,6 +938,7 @@ class RunStore:
             plot_config,
             overview_yscale=overview_yscale,
             overview_log_min_fraction=overview_log_min_fraction,
+            mark_excluded_pixels=mark_excluded_pixels,
         )
 
     @classmethod
