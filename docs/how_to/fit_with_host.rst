@@ -20,8 +20,10 @@ template NPZ bundle from `micappe/ppxf_data
 Expected outputs
 ----------------
 
-When ``redshift < 1.2``, ``host_decomp_enabled`` is true and the result
-contains the pPXF fit, host SED, host model on the quasar grid, and host masks.
+When the redshift is finite and below 1.2, the workflow attempts host fitting.
+An enabled host fit provides the pPXF fit, host SED, host model on the quasar
+grid, and host masks. Inspect coverage and ``host_fit_reliable`` for the
+quantity you need; see :doc:`../user_guide/host_decomposition`.
 
 Common failures
 ---------------

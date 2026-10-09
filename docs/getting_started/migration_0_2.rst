@@ -11,7 +11,9 @@ Default continuum model
 ``GlobalContinuumConfig()`` identifies ``global_v2`` independently of the
 package version. It retains VW01 UV and Park22 optical Fe II, independent
 widths, the regional Verner09 bridge when eligible, soft Hγ refinement with
-0.30 dex tolerance, and polynomial correction off. Workflow, continuum, and
+0.30 dex model-ratio tolerance, and polynomial correction off. The main
+:doc:`../science/continuum_model` chapter explains activation, alternatives,
+and width conventions. Workflow, continuum, and
 run provenance record the model identifier alongside the effective config.
 
 For reproduction of the previous default model, use:
@@ -89,7 +91,7 @@ Matched draws and summaries use ``measurement_key_schema="qualified_v1"``:
    continuum_param:power_law.slope
    derived:ws22_log_l1700
    line:hbeta_oiii:Hb_broad_fwhm_kms
-   line:mgii:mgii_broad_flux_input
+   line:mgii:MgII_broad_flux_input
 
 Native ``fit.metrics``, ``fit.metric_errors`` and continuum sample names are
 unchanged. Run schema 8 persists the qualified draw namespace and compact model recipes. Readers retain

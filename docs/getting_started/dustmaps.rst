@@ -13,11 +13,12 @@ Configure the external ``dustmaps`` directory after installation:
 
    config["data_dir"] = "/path/to/dustmaps"
 
-   from dustmaps import planck, sfd
+   from dustmaps import planck
    planck.fetch(which="GNILC")
-   sfd.fetch()
 
-The configured directory should contain ``planck/`` and ``sfd/``. If
+Replace ``/path/to/dustmaps`` with a directory for the downloaded map. Fetching
+is a one-time setup; subsequent fits read the local map. The default tutorial
+needs only ``planck/``. If
 correction is enabled, missing map files or missing RA/Dec raise an error.
 
 Common alternatives
@@ -27,6 +28,9 @@ Use SFD with the Schlafly & Finkbeiner (2011) recalibration:
 
 .. code-block:: python
 
+   import qsospec
+   from dustmaps import sfd
+   sfd.fetch()
    extinction = qsospec.GalacticExtinctionConfig(map_name="sfd")
 
 Supply a known E(B-V) without querying a map:
@@ -34,6 +38,9 @@ Supply a known E(B-V) without querying a map:
 .. code-block:: python
 
    extinction = qsospec.GalacticExtinctionConfig(ebv_override=0.035)
+
+Use a value measured for your target. ``ebv_override=0.0`` is appropriate for
+a controlled zero-extinction test or a justified zero-reddening assumption.
 
 Use Wang & Chen (2019) for spectra whose observed wavelength grid extends
 beyond the F99 implementation range:

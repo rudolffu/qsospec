@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import runpy
 
 from astropy.io import fits
 import numpy as np
@@ -9,6 +10,11 @@ import pandas as pd
 import pytest
 
 import qsospec
+
+
+@pytest.fixture
+def sdss_example():
+    return runpy.run_path("examples/fit_sdss_quasar.py")
 
 
 def _continuum_only_config():
@@ -114,6 +120,33 @@ def test_documented_sdss_quickstart_offline(synthetic_sdss_fits, monkeypatch):
     np.testing.assert_allclose(result.spectrum.err[6:], data.uncertainty()[6:] * factor[6:] * (1 + data.redshift))
 
 
+def test_line_peaks_example_prepares_observed_arrays(synthetic_sdss_fits, monkeypatch, sdss_example):
+    import qsospec.extinction as extinction
+
+    monkeypatch.setattr(extinction, "_dust_query", lambda *_: lambda _: 0.025)
+    spectrum = sdss_example["prepare_peak_spectrum"](synthetic_sdss_fits)
+    result = qsospec.fit_global_lines(spectrum, _continuum_only_config(), complexes=[])
+    assert result.continuum_success
+    assert spectrum.flux_frame == "rest"
+    assert spectrum.metadata.galactic_extinction["status"] == "applied"
+    assert spectrum.z == 0.5764288306236267
+    np.testing.assert_allclose(spectrum.wave_rest, spectrum.wave_obs / (1 + spectrum.z))
+
+
+def test_read_first_measurement_handles_unavailable_error(sdss_example):
+    from types import SimpleNamespace
+
+    fit = SimpleNamespace(success=True, metrics={"Hb_broad_fwhm_kms": 3000.0},
+                          metric_errors={"Hb_broad_fwhm_kms": np.nan})
+    result = SimpleNamespace(line_complexes={"hbeta_oiii": fit}, complex_statuses={"hbeta_oiii": "fit"})
+    assert sdss_example["read_broad_hbeta"](result) == {
+        "status": "available", "fwhm_kms": 3000.0, "fwhm_error_kms": None,
+    }
+    result.line_complexes = {}
+    result.complex_statuses = {"hbeta_oiii": "not_covered"}
+    assert sdss_example["read_broad_hbeta"](result) == {"status": "not_covered"}
+
+
 @pytest.mark.parametrize("mask", [np.array([True, False]), np.array([0, 1], dtype=int)])
 def test_workflow_accepts_boolean_valid_and_integer_bad_masks(mask):
     from qsospec.workflows.host.io import SpectrumData
@@ -147,7 +180,7 @@ def test_file_workflow_preserves_legacy_table_formats(tmp_path, monkeypatch, suf
 @pytest.mark.docs
 @pytest.mark.external_data
 @pytest.mark.slow
-def test_documented_real_sdss_quickstart():
+def test_documented_real_sdss_quickstart(tmp_path, monkeypatch, sdss_example):
     """Opt in with QSOSPEC_SDSS_EXAMPLE_FITS and an installed Planck map."""
     input_path = os.environ.get("QSOSPEC_SDSS_EXAMPLE_FITS")
     if input_path is None:
@@ -158,7 +191,8 @@ def test_documented_real_sdss_quickstart():
     provenance = json.loads(Path("docs/_static/sdss_quasar_provenance.json").read_text())
     assert hashlib.sha256(Path(input_path).read_bytes()).hexdigest() == provenance["sha256"]
     data = qsospec.read_spectrum(input_path)
-    result = qsospec.fit_global_lines_workflow(input_path)
+    run_directory = tmp_path / "sdss-run"
+    result = sdss_example["fit_example"](input_path, run_directory=run_directory)
     assert result.spectrum.z == data.redshift == provenance["redshift"]
     assert (data.ra, data.dec) == (provenance["ra_deg"], provenance["dec_deg"])
     assert result.continuum_success
@@ -167,17 +201,37 @@ def test_documented_real_sdss_quickstart():
     assert result.metadata["galactic_extinction"]["status"] == "applied"
     assert result.complex_statuses == provenance["complex_statuses"]
     assert set(result.warning_codes()) == set(provenance["warning_codes"])
-    figure = result.plot_qa()
-    assert figure.axes
-    import matplotlib.pyplot as plt
-    plt.close(figure)
+    measurements = sdss_example["read_broad_hbeta"](result)
+    reference = provenance["measurement_verification"]["broad_hbeta"]
+    np.testing.assert_allclose(measurements["fwhm_kms"], reference["fwhm_kms"], rtol=2e-3)
+    if reference["fwhm_error_kms"] is None:
+        assert measurements["fwhm_error_kms"] is None
+    else:
+        np.testing.assert_allclose(measurements["fwhm_error_kms"], reference["fwhm_error_kms"], rtol=2e-2)
+    hbeta = result.line_complexes["hbeta_oiii"]
+    assert hbeta.success
+    assert hbeta.metadata["line_peaks"]["measurements"]["hbeta_broad"]["component_ids"] == reference["component_ids"]
+    assert hbeta.metadata["line_lsf"]["status"] == reference["line_lsf"]["status"]
+
+    def no_refit(*args, **kwargs):
+        raise AssertionError("reload must not fit")
+
+    monkeypatch.setattr(qsospec, "fit_object_to_store", no_refit)
+    monkeypatch.setattr(qsospec, "fit_global_lines_workflow", no_refit)
+    loaded = qsospec.load_model(str(run_directory), sdss_example["OBJECT_ID"])
+    assert sdss_example["read_broad_hbeta"](loaded) == measurements
+    assert loaded.complex_statuses == result.complex_statuses
+    assert loaded.line_complexes["hbeta_oiii"].success == hbeta.success
+    assert loaded.spectrum.z == result.spectrum.z
 
 
-def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path):
+def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path, sdss_example):
     base = _spectrum()
     spectrum = qsospec.Spectrum.from_arrays(
         base.wave_obs,
-        base.flux,
+        base.flux + 4.0 * np.exp(-0.5 * ((base.wave_rest - 4862.68) / 24.0) ** 2)
+        + 2.0 * np.exp(-0.5 * ((base.wave_rest - 5008.24) / 2.0) ** 2)
+        + (2.0 / 2.98) * np.exp(-0.5 * ((base.wave_rest - 4960.30) / 2.0) ** 2),
         err=base.err,
         z=base.z,
         wave_frame="rest",
@@ -189,7 +243,10 @@ def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path):
         str(tmp_path / "run"),
         object_id="docs-object",
         global_config=_continuum_only_config(),
-        complexes=[],
+        complexes=["hbeta_oiii"],
+        hbeta_config=qsospec.HbetaComplexConfig(
+            fit_oiii_wings=False, broad_fwhm_bands_kms=((900.0, 20000.0),),
+        ),
         write_qa=False,
     )
     loaded = qsospec.load_model(str(tmp_path / "run"), "docs-object")
@@ -197,6 +254,12 @@ def test_documented_single_object_run_uses_preprocessed_spectrum(tmp_path):
     assert Path(result.output_files["manifest"]).exists()
     np.testing.assert_allclose(loaded.spectrum.flux, result.spectrum.flux)
     assert result.metadata["galactic_extinction"]["status"] == "declared_corrected"
+    measurement = sdss_example["read_broad_hbeta"](result)
+    assert measurement["status"] == "available"
+    assert measurement["fwhm_error_kms"] > 0
+    assert sdss_example["read_broad_hbeta"](loaded) == measurement
+    assert loaded.complex_statuses == result.complex_statuses
+    assert loaded.line_complexes["hbeta_oiii"].success
 
 
 @pytest.mark.docs

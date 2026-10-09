@@ -197,7 +197,11 @@ AGN-host decomposition and stellar-continuum fitting
 - `Aydar et al. (2026), 2026A&A...710A.141A <https://ui.adsabs.harvard.edu/abs/2026A%26A...710A.141A/abstract>`__
   — pPXF decomposition of type-1 AGN with stellar, power-law, Fe II, Balmer,
   and emission-line templates. The optional qsospec masked pseudo-continuum
-  host strategy implements a similar method.
+  host strategy implements a similar method using masked emission lines and
+  a final qsospec AGN fit. See the
+  :doc:`implementation comparison <../how_to/agn_aware_ppxf_host_decomposition>`
+  for width selection, fit passes, uncertainty procedures and the scope of
+  the published validation.
 
 - `Yip et al. (2004), 2004AJ....128.2603Y <https://ui.adsabs.harvard.edu/abs/2004AJ....128.2603Y/abstract>`__
   — SDSS quasar eigenspectra and PCA decomposition.

@@ -20,46 +20,44 @@ for optional correction settings.
 python -m pip install qsospec
 ```
 
+Python 3.10 or later is required. Check the installed version with
+`python -c "import qsospec; print(qsospec.__version__)"`.
+
 For host-galaxy decomposition:
 
 ```bash
 python -m pip install "qsospec[host]"
 ```
 
-## Minimal example
+## Fit a real SDSS spectrum
+
+Configure the [Planck GNILC map](https://qsospec.readthedocs.io/en/latest/getting_started/dustmaps.html)
+once, then run:
 
 ```python
+from astropy.utils.data import download_file
 import qsospec
 
-spectrum = qsospec.Spectrum.from_arrays(
-    wavelength,
-    flux,
-    err=uncertainty,
-    z=redshift,
-    wave_frame="observed",
-    flux_unit="cgs",
-    ra=ra,
-    dec=dec,
+url = (
+    "https://sas.sdss.org/sas/dr17/sdss/spectro/redux/26/"
+    "spectra/lite/1198/spec-1198-52669-0040.fits"
 )
-
-result = qsospec.fit_object_to_store(
-    spectrum,
-    "runs/my-quasar",
-    object_id="my-quasar",
-    global_config=qsospec.GlobalContinuumConfig(
-        power_law=qsospec.PowerLawConfig(mode="auto"),
-    ),
-    write_qa=True,
-)
-
+path = download_file(url, cache=True)
+result = qsospec.fit_global_lines_workflow(path, run_host_decomp=False)
+print(result.continuum_success)
+print(result.complex_statuses)
 result.show_qa()
 ```
 
-Uncorrected spectra are dereddened by default with Planck GNILC and the
-Fitzpatrick (1999) law. This requires locally configured
-[`dustmaps`](https://qsospec.readthedocs.io/en/latest/getting_started/dustmaps.html)
-data; already-corrected spectra can be declared with
-`galactic_extinction_corrected=True`.
+The workflow uses the FITS redshift, applies Planck/F99 Galactic correction,
+and fits the default continuum and covered lines. The download is cached;
+no host stellar templates are needed for this example.
+
+Follow the [quickstart](https://qsospec.readthedocs.io/en/latest/getting_started/quickstart.html)
+and [measurement tutorial](https://qsospec.readthedocs.io/en/latest/user_guide/results.html)
+to inspect broad Hβ and save/reload the same analysis. For your own arrays,
+use the [array guide](https://qsospec.readthedocs.io/en/latest/how_to/fit_arrays.html);
+for a sample, use [batch fitting](https://qsospec.readthedocs.io/en/latest/user_guide/batch_fitting.html).
 
 qsospec can consume normalized SDSS/DESI spectral Parquet inputs; see the
 [survey-input guide](https://qsospec.readthedocs.io/en/latest/how_to/sdss_parquet_inputs.html).

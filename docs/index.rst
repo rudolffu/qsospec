@@ -17,7 +17,7 @@ emission-line, host-decomposition, QA, and batch workflows.
       :link: getting_started/choose_workflow
       :link-type: doc
 
-      Compare array, file, host-decomposition, and batch interfaces.
+      Choose an interface for a first fit, model experiment, archive, or sample.
 
    .. grid-item-card:: Interpret QA
       :link: user_guide/qa_plots
@@ -31,11 +31,23 @@ emission-line, host-decomposition, QA, and batch workflows.
 
       See the built-in line complexes and their current coverage rules.
 
-Minimal array example
----------------------
+Your first analysis
+-------------------
 
-Array spectra are uncorrected by default. Prepare them explicitly before using
-the low-level numerical fitters.
+The :doc:`getting_started/quickstart` downloads a real SDSS quasar spectrum
+and fits its continuum and covered lines. Continue to
+:doc:`user_guide/results` to report broad Hβ and reload a saved analysis.
+For an introduction to flux units, frames, masks, and widths, read
+:doc:`getting_started/spectral_basics`.
+
+Fit your own arrays
+-------------------
+
+The following excerpt assumes your own ``wavelength``, ``flux``,
+``uncertainty``, ``redshift``, ``ra``, and ``dec`` variables. It uses physical
+cgs flux density (``flux_scale=1.0``). For scaled survey arrays or relative
+flux, follow :doc:`how_to/fit_arrays`. Array spectra are uncorrected by
+default; prepare them before using the low-level numerical fitters.
 
 .. code-block:: python
 

@@ -100,7 +100,7 @@ broad/narrow components are available but disabled in the preset.
 
 Paζ (9231.546 Å) lies between the two windows, so its core is excluded;
 the recipe records a possible broad-wing contamination warning. The
-[ S III ] 9533 / Paε decomposition is a genuine blend at low resolution:
+[S III] 9533 / Paε decomposition is a genuine blend at low resolution:
 the fit persists the full covariance and a blend-quality flag, and
 individual deblended errors are withheld when the two components are
 unresolved or unreliable. The measured doublet ratio is not imposed.
@@ -108,9 +108,13 @@ unresolved or unreliable. The measured doublet ratio is not imposed.
 Local versus envelope coverage
 ------------------------------
 
-Local-support recipes decide coverage per fitting window using the actual
-valid pixels after masks: a missing distant window cannot reject a line
-that is locally covered. Peak support and both half-maximum crossings are
+Local-support recipes decide coverage per fitting window using the valid
+fraction of available native pixels after masks, a minimum valid count,
+and valid support around the line center and core. A missing distant window
+cannot reject a line that is locally covered. The component states
+``observed``, ``truncated``, ``masked_core``, and ``not_observed`` are saved
+in ``fit.metadata["component_coverage_status"]``. See
+:doc:`coverage_reliability` for the exact distinctions. Peak support and both half-maximum crossings are
 reported, and measured-window fluxes are distinguished from
 model-extrapolated total fluxes. Recipes such as ``hbeta_oiii`` and ``mgii``
 use strict full-window coverage.

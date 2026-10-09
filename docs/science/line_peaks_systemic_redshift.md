@@ -1,20 +1,37 @@
 # Line peaks and optional systemic redshifts
 
-New generic and built-in line fits record vacuum line peaks automatically.
+Generic and built-in line fits record vacuum line peaks automatically.
 The peak is the maximum of the selected fitted line profile, after excluding
 continuum and unrelated features. It differs from a flux-weighted centroid.
 Existing centroid measurements are unchanged.
 
+## Prepare and fit a spectrum
+
+Use the FITS file and configured Planck dust map from the
+[SDSS quick start](../getting_started/quickstart.rst). This object covers the
+Hβ/[O III] window. The high-level file workflow prepares it automatically;
+the low-level `fit_global_lines` interface takes a prepared spectrum.
+
+The following helper is included from the tested companion script. It reads
+the observed arrays, valid-pixel mask, coordinates and adopted redshift, then
+applies Galactic correction and rest-frame conversion with `prepare_spectrum`.
+
 ```python
 import qsospec
-
 import qsospec.line_peaks
 import qsospec.systemic_redshift
-# Pass the catalog's adopted systemic redshift as the ordinary input redshift.
-spectrum = qsospec.Spectrum.from_arrays(
-    wave_obs, flux_obs, err=error_obs, z=dr20q_z_sys,
-    wave_frame="observed", survey="sdss",
-)
+
+path = "spec-1198-52669-0040.fits"  # Local copy downloaded in the quick start.
+```
+
+```{literalinclude} ../../examples/fit_sdss_quasar.py
+:language: python
+:start-after: peak-preparation-start
+:end-before: peak-preparation-end
+```
+
+```python
+spectrum = prepare_peak_spectrum(path)
 result = qsospec.fit_global_lines(spectrum)
 
 fit = result.line_complexes["hbeta_oiii"]
@@ -26,6 +43,11 @@ diagnostic = qsospec.systemic_redshift.estimate_systemic_redshift(result, method
 if diagnostic["status"] == "available":
     print(diagnostic["z_sys"], diagnostic["z_sys_error"])
 ```
+
+For your own arrays, supply their adopted redshift and object coordinates in
+`Spectrum.from_arrays`, using their actual flux scale and frame. A catalog
+systemic redshift, such as DR20Q `z_sys`, can be used directly as that input.
+See [array preparation](../how_to/fit_arrays.rst).
 
 The estimator is disabled unless called. It adds its returned dictionary to
 `result.metadata["systemic_redshift"]`; saving this result through the existing
@@ -114,10 +136,14 @@ presented as a measured systemic redshift.
 ## Recovery and validation
 
 ```python
-loaded = qsospec.load_model(store, object_id)
+run = qsospec.open_run("runs/sdss-1198-0040")
+loaded = qsospec.load_model(run, "spec-1198-52669-0040")
 statuses = qsospec.line_peaks.recover_line_peaks(loaded)  # Explicit, no fit.
 diagnostic = qsospec.systemic_redshift.estimate_systemic_redshift(loaded)
 ```
+
+This recovery example uses the saved object from
+{ref}`the results tutorial <save-and-reload-this-analysis>`.
 
 New runs save exact native profile definitions. For older native runs, recovery
 is accepted only when reconstructed components match the archived arrays;

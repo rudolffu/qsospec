@@ -10,5 +10,6 @@ the appropriate interface.
    installation
    dustmaps
    quickstart
+   spectral_basics
    choose_workflow
    migration_0_2

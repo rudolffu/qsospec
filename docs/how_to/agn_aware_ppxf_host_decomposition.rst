@@ -1,5 +1,11 @@
 Use the AGN-aware masked pPXF host mode
-========================================
+===========================================
+
+Use this strategy when you need a stellar-host estimate from an optical
+spectrum with a substantial AGN pseudo-continuum. You need a readable input
+spectrum, its adopted redshift and coordinates, the foreground-map setup and
+an external stellar-template library. The procedure below returns both the
+host-subtracted spectrum and diagnostics of the decomposition.
 
 The default host strategy, ``masked_simple``, fits E-MILES stellar templates,
 a small power-law basis, and an additive polynomial while masking emission
@@ -30,7 +36,7 @@ component is subtracted; the power law, Fe II, Balmer emission, and spectral
 lines remain for the final standard qsospec fit.
 
 Setup
------
+---------
 
 Install ``qsospec[host]`` and obtain the external E-MILES NPZ bundle from
 `micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__. For example,
@@ -60,7 +66,7 @@ thresholds. With the default fallback policy, an object without a reliable
 broad Balmer width uses ``masked_simple`` and records the reason.
 
 Interpret the result
---------------------
+------------------------
 
 Inspect the strategy and reliability before using the host model:
 
@@ -103,12 +109,12 @@ wavelength support is recorded with the fit. Values above 0.8 produce a
 warning; reliability is assessed from the full set of host diagnostics. Direct
 local pPXF samples use
 names such as ``fAGN_pPXF_5100`` and ``fracHost_pPXF_5100``. ``fAGN_5100`` is
-the final qsospec AGN-continuum flux density,
+the full fitted final qsospec continuum flux density,
 and ``fracHost_5100`` is the final fraction using that continuum with the pPXF
 stellar host. See :ref:`host-fraction-vocabulary`.
 
 Coverage and model closure
---------------------------
+------------------------------
 
 Coverage is classified from valid rest-frame pixels as ``full_optical``,
 ``optical_core``, ``blue_optical``, or ``insufficient``. The classifier also
@@ -122,26 +128,102 @@ With the default ``agn_pseudocontinuum_masked`` configuration, no additive or
 multiplicative polynomial is fitted, so closure should be numerical. An
 unexplained closure mismatch makes the host fit unreliable.
 
-Provenance and limitations
---------------------------
+Relationship to Aydar et al. (2026)
+---------------------------------------
 
 This mode implements an AGN-aware pPXF host-decomposition method similar to
-that used by `Aydar et al. (2026)
-<https://ui.adsabs.harvard.edu/abs/2026A%26A...710A.141A>`__. Stellar and AGN
-pseudo-continuum templates are fitted jointly, with strong emission lines
-masked during the host fit.
+that used by `Aydar et al. (2026), Sections 2.1--2.2
+<https://arxiv.org/html/2604.27783v1#S2>`__. The shared approach fits stellar
+and AGN templates, subtracts the fitted stellar contribution, and then fits
+the AGN spectrum. The following choices define the qsospec strategy:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 35 40
+
+   * - Stage
+     - Published method
+     - qsospec ``agn_pseudocontinuum_masked``
+   * - pPXF basis
+     - Stellar, power-law, iron, Balmer and emission-line templates.
+     - Stellar and AGN pseudo-continuum templates; strong emission lines
+       are masked.
+   * - Broadening choice
+     - A preliminary pPXF emission-line fit selects the nearby iron/Balmer
+       template width, followed by a width check.
+     - A preliminary qsospec broad-Balmer fit selects the template width;
+       the final qsospec fit supplies the width check.
+   * - Final AGN fit
+     - PyQSOFit on the host-subtracted spectrum.
+     - qsospec on the host-subtracted spectrum with the configured global
+       continuum and line recipes.
+   * - Uncertainty procedure
+     - Noise perturbations and repeated fitting; the paper uses 25 trials.
+     - Covariance errors by default; optional repeated fits with the chosen
+       uncertainty configuration.
+
+The paper assesses repeated-epoch consistency and external host-property
+comparisons on its samples. Its approximate 0.8 AGN-fraction criterion
+describes those measurements and samples. In qsospec, the configured 0.8
+threshold produces a warning on ``ppxf_agn_fraction_flux_global``; it is not
+a universally calibrated reliability cut. Its fitted-pixel support also
+differs from a local flux fraction such as ``fracHost_5100``. See
+:ref:`host-fraction-vocabulary` for the actual denominators.
+
+Fit passes and uncertainty trials
+-------------------------------------
+
+The default ``maximum_width_iterations=2`` allows one host-width update.
+The main workflow first selects a width from the preliminary broad-Balmer
+fit, performs the host decomposition and fits the host-subtracted AGN.
+If the final accepted broad-Balmer measurement selects a different grid
+width, the host fit and AGN fit run once more with that width. The workflow
+then records the final confirmation; it does not continue until an arbitrary
+number of iterations converges. Set ``maximum_width_iterations=1`` to omit
+that update. Check the recorded width status before interpreting convergence.
+
+Each host-width pass itself performs several pPXF calls: the initial fit,
+a fit with expanded emission masks, a fit with rescaled noise, up to two
+residual-clipping refits by default, and the final fit. These four to six
+calls serve masking and noise refinement; they are separate from the one or
+two outer host-width passes. ``residual_clip_iterations`` controls the
+clipping limit.
+
+Monte Carlo is off by default. A positive ``monte_carlo_trials`` count with
+``refit_host_in_mc=True`` perturbs the observed input and reruns the
+preliminary width choice, host fit and final AGN fit for each realization.
+This trial path does not repeat the main workflow's final-width update.
+With ``refit_host_in_mc=False``, the fitted host stays fixed. The original
+best-fit measurements are retained; trial errors and usable counts are
+recorded separately. See :doc:`../science/uncertainties` for the sampling
+schemes and error conditioning.
+
+Provenance and limitations
+------------------------------
+
+Inspect ``host_fit_reliable`` together with ``host_fit_quality``, the coverage
+class and quantity-specific diagnostics. Warnings summarize selected
+conditions; the full diagnostics record coverage, masking, resolution,
+closure and the strength of the host contribution.
 
 The stellar templates and AGN templates receive separate pPXF
 components: stellar velocity and dispersion are fitted, while the physically
 prebroadened AGN templates have fixed independent kinematics. An available
 object-specific instrumental LSF is applied once to the fit-time templates,
-never to the input data. Intrinsic bundled AGN templates and native stellar
-libraries are cached, while object-specific runtime convolution remains per
-object unless an exact preconvolved XSL product is selected. HostSED
-reconstruction always uses the native source SSP library.
+never to the input data. HostSED reconstruction uses the native source
+simple-stellar-population (SSP) library. The resolution guide explains
+:doc:`stellar_template_resolution_profiles` and their diagnostic statuses.
+
+qsospec's regression checks cover component closure, separate AGN/stellar
+kinematics, mask refinement, width updates, host-fraction definitions and
+matched host--AGN resampling. These checks exercise the implementation.
+Assess stellar kinematics and population measurements on representative data
+with known resolution and useful absorption features. A useful optical host
+subtraction does not by itself establish reliable stellar populations,
+near-infrared predictions or transfer between different apertures.
 
 Host decomposition runs only when requested and the input redshift is finite
-and below 1.2. Actual wavelength coverage determines reliability. Monte Carlo
-is off by default; a configured host-refit Monte Carlo uses the selected strategy but can be
-expensive. Compare both strategies on representative spectra before choosing one
-for a sample.
+and below 1.2. Actual wavelength coverage determines reliability. Compare both
+strategies on representative spectra before choosing one for a sample, and
+record the method/template choices alongside measurements as described in
+:doc:`../science/uncertainties`.

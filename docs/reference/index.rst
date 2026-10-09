@@ -9,6 +9,8 @@ details.
 
    configuration
    recipes
+   measurement_dictionary
    warnings
+   fit_performance
    run_bundles
    api/index

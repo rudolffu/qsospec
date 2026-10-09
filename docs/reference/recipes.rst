@@ -38,8 +38,8 @@ Built-in auto-enabled recipes
        generic backend.
    * - ``hbeta_oiii``
      - 4640–5100
-     - Three broad Hβ, narrow Hβ/[O III], optional wings and He II; dedicated
-       adapter.
+     - Three broad Hβ, narrow Hβ/[O III], adaptive [O III] candidates and He II; shared generic
+       engine by default, with an explicit legacy adapter.
    * - ``halpha_nii_sii``
      - 6400–6800
      - Three broad Hα plus narrow Hα/[N II]/[S II]; dedicated adapter.
@@ -97,13 +97,16 @@ Requesting it together with the compact NIR recipes raises ``overlapping_complex
 Coverage policy
 ---------------
 
-General recipes require at least 80% total-window overlap, enough valid
-pixels, and safe required-line centers. Component-adaptive recipes choose
-covered components only after the total window passes.
+Ordinary recipes apply their configured total-window overlap, valid-pixel
+count, and required-center edge margin. The recipe defaults are 80%,
+30 pixels, and 1000 km/s; built-ins can override them (Hα uses 60% overlap).
+Component-adaptive recipes without local support choose covered components
+only after their total window passes. See
+:doc:`../science/coverage_reliability` for the coverage classes.
 
 Recipes with ``local_support=True`` (the compact set) instead evaluate
-each local window against the actual valid pixels, center/core margin,
-and minimum pixel count. A missing distant window cannot reject a locally
+each window against its valid fraction of available native pixels, minimum
+pixel count, and center/core margins. A missing distant window cannot reject a locally
 covered line; masked line cores are detected, and per-component status
 (``observed``, ``truncated``, ``masked_core``, ``not_observed``) is
 recorded in result metadata. See :doc:`../science/nir_line_coverage`.

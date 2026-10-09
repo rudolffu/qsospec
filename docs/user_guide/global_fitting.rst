@@ -15,10 +15,12 @@ emission complexes that pass their coverage policies.
 Default model
 -------------
 
-- Pivoted power law.
-- Independently broadened UV and optical Fe II templates when covered.
+- Single pivoted power law (broken or automatic selection is opt-in).
+- Independently broadened VW01 UV and Park22 optical Fe II templates, with
+  a conditional regional Verner09 bridge sharing an empirical-template kernel.
 - An optional baseline-anchored quadratic correction, disabled by default.
-- Continuous KD13-style Balmer bound-free plus high-order series component.
+- Continuous Balmer bound-free plus high-order series component, with
+  soft Hγ ratio refinement when its covered wings support the joint fit.
 - Auto-enabled covered line recipes, including Lyα/N V, C IV, C III], Mg II,
   optical complexes, and Paschen/NIR complexes.
 
@@ -84,47 +86,22 @@ The default correction and normalization-change limits are both 10%.
 Fitting performance
 -------------------
 
-:class:`qsospec.FitPerformanceConfig` controls exact solver evaluation reuse and
-conservative warm starts. Evaluation reuse is enabled by default. Its one-entry
-cache is bounded to 16 MiB per solver, including retained wavelength grids and
-derivatives; oversized evaluations are not retained. This applies to the
-continuum, generic line recipes, and Hβ, Mg II, Hα, and Lyα adapters. It preserves
-the variable-projection Jacobian arithmetic and fitting rules.
+Evaluation reuse and conservative warm starts are enabled by default through
+:class:`qsospec.FitPerformanceConfig`. They reduce repeated model work and
+provide compatible starting points for repeated multistart line fits.
+They do not change model families, component selection thresholds, or
+uncertainty methods.
 
-Warm starts are enabled by default.
-They seed only the first start of repeated compatible
-multistart line fits, leaving the other alternatives unchanged. Single-start
-fits and continuum searches retain their original initialization. Failed or
-inadequate warm searches are discarded and retried with the original cold
-search. Raw-spectrum host prefits, host-subtracted fits, individual spectra and
-uncertainty trials have independent sessions.
+For a reproducible comparison with cold starts:
 
 .. code-block:: python
 
-   performance = qsospec.FitPerformanceConfig(warm_starts=False)
-   # Cache-enabled, cold-start control:
-   config = qsospec.GlobalContinuumConfig(performance=performance)
+   config = qsospec.GlobalContinuumConfig(
+       performance=qsospec.FitPerformanceConfig(warm_starts=False),
+   )
    result = qsospec.fit_global_lines(spectrum, global_config=config)
 
-   # Explicit cold/cache-disabled control:
-   control = qsospec.FitPerformanceConfig(
-       cache_evaluations=False, warm_starts=False,
-   )
-   result = qsospec.fit_global_lines(spectrum, performance=control)
-
-Standalone fitters also accept the keyword-only ``performance=`` argument;
-an explicit argument overrides the configured setting. Native local joint
-fitters accept the controls and record optimizer statistics but do not use the
-separable-evaluation cache or add warm searches. The coupled Hγ refinement
-retains its joint optimizer; its compiled contexts receive shared bookkeeping
-improvements.
-
-``result.metadata["fit_performance"]`` records settings, evaluator/cache counts,
-optimizer calls, linear solves, and warm/cold-retry counts. The peak retained
-cache size is the largest single solver cache observed in that session, rather
-than a measurement of process RSS. Candidate ``multistart`` records preserve
-warm-attempt starts, provenance, retry reasons and cold retry starts.
-
-Caching preserves the results of cold fits exactly. Warm starts provide an
-initial solution for a new optimization. Saved bundles include performance
-diagnostics, and older bundles without these fields are also readable.
+Use ``cache_evaluations=False`` as well to disable evaluation reuse.
+``result.metadata["fit_performance"]`` records the settings and evaluation
+counts. See :doc:`../reference/fit_performance` for cache limits, compatible
+starts, retries, and solver diagnostics.

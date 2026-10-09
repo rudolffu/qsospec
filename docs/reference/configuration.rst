@@ -13,6 +13,19 @@ Default global fit:
 
    global_config = qsospec.GlobalContinuumConfig()
 
+This is the ``global_v2`` model: a single power law, independently
+broadened VW01/Park22 iron with the conditional regional bridge, soft Hγ
+ratio refinement, and polynomial correction off. See
+:doc:`../science/continuum_model` for the model and width conventions.
+
+The default Hγ tolerance is
+``BalmerPseudoContinuumConfig(hgamma_ratio_scatter_dex=0.30)``. It controls
+the model ratio, not the observational Hγ error. Change it to assess
+sensitivity to that relation. ``sync_with_hgamma="off"`` leaves the Balmer
+amplitude free; ``"hard"`` requests a fixed relation with its measurement
+reliability checks. ``GlobalContinuumConfig.legacy_v1()`` selects hard Hγ
+synchronization and disables the regional bridge.
+
 Lyα-safe continuum windows:
 
 .. code-block:: python

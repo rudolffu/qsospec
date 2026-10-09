@@ -15,11 +15,21 @@ Fitzpatrick (1999) Milky Way law in the observed frame:
 Planck GNILC is the default. SFD values are multiplied by 0.86 following
 Schlafly & Finkbeiner (2011).
 
+Default continuum
+-----------------
+
+``GlobalContinuumConfig()`` selects the ``global_v2`` science model: a single
+power law, empirical UV and optical iron templates, a conditional regional
+iron bridge, and the Balmer pseudo-continuum with soft Hγ refinement. The
+additive polynomial is disabled. Components need sufficient fitted-pixel
+support to be activated; a model component need not be present in every
+spectrum.
+
 Power law and Fe II
 -------------------
 
-The AGN continuum includes a pivoted power law. ``mode="single"`` uses one
-slope. ``mode="double"`` uses a continuous broken law with independent slopes
+The AGN continuum includes a pivoted power law. The default
+``mode="single"`` uses one slope. ``mode="double"`` uses a continuous broken law with independent slopes
 on either side of a configurable 4661 Å break. ``mode="auto"`` compares both
 models on a shared accepted-pixel mask and selects the broken law only for a
 default :math:`\Delta\mathrm{BIC}\ge10`.
@@ -30,7 +40,27 @@ default :math:`\Delta\mathrm{BIC}\ge10`.
 
 plus independently broadened UV and optical Fe II templates when the
 spectrum and template overlap sufficiently. The default combines
-VW01 in the UV and Park22 in the optical.
+VW01 in the UV and Park22 in the optical. Their additional broadening
+kernels are independent by default. ``iron_width_coupling="soft"`` adds an
+optional tolerance on their log kernel-width ratio. Use it when a physically
+motivated relation is needed, and inspect its effect on the continuum and
+line measurements.
+
+With compatible VW01/Park22 settings and enough continuum pixels, a regional
+Verner09 template fills the handoff between the empirical templates. The
+default handoff intervals are 3300–3450 Å and 4100–4250 Å; template support
+and broadening guards can adjust the effective intervals. Smooth weights
+join the three regions. The bridge adds ``middle_iron.amp`` and shares the
+optical template's additional broadening kernel when optical iron is active,
+otherwise the UV kernel. With neither empirical template active, it uses the
+configured fixed kernel. It does not add a third free iron width.
+
+``result.continuum.metadata["regional_iron"]`` records activation, effective
+intervals, normalization, and width parent. The amplitude uses a fixed
+reference normalization, so it is not itself the final bridge-band flux.
+The bridge is inactive for an exclusive full-range template or incompatible
+empirical choices. ``RegionalIronConfig(enabled=False)`` explicitly disables
+it.
 
 As an alternative, ``GlobalContinuumConfig.with_single_iron("verner09")``
 uses one Verner et al. (2009) theoretical template over approximately
@@ -42,6 +72,24 @@ quadrature broadening
 
    \mathrm{FWHM}_{\rm conv} =
    \sqrt{\mathrm{FWHM}_{\rm target}^2 - (900\,\mathrm{km\,s^{-1}})^2}.
+
+Iron width conventions
+----------------------
+
+A template convolution width describes the additional smoothing kernel.
+An effective or target width also includes the template's native profile;
+for a known Gaussian-equivalent native width, the two add in quadrature.
+Empirical template native widths are not always known, so an effective width
+can be unavailable even when the fitted kernel width is well measured.
+``IronTemplateConfig.width_mode`` specifies the coordinate used by both
+``fwhm_kms`` and ``fwhm_bounds``. The Verner09 target convention above uses
+an assumed 900 km/s native width.
+
+Instrumental broadening is a separate operation and is not supplied by an
+iron-template kernel parameter. See
+:doc:`iron_balmer_uncertainties` for template support, width metadata, and
+bridge normalization, and :doc:`../how_to/adaptive_oiii` for line-resolution
+forward modelling.
 
 Optional polynomial correction
 ------------------------------
@@ -108,22 +156,54 @@ The default series uses :math:`n=6`–400, fixed
 amplitude, FWHM, and velocity. Diagnostic outputs retain separate
 ``balmer_bound_free`` and ``balmer_high_order_series`` arrays.
 
-The Hγ line is fitted as part of the optical-blue emission-line complex,
-while Hδ and higher Balmer orders are included in the pseudo-continuum
-template. When broad Hγ is covered and reliably measured, qsospec uses the
-Storey & Hummer Case-B ratios bundled with the template to set the
-pseudo-continuum amplitude from Hγ. This fixes the integrated Hγ/Hδ relation
-instead of letting the fitted Hγ complex and the Hδ+high-order template drift
-independently. If Hγ is unavailable or unreliable, the pseudo-continuum falls
-back to the usual free amplitude and records the skip reason in the result
-metadata.
+Hγ is fitted in the optical-blue emission-line complex; Hδ and higher
+orders are included in the pseudo-continuum template. The default
+``sync_with_hgamma="soft"`` jointly refines the continuum and optical-blue
+lines on their combined fitted-pixel mask. The bundled Storey & Hummer
+Case-B ratio sets the center of a log-ratio constraint:
+
+.. math::
+
+   F_{\mathrm{H}\gamma} =
+   r_{\gamma/\beta}\,A_\mathrm{Balmer}\,10^{\delta_\gamma},
+   \qquad \delta_\gamma \sim \mathcal{N}(0,0.30^2).
+
+The default ``hgamma_ratio_scatter_dex=0.30`` is a modelling tolerance on
+the ratio, not the measured Hγ error. The amplitude and Hγ flux can move
+together; the relation is not fixed exactly. The joint covariance includes
+these fitted correlations.
+
+Soft refinement requires an active broad Hγ component and usable support
+for both wings. Missing coverage or truncated wings leave the initial
+free-amplitude continuum in place; an unsuccessful joint optimization also
+keeps that fit. ``result.continuum.metadata["hgamma_joint_status"]`` records
+``fit``, ``unavailable_coverage``, ``unavailable_truncated``, or ``failed``
+when the refinement is attempted. Inspect line coverage and covariance
+alongside that status.
+
+``sync_with_hgamma="off"`` leaves the amplitude free. ``"hard"`` fixes it
+from a successful broad Hγ measurement that passes the configured flux S/N
+and bound checks; it falls back to a free amplitude if the measurement is
+inadequate. ``"require"`` requests that hard relation and reports failure
+to establish it. The Hβ width policy is separate: the default ``"auto"``
+uses a reliable summed broad Hβ FWHM when available, otherwise the Balmer
+width remains free. Neither policy changes the adopted redshift.
+
+For the explicit ``global_v1`` continuum preset, use
+``GlobalContinuumConfig.legacy_v1()``. It disables the regional iron bridge
+and selects hard Hγ synchronization. This identifies the continuum model;
+line-profile choices such as adaptive or legacy [O III] are separate settings.
+See :doc:`../reference/configuration` for configuration choices and
+:doc:`iron_balmer_uncertainties` for the template and refinement details.
 
 Continuum masks
 ---------------
 
-Only configured continuum windows contribute to the fit. Additional mask
+The initial continuum fit uses configured continuum windows. Additional mask
 windows remove known line contamination. Blue-side pixels below the initial
 continuum by more than three spectral uncertainties are rejected once below
-3500 Å.
+3500 Å. Soft Hγ refinement then uses the union of the accepted continuum
+pixels and fitted optical-blue pixels, modelling the lines jointly; each
+pixel enters that refinement once.
 
 See :doc:`../reference/configuration` for configurable behavior.

@@ -1,161 +1,129 @@
 # Regional iron, Hγ refinement, and native uncertainty products
 
-Standard VW01/Park22 global configurations enable a regional Verner09
-component when accepted continuum pixels overlap its nonzero weighted basis.
-`RegionalIronConfig(enabled=False)` disables the regional bridge and uses
-the split UV/optical renderer. Full-range Verner09 is exclusive. Other empirical
-template pairs use their split templates without the regional bridge.
-Disabling both empirical components also disables automatic bridge activation.
+Use the [continuum explanation](continuum_model.rst) for the current model,
+defaults and scientific width conventions. This page collects the specialist
+diagnostics needed to inspect that model or recover saved uncertainty products.
+For repeated fits and error interpretation, see
+[Understand and estimate uncertainties](uncertainties.rst).
 
-The bridge adds `middle_iron.amp`, constrained nonnegative. It shares the
-optical additional convolution kernel, falling back to UV when optical coverage
-is absent. It has no independent fitted width. Nominal handoffs are 3300–3450
-and 4100–4250 Å; four-sigma guards using configured maximum widths resolve
-fixed intervals before optimization. The actual intervals, parent and fixed
-reference normalization are in `continuum.metadata['regional_iron']`.
-Its normalization is the weighted Verner09 integral on the template grid at a
-3000 km/s reference kernel, independent of the object's surviving pixels.
-The rendered flux changes with width; the amplitude is not a final band flux.
-Outer empirical tapers are preserved. Inner handoffs replace empirical tapers.
+## Inspect the regional iron bridge
 
-`resolve_iron_width` and `evaluate_iron_kernel` in `qsospec.templates.iron`
-provide explicit width resolution and kernel-coordinate derivatives.
-`IronTemplateConfig(fwhm_kms=..., width_mode="kernel")` requests an additional
-convolution kernel; `width_mode="target"` requests an effective Gaussian-equivalent
-width when the native width is justified. The sole fitted coordinate is `fwhm_kms`.
-Legacy empirical widths are additional kernels. Legacy Verner09 widths are
-target Gaussian-equivalent widths, retaining its bundled 900 km/s native-width
-assumption. Unknown/mixed empirical native widths have no reported effective
-FWHM. Target sharpening is rejected and equality renders the zero-kernel limit.
-These template kernels are separate from instrumental resolution corrections.
-`fwhm_bounds` uses the selected `width_mode` coordinate. Target bounds enforce
-the native-width floor; kernel bounds may include zero. Soft log-kernel coupling
-requires strictly positive effective kernel bounds.
+For the supported VW01/Park22 pair, the regional Verner09 bridge activates
+when accepted continuum pixels overlap its nonzero weighted basis. It adds
+the nonnegative `middle_iron.amp` and shares the optical additional convolution
+kernel, falling back to UV when optical support is absent. It has no independent
+width. A full-range Verner09 model uses its single component instead. See
+[configuration](../reference/configuration.rst) for alternative choices.
 
-Independent empirical widths remain the reference default. Set
-`iron_width_coupling='soft'` for the log10 kernel-ratio residual with default
-center zero and scatter 0.25 dex. Positive lower bounds are required. The
-regularized path uses the existing joint least-squares solver and keeps data
-χ² separate from prior penalty and total objective. Diagnostics include
-profile data curvature after projecting nuisance columns and prior curvature.
-The regularization scatter is configurable.
+`continuum.metadata['regional_iron']` records the resolved intervals, width
+parent and reference normalization. Nominal handoffs are 3300–3450 and
+4100–4250 Å; four-sigma guards from configured maximum widths establish fixed
+intervals before optimization. The weighted Verner09 integral at a 3000 km/s
+reference kernel sets its normalization on the template grid, independently
+of the surviving data pixels. The rendered band flux varies with width, so
+`middle_iron.amp` is not the final band flux. Outer empirical tapers are
+preserved and the inner handoffs replace empirical tapers.
 
-The default `BalmerPseudoContinuumConfig(sync_with_hgamma='soft')` jointly
-refines the continuum and blue optical complex on the union of their masks.
-Broad Hγ flux is the Hβ-equivalent Balmer amplitude times the adopted ratio
-times `10**delta_gamma`; the offset has a 0.30 dex model-ratio tolerance.
-Narrow Hγ and [O III] 4364.436 Å (vacuum) remain independent. The wavelength
-comes from the [SDSS reference line table](https://classic.sdss.org/dr7/algorithms/linestable.php).
-The bound-free continuum joins continuously to the high-order series. Coverage is checked over the initial fitted Hγ wings; missing or
-truncated coverage skips the constraint. Canonical modes are `off`, `soft`,
-`hard`, and `require`. Compatibility aliases normalize at construction: `none`/`never`
-to `off`, and `auto`/`hard_legacy` to `hard`. Hβ is refitted after a
-final continuum change.
+## Read width diagnostics
 
-The fast covariance mode includes amplitude/shape covariance, including
-shared bridge derivatives. It is conditional on the host subtraction and,
-for sequential line fits, the fitted continuum. The joint Hγ block includes
-its continuum correlations and uses absolute pixel errors and prior scatter.
-The ordinary continuum covariance retains residual noise scaling, applying
-that scale only to data information when a width prior is present. Rank-deficient
-parameter errors are unavailable; an identifiable subspace pseudoinverse is
-retained, with a warning. Parameter bounds and curvature diagnostics help
-identify when a symmetric error interval is appropriate.
+`IronTemplateConfig.width_mode` determines the coordinate of `fwhm_kms` and
+`fwhm_bounds`: `kernel` is additional template convolution; `target` requests
+an effective Gaussian-equivalent width with an established native width.
+These coordinates are separate from instrumental broadening. The
+[continuum chapter](continuum_model.rst) explains which width can be reported.
 
-Continuum errors at supported 1350, 3000 and 5100 Å samples use full numerical
-gradients of the actual continuum renderer, including broken power laws. They
-are in `metadata['continuum_sample_errors']` and native measurement rows.
-Host-fraction errors require matched host–AGN uncertainty information.
-`host_agn_covariance(G, A, covariance)` transforms a supplied
-joint 2×2 block into total flux and host fraction covariance.
+`qsospec.templates.iron.resolve_iron_width` records the requested, kernel,
+native and effective widths; `evaluate_iron_kernel` evaluates the basis and
+kernel-coordinate derivatives. The Verner09 native-width assumption is
+900 km/s. An unknown or mixed empirical native width has no reported
+effective FWHM. Target sharpening is rejected; equality evaluates the
+zero-kernel limit. Target bounds respect the native-width floor, while kernel
+bounds can include zero. Soft log-kernel coupling needs positive kernel bounds.
 
-Set `UncertaintyConfig(monte_carlo_trials=20, random_seed=21)` to rerun the
-AGN workflow on matched realizations. This uses a final-model parametric
-bootstrap with diagonal pixel errors, preserving the Spectrum metadata and
-mask through dataclass replacement. Use the existing host workflow with
-`refit_host_in_mc=True` to rerun host subtraction for every realization. The
-host path currently perturbs the observed input spectrum and labels that
-sampling scheme as a bootstrap. Trial IDs, failures,
-valid counts, intervals, parameter draws and cross-measurement covariance are
-retained. Cross-measurement covariance uses complete matched trials. One trial
-can produce a descriptive percentile but cannot produce a standard error.
-Best-fit point estimates remain unchanged. No nested parallelism is introduced.
+For `iron_width_coupling='soft'`, the default log10 kernel-ratio residual has
+center zero and scatter 0.25 dex. The saved diagnostics separate data $\chi^2$,
+prior penalty and total objective. Profile data information is evaluated after
+projecting out nuisance columns and compared with prior information. Inspect
+whether a width is data-constrained, predominantly regularized, at a bound or
+unidentified before using its local error.
 
-`measure_selected_profile(fit, component_ids, parameter_draws=None,
-continuum=None)` supports native generic complexes, including C IV, without
-adopting a pruning rule. It measures flux, centroid, sigma and the FWHM from the
-summed selected profile. FWHM uses the nearest half-maximum crossings enclosing
-the global peak; missing crossings are unavailable. Optional EW is conditional
-on the supplied fixed continuum. Matched parameter draws can replace the local
-Gaussian approximation. Selection IDs and definitions are persisted in the
-complex metadata. This API supports generic complexes; specialized adapter results raise an error.
+## Inspect the Hγ constraint
+
+The current soft refinement is described in the
+[continuum chapter](continuum_model.rst). Its saved `hgamma_joint_status`
+distinguishes a completed joint fit from unavailable coverage, truncated wings
+or optimizer failure. `hgamma_ratio_scatter_dex` records a model-ratio tolerance,
+not an observed Hγ error. `joint_covariance` identifies the continuum/blue-line
+parameters and absolute noise-scaling convention. Sequential fits of other
+complexes do not gain this joint block's cross-covariance.
+
+The narrow Hγ profile and [O III] 4364.436 Å remain independent of the broad
+Balmer amplitude. The vacuum [O III] wavelength follows the
+[SDSS reference line table](https://classic.sdss.org/dr7/algorithms/linestable.php).
+The bound-free continuum joins continuously to the high-order series. A
+continuum change is followed by an Hβ refit.
+
+Canonical `sync_with_hgamma` modes are `off`, `soft`, `hard` and `require`.
+Compatibility aliases normalize at construction: `none`/`never` to `off`,
+and `auto`/`hard_legacy` to `hard`. See
+[the migration guide](../getting_started/migration_0_2.rst) when reproducing
+a fit made with a different preset.
+
+## Find errors for the quantity you measured
+
+The [measurement dictionary](../reference/measurement_dictionary.rst)
+identifies the value/error access paths and profile definitions. Continuum
+errors at supported 1350, 3000 and 5100 Å samples use gradients of the actual
+renderer, including a broken power law when selected, and appear in
+`metadata['continuum_sample_errors']`. Summed broad/narrow products propagate
+FWHM, dispersion, local-continuum EW and approximate intrinsic-width errors.
+Near an unresolved boundary, intrinsic errors are unavailable. Sequential EW
+errors condition on the fitted global continuum.
+
+`qsospec.uncertainties.measure_selected_profile` measures an explicit generic
+component selection and records its membership and definitions. Its FWHM
+uses the nearest half-maximum crossings enclosing the global peak; absent
+crossings are unavailable. Its optional EW uses a ratio integral with the
+supplied continuum, which differs from native sampled-continuum EW fields.
+See [measurement definitions](measurements.rst) for both conventions and
+[uncertainties](uncertainties.rst) for covariance, matched draws and host
+fractions.
 
 ## Schema and recovery
 
-Run schema 8 stores compact model recipes, named covariance blocks and matched draws in the
-existing model archive's structured metadata. It reads schemas 5, 6 and 7 bundles;
-missing covariance remains unavailable. Free parameter ordering is explicit,
-including legacy fixed-parameter exclusions and conditional polynomial blocks.
-Joint Hγ covariance is stored as a joint block. Cross-covariance between
-independent fit blocks is reported as unavailable. Per-object summaries also expose covariance and names.
+Schema 8 saves compact model recipes, named covariance blocks and matched
+draws. Schemas 5–7 remain readable. Explicit free-parameter ordering excludes
+fixed coordinates; the joint Hγ covariance and conditional polynomial blocks
+retain their separate definitions. Cross-covariance between independently
+fitted blocks is unavailable. See [run bundles](../reference/run_bundles.rst)
+for persistence, reconstruction and schema compatibility.
 
-`recover_uncertainties(result, '/new/path/recovery.json')` creates an exclusive
-new report. It exposes saved errors, recovers power-law errors where identified
-covariance and a saved pivot permit it, handles the pure pivot normalization
-special case, and otherwise reports refitting as required. It preserves point
-estimates and original bundles. Changing iron/Balmer defaults requires a new
-fit; upgrading cannot supply covariance that was not saved.
+With a fitted or loaded `result`, write a new recovery report:
+
+```python
+from qsospec.uncertainties import recover_uncertainties
+
+report = recover_uncertainties(result, "recovery.json")
+```
+
+The report path must not exist. Recovery exposes saved errors and can
+propagate identified saved power-law covariance when a pivot is available,
+including a pure pivot-normalization case. Other entries state that a refit
+is required. It preserves point estimates and the original bundle. Changing
+an iron/Balmer model requires a new fit; loading or upgrading cannot supply
+covariance that was not saved.
+
+Matched workflow products use `measurement_key_schema="qualified_v1"`:
+`continuum_sample:<name>`, `continuum_param:<name>`, `derived:<name>` and
+`line:<recipe>:<metric>`. Native metric dictionaries keep their existing
+names. Older matched draws are read through an explicit namespace conversion;
+ambiguous unqualified aliases are omitted in favor of saved recipe-qualified
+entries.
 
 ## Reproducible commands
 
-```bash
-python examples/iron_balmer_uncertainty.py --output /tmp/iron-comparison.json
-python examples/iron_balmer_uncertainty.py --trials 20 --output /tmp/iron-bootstrap.json
-python -m pytest tests/test_qsospec_iron_templates.py tests/test_qsospec_global_workflow.py tests/test_qsospec_run_store.py tests/test_qsospec_host_workflow.py
-```
-
-The comparison includes an alternative Hγ ratio and an omitted
-spectral feature. Residual statistics use common masks and unsmoothed data.
-Use enough bootstrap trials to estimate interval tails. The short example
-runs check the resampling workflow.
-
-A native host-inclusive invocation using an existing local template library is:
-
-```python
-import qsospec
-result = qsospec.fit_global_lines_workflow(
-    "input_spectrum.parquet", row_index=0, run_host_decomp=True,
-    template_root="/path/to/ppxf_data",
-    template_file="spectra_emiles_9.0.npz",
-    uncertainty_config=qsospec.UncertaintyConfig(
-        monte_carlo_trials=20, random_seed=21, refit_host_in_mc=True,
-    ),
-)
-```
-
-`UncertaintyConfig(pixel_covariance=matrix)` optionally supplies the original-grid
-noise covariance in the input flux units for resampling. It is checked for
-symmetry and positive semidefiniteness and factored once. This changes the
-bootstrap perturbations; the existing fit objective still uses its pixel errors.
-The host path expects this matrix in the host-wrapper input frame.
-
-The broad/narrow measurement table also propagates the summed-profile FWHM,
-profile sigma, local-continuum EW and approximate intrinsic-width errors. Widths
-near the unresolved boundary have unavailable intrinsic errors. EW remains
-conditional on the global continuum in this fast path. Existing flux-sum and
-fraction gradients retain covariance terms.
-
-The real-spectrum comparison can be repeated after extracting the documented
-JSONL fields from a saved run:
-
-```bash
-python examples/compare_archived_iron_balmer.py --input /tmp/qsospec-three-spectra.jsonl --output-dir /tmp/new-real-comparison
-python examples/plot_iron_balmer_comparison.py --source /tmp/new-real-comparison --output /tmp/new-real-comparison-plots
-```
-
-Matched workflow products use `measurement_key_schema="qualified_v1"`: samples
-use `continuum_sample:<name>`, continuum parameters `continuum_param:<name>`,
-derived quantities `derived:<name>`, and line metrics `line:<recipe>:<metric>`.
-Native point-estimate metric dictionaries retain their established names.
-Older saved draws are read through an explicit namespace conversion; ambiguous
-bare line aliases are discarded in favor of their saved recipe-qualified entries.
+The [development guide](../contributing/development.rst) contains the
+synthetic iron/Balmer comparison, bootstrap checks, regression commands and
+archived-spectrum comparison scripts. These are developer validation tasks.
+For a scientific workflow with your own input, use the complete uncertainty
+procedure in [Understand and estimate uncertainties](uncertainties.rst).

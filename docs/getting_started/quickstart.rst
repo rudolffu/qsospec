@@ -37,6 +37,8 @@ calls. Downloading requires internet access; fitting a local copy does not.
    print(data.ra, data.dec)    # 135.92077, 39.286062 (degrees)
    print(data.metadata["flux_unit"], data.metadata["flux_scale"])
    # cgs 1e-17
+   print(data.wave_obs[[0, -1]] / (1 + data.redshift))
+   # Rest wavelength endpoints: approximately 2413 and 5825 Angstrom.
 
 To use a file already on disk, replace the download with:
 
@@ -59,8 +61,24 @@ precedence over the plate-pointing ``RA`` and ``DEC``. The redshift comes
 from the FITS catalog extension. See :doc:`../user_guide/spectrum_inputs`
 for other input formats, or :doc:`../how_to/fit_arrays` for your own arrays.
 
+This rest wavelength range includes Mg II near 2799 Å, Hγ near 4342 Å,
+Hβ near 4863 Å and [O III] near 4960/5008 Å. Hα near 6565 Å and C IV near
+1549 Å lie outside it. Valid pixels and recipe-specific coverage rules
+determine which covered lines can be fitted; see
+:doc:`../science/coverage_reliability`.
+
 Fit the continuum and covered lines
 -----------------------------------
+
+The global continuum combines a power law, enabled iron templates and Balmer
+pseudo-continuum. Emission-line complexes are fitted on top of it. The
+Hβ/[O III] model contains three broad-Hβ profiles, independent narrow Hβ,
+and the selected [O III] doublet components. See
+:doc:`../science/continuum_model` for the continuum choices.
+
+If you want a saved run bundle, choose the
+:ref:`persistence call <save-and-reload-this-analysis>` in place of the following
+call before running the fit. Both routes use the same scientific defaults.
 
 .. code-block:: python
 
@@ -84,7 +102,7 @@ complexes are ``not_covered``; the rest wavelength range is approximately
 2413–5825 Å.
 
 Inspect preprocessing and plot the fit
----------------------------------------
+--------------------------------------
 
 .. code-block:: python
 
@@ -121,7 +139,19 @@ reader does not use ``wdisp`` to construct an instrumental resolution model.
 
 The :download:`figure provenance <../_static/sdss_quasar_provenance.json>`
 records the source URL, input SHA-256, package version, preprocessing,
-complex statuses and warning codes.
+complex statuses and warning codes. Its numerical-verification section records
+the broad-Hβ measurement described in :ref:`read-first-measurement`, including
+its covariance error and recovery from a saved fit. The existing figure and its
+recorded plotting configuration are preserved.
+
+Read and save your first measurement
+------------------------------------
+
+Continue to :ref:`read-first-measurement` to report broad-Hβ FWHM, flux and EW,
+understand the statistical errors, and save/reload the same analysis. For this
+source, the verified summed broad-Hβ FWHM is
+:math:`5841\pm242\,\mathrm{km\,s^{-1}}`, including instrumental broadening.
+The continuation explains which components and assumptions enter that result.
 
 Run the companion script
 ------------------------
@@ -134,11 +164,17 @@ and run it with your configured dust map:
    python fit_sdss_quasar.py --output-dir validation/sdss_quickstart
    python fit_sdss_quasar.py --input /path/to/spec-1198-52669-0040.fits \
        --output-dir validation/sdss_quickstart_local
+   python fit_sdss_quasar.py --input /path/to/spec-1198-52669-0040.fits \
+       --output-dir validation/sdss_quickstart_saved --write-run --no-qa
 
-The script writes a QA PNG and ``provenance.json``. Its download cache lives
-under the output directory; it does not create a run bundle. From a source
-checkout, use ``python examples/fit_sdss_quasar.py`` (with ``PYTHONPATH=src``
-if the package is not installed).
+The script writes a QA PNG and ``provenance.json`` with the first measurement.
+Its download cache lives under the output directory. ``--write-run`` fits once
+into ``output-dir/run`` and verifies measurement recovery; ``--no-qa`` skips
+plotting. The measured fit-and-save time was about 5.1 seconds on macOS arm64
+with two numerical-library threads, and reload took about 0.07 seconds.
+These timings exclude downloads, imports and plotting.
+From a source checkout, use ``python examples/fit_sdss_quasar.py`` (with
+``PYTHONPATH=src`` if the package is not installed).
 
 See :doc:`../user_guide/results` and :doc:`../user_guide/qa_plots` for
 interpretation. To archive results and reload models without refitting,

@@ -11,20 +11,27 @@ the Planck GNILC dust map first as described in the
 python examples/fit_sdss_quasar.py --output-dir validation/sdss_quickstart
 python examples/fit_sdss_quasar.py --input /path/to/spec-1198-52669-0040.fits \
     --output-dir validation/sdss_quickstart_local
+python examples/fit_sdss_quasar.py --input /path/to/spec-1198-52669-0040.fits \
+    --output-dir validation/sdss_quickstart_saved --write-run --no-qa
 ```
 
 From a source checkout, prefix these commands with `PYTHONPATH=src` if the
 package is not installed. The output contains the QA PNG and `provenance.json`
-with the input SHA-256, coordinates, adopted redshift, preprocessing, statuses
-and warning codes. Downloads are cached beneath the output directory; local
-inputs are read without copying or modifying them. No run bundle is created.
+with the input SHA-256, coordinates, adopted redshift, preprocessing, statuses,
+measurements and warning codes. Downloads are cached beneath the output
+directory; local inputs are read without copying or modifying them.
+``--write-run`` fits into ``<output-dir>/run`` and verifies measurement recovery
+after reload. ``--no-qa`` skips plotting while retaining numerical provenance.
 
 See the [quickstart](../docs/getting_started/quickstart.rst) for the same
 workflow as short Python snippets.
+The [results guide](../docs/user_guide/results.rst) explains the broad-Hβ
+measurement and the archive/reload path.
 
 ## Array inputs
 
-The public API is designed around explicit spectrum and configuration objects:
+The excerpt below uses your own arrays and coordinates. It assumes vacuum
+observed wavelengths and physical cgs flux density and errors:
 
 ```python
 import qsospec

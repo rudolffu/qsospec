@@ -74,5 +74,478 @@
     "mark_excluded_pixels": false,
     "model_covers_excluded_pixels": true,
     "residuals_use_fitted_valid_pixels_only": true
+  },
+  "measurement_verification": {
+    "date": "2026-10-09",
+    "source_sha256": "8fa02a4f9b59aad58e13d31db9f4edd5b77f0496fcbe4812baedfa719d75b08c",
+    "qsospec_version": "0.2.0",
+    "git_commit": "4b5d08dc9a9342cf9d5d9f5e4ea94d4a3463294c",
+    "science_model_id": "global_v2",
+    "python_version": "3.12.11",
+    "operation": "fit_object_to_store(write_qa=False), followed by load_model; one fit",
+    "object_id": "spec-1198-52669-0040",
+    "archive_schema_version": "8",
+    "configuration_hash": "79964ac32c8c65cc63d1f6026060ed56df60970f059c0321fa97a573dd830a19",
+    "configuration": {
+      "global": {
+        "power_law": {
+          "enabled": true,
+          "mode": "single",
+          "pivot": 3000.0,
+          "break_wave": 4661.0,
+          "norm": null,
+          "norm_bounds": [
+            0.0,
+            null
+          ],
+          "slope": -1.5,
+          "slope_bounds": [
+            -5.0,
+            3.0
+          ],
+          "red_slope": -1.5,
+          "red_slope_bounds": [
+            -5.0,
+            3.0
+          ],
+          "auto_delta_bic": 10.0,
+          "auto_min_pixels_per_side": 20,
+          "auto_min_log_leverage": 0.08
+        },
+        "uv_iron": {
+          "template": "vw01",
+          "template_path": null,
+          "enabled": true,
+          "amp": 1.0,
+          "amp_bounds": [
+            0.0,
+            null
+          ],
+          "fwhm_kms": 3000.0,
+          "fwhm_bounds": [
+            500.0,
+            10000.0
+          ],
+          "normalization": "area",
+          "width_mode": "legacy"
+        },
+        "optical_iron": {
+          "template": "park22",
+          "template_path": null,
+          "enabled": true,
+          "amp": 1.0,
+          "amp_bounds": [
+            0.0,
+            null
+          ],
+          "fwhm_kms": 3000.0,
+          "fwhm_bounds": [
+            500.0,
+            10000.0
+          ],
+          "normalization": "area",
+          "width_mode": "legacy"
+        },
+        "full_iron": null,
+        "regional_iron": {
+          "enabled": true,
+          "amp": 1.0,
+          "uv_interval": [
+            3300.0,
+            3450.0
+          ],
+          "optical_interval": [
+            4100.0,
+            4250.0
+          ],
+          "fixed_kernel_fwhm_kms": 3000.0
+        },
+        "iron_width_coupling": "independent",
+        "iron_width_prior_center_dex": 0.0,
+        "iron_width_prior_scatter_dex": 0.25,
+        "polynomial": {
+          "mode": "off",
+          "degree": 2,
+          "max_fraction": 0.1,
+          "max_norm_fraction": 0.1,
+          "auto_delta_bic": 10.0,
+          "pivot": null,
+          "scale": null,
+          "coefficient_bounds": [
+            null,
+            null
+          ],
+          "min_pixels": 20,
+          "min_leverage": 0.08
+        },
+        "balmer_pseudocontinuum": {
+          "enabled": true,
+          "edge": 3646.0,
+          "temperature_k": 15000.0,
+          "tau_edge": 1.0,
+          "log10_ne": 9,
+          "n_min": 6,
+          "provenance": "sh95_k13full_ext",
+          "amplitude": 1.0,
+          "amplitude_bounds": [
+            0.0,
+            null
+          ],
+          "fit_fwhm": true,
+          "fwhm_kms": 5000.0,
+          "fwhm_bounds": [
+            500.0,
+            15000.0
+          ],
+          "velocity_kms": 0.0,
+          "velocity_bounds": [
+            -2000.0,
+            2000.0
+          ],
+          "sync_with_hbeta": "auto",
+          "sync_min_fwhm_snr": 3.0,
+          "sync_with_hgamma": "soft",
+          "hgamma_ratio_scatter_dex": 0.3,
+          "sync_min_hgamma_flux_snr": 3.0
+        },
+        "continuum_windows": [
+          [
+            1150.0,
+            1170.0
+          ],
+          [
+            1275.0,
+            1290.0
+          ],
+          [
+            1350.0,
+            1360.0
+          ],
+          [
+            1445.0,
+            1465.0
+          ],
+          [
+            1690.0,
+            1705.0
+          ],
+          [
+            1770.0,
+            1810.0
+          ],
+          [
+            1970.0,
+            2400.0
+          ],
+          [
+            2480.0,
+            2675.0
+          ],
+          [
+            2925.0,
+            3400.0
+          ],
+          [
+            3500.0,
+            3600.0
+          ],
+          [
+            3600.0,
+            4260.0
+          ],
+          [
+            4435.0,
+            4640.0
+          ],
+          [
+            5100.0,
+            5535.0
+          ],
+          [
+            6005.0,
+            6035.0
+          ],
+          [
+            6110.0,
+            6250.0
+          ],
+          [
+            6800.0,
+            7000.0
+          ],
+          [
+            7180.0,
+            7250.0
+          ],
+          [
+            7600.0,
+            7700.0
+          ],
+          [
+            7950.0,
+            8050.0
+          ],
+          [
+            8600.0,
+            8800.0
+          ],
+          [
+            9350.0,
+            9400.0
+          ],
+          [
+            9650.0,
+            9800.0
+          ],
+          [
+            10200.0,
+            10600.0
+          ],
+          [
+            11400.0,
+            12400.0
+          ]
+        ],
+        "mask_windows": [
+          [
+            3710.0,
+            3745.0
+          ],
+          [
+            3855.0,
+            3880.0
+          ]
+        ],
+        "min_component_pixels": 20,
+        "blue_absorption_clip_enabled": true,
+        "blue_absorption_clip_max_wave": 3500.0,
+        "blue_absorption_clip_sigma": 3.0,
+        "clip_passes": 2,
+        "clip_low_sigma": 3.0,
+        "clip_high_sigma": 5.0,
+        "balmer_width_sync_tolerance_kms": 5.0,
+        "balmer_width_sync_max_iterations": 5,
+        "balmer_flux_sync_tolerance_fraction": 0.02,
+        "balmer_flux_sync_max_iterations": 3,
+        "optimizer_method": "auto",
+        "jacobian_method": "semi_analytic",
+        "max_nfev": 1000,
+        "model_id": "global_v2",
+        "performance": {
+          "cache_evaluations": true,
+          "warm_starts": true,
+          "evaluation_cache_max_bytes": 16777216
+        }
+      },
+      "hbeta": {
+        "window": [
+          4640.0,
+          5100.0
+        ],
+        "broad_fwhm_bands_kms": [
+          [
+            900.0,
+            2500.0
+          ],
+          [
+            2500.0,
+            6000.0
+          ],
+          [
+            6000.0,
+            20000.0
+          ]
+        ],
+        "broad_velocity_bounds_kms": [
+          -2000.0,
+          2000.0
+        ],
+        "narrow_fwhm_bounds_kms": [
+          70.0,
+          1200.0
+        ],
+        "narrow_velocity_bounds_kms": [
+          -1000.0,
+          1000.0
+        ],
+        "oiii_ratio_5007_4959": 2.98,
+        "oiii_profile_mode": "adaptive",
+        "oiii_random_seed": 1729,
+        "fit_oiii_wings": true,
+        "wing_bic_delta": 20.0,
+        "wing_min_snr": 5.0,
+        "wing_min_fwhm_ratio": 2.0,
+        "wing_min_velocity_separation_kms": 150.0,
+        "heii_enabled": false,
+        "heii_mask": [
+          4660.0,
+          4715.0
+        ],
+        "optimizer_method": "auto",
+        "jacobian_method": "semi_analytic",
+        "max_nfev": 1500
+      },
+      "uncertainty": {
+        "covariance": true,
+        "monte_carlo_trials": 0,
+        "random_seed": 12345,
+        "refit_host_in_mc": true,
+        "pixel_covariance": null
+      },
+      "run_host_decomp": false,
+      "global_model_id": "global_v2",
+      "mgii": {
+        "window": [
+          2700.0,
+          2900.0
+        ],
+        "broad_fwhm_bands_kms": [
+          [
+            900.0,
+            3500.0
+          ],
+          [
+            3500.0,
+            15000.0
+          ]
+        ],
+        "broad_velocity_bounds_kms": [
+          -2000.0,
+          2000.0
+        ],
+        "narrow_fwhm_bounds_kms": [
+          70.0,
+          1200.0
+        ],
+        "narrow_velocity_bounds_kms": [
+          -1000.0,
+          1000.0
+        ],
+        "min_coverage_fraction": 0.8,
+        "min_valid_pixels": 30,
+        "edge_margin_kms": 1000.0,
+        "optimizer_method": "auto",
+        "jacobian_method": "semi_analytic",
+        "max_nfev": 1500
+      },
+      "complexes": null
+    },
+    "broad_hbeta": {
+      "status": "available",
+      "fwhm_kms": 5841.078217500298,
+      "fwhm_error_kms": 241.89988324293074,
+      "Hb_broad_flux_input": 1058.8207296348721,
+      "Hb_broad_flux_input_error": 69.87036700347399,
+      "Hb_broad_flux_cgs": 1.0588207296348722e-14,
+      "Hb_broad_flux_cgs_error": 6.987036700427727e-16,
+      "Hb_broad_sigma_kms": 2914.048691656797,
+      "Hb_broad_sigma_kms_error": 375.0326012109702,
+      "Hb_broad_ew_rest": 93.36846661844707,
+      "Hb_broad_ew_rest_error": 6.152690844589384,
+      "component_ids": [
+        "Hb_broad1",
+        "Hb_broad2",
+        "Hb_broad3"
+      ],
+      "fit_success": true,
+      "selected_model": "wing",
+      "line_lsf": {
+        "status": "observed_profile",
+        "reason": "missing_resolution",
+        "wavelength_frame": "observed",
+        "applied_to": "emission_lines_only"
+      },
+      "warning_codes": [
+        "parameter_at_bound",
+        "parameter_at_bound",
+        "recipe_fixed_ratio_applied",
+        "oiii_incomplete_doublet_coverage",
+        "oiii_observed_profile_resolution_unavailable"
+      ],
+      "parameter_bounds": [
+        {
+          "parameter": "Hb_broad1.fwhm_kms",
+          "bound_side": 1
+        },
+        {
+          "parameter": "Hb_broad3.velocity_kms",
+          "bound_side": 1
+        }
+      ],
+      "covariance_available": true,
+      "covariance_warning_codes": [],
+      "oiii_profile_adequate": false,
+      "oiii_profile_quality_flags": [
+        "incomplete_doublet_coverage",
+        "observed_profile_resolution_unavailable"
+      ],
+      "uncertainty_method": "local covariance propagation",
+      "uncertainty_conditioning": [
+        "selected line model",
+        "fitted global continuum",
+        "input redshift"
+      ],
+      "continuum_model_uncertainty_included": false
+    },
+    "continuum_success": true,
+    "complex_statuses": {
+      "halpha_nii_sii": "not_covered",
+      "hbeta_oiii": "fit",
+      "mgii": "fit",
+      "lya_nv": "not_covered",
+      "ciii": "not_covered",
+      "civ": "not_covered",
+      "oii_nev_neiii_hgamma": "fit",
+      "paschen_nir": "not_covered"
+    },
+    "adopted_redshift": 0.5764288306236267,
+    "galactic_extinction": {
+      "source": "planck",
+      "status": "applied",
+      "law": "f99",
+      "applied_ebv": 0.024079106748104095
+    },
+    "reload_check": {
+      "object_id": "spec-1198-52669-0040",
+      "measurement_and_error_equal": true,
+      "complex_statuses_equal": true,
+      "redshift_equal": true,
+      "reload_seconds": 0.06581437500426546
+    },
+    "runtime": {
+      "fit_and_save_seconds": 5.110446457983926,
+      "machine": "arm64",
+      "system": "Darwin",
+      "processor": "arm",
+      "thread_environment": {
+        "OPENBLAS_NUM_THREADS": "2",
+        "OMP_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2"
+      }
+    },
+    "optional_exercise": {
+      "complex_statuses": {
+        "hbeta_oiii": "fit"
+      },
+      "global_model_id": "global_v2",
+      "hgamma_selected": "off",
+      "hgamma_status": "not_requested",
+      "broad_hbeta_fwhm_kms": 5840.04458190106,
+      "broad_hbeta_fwhm_error_kms": 244.60386888941323
+    },
+    "existing_qa_figure_reused": true,
+    "existing_qa_sha256": "7b96db3c11a24041d11e7e8b37bd6720ce4d0d92054644fb4a18646d7ef4f867",
+    "figure_configuration": {
+      "run_host_decomp": false,
+      "continuum": "package defaults",
+      "line_selection": "automatic covered complexes",
+      "extinction": "Planck GNILC/F99",
+      "qa_display": {
+        "excluded_pixels_in_normal_trace": true,
+        "mark_excluded_pixels": false,
+        "model_covers_excluded_pixels": true,
+        "residuals_use_fitted_valid_pixels_only": true
+      }
+    }
   }
 }
