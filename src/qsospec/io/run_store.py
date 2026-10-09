@@ -15,6 +15,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
 from uuid import uuid4
+from .indexed_store import snapshot_read, coordinator
 
 import numpy as np
 import pandas as pd
@@ -43,7 +44,7 @@ from ..spectrum import Spectrum
 from ..warnings import FitWarning
 
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 TABLE_NAMES = (
     "inputs",
     "objects",
@@ -144,6 +145,7 @@ COMPONENT_TYPE = pa.list_(
             pa.field("name", pa.string()),
             pa.field("role", pa.string()),
             pa.field("values", pa.list_(pa.float64())),
+            pa.field("definition", pa.string()),
         ]
     )
 )
@@ -716,6 +718,15 @@ def _model_row(
 ) -> dict[str, Any]:
     from ..uncertainties import covariance_block
     workflow_metadata = dict(result.metadata)
+    workflow_metadata["continuum_fit_statistics"] = {
+        "status": int(result.continuum.status), "message": str(result.continuum.message),
+        "chi2": float(result.continuum.chi2), "dof": int(result.continuum.dof),
+    }
+    workflow_metadata["_evaluation_states"] = {
+        **({"continuum": {"state": result.continuum.evaluation_state, "parameters": result.continuum.param_values}} if result.continuum.evaluation_state else {}),
+        **{key: {"parameters": fit.param_values} for key, fit in result.line_complexes.items()},
+        **({"host": result.host_fit.evaluation_state} if result.host_fit is not None and getattr(result.host_fit, "evaluation_state", None) else {}),
+    }
     workflow_metadata["covariance_blocks"] = {
         "continuum": covariance_block(result.continuum, "continuum"),
         **{key: covariance_block(fit, key) for key, fit in result.line_complexes.items()},
@@ -817,7 +828,8 @@ def _model_row(
         "complexes": complexes,
         "spectrum_metadata": _key_values({**result.spectrum.metadata.to_dict(),
             "spectral_resolution": resolution_to_dict(result.spectrum.resolution)}),
-        "workflow_metadata": _key_values(workflow_metadata),
+        "workflow_metadata": _key_values({k: v for k, v in workflow_metadata.items() if k != "_evaluation_states"}),
+        "_evaluation_states": workflow_metadata.get("_evaluation_states", {}),
     }
 
 
@@ -934,7 +946,14 @@ class RunStore:
         configuration_summary: Optional[Mapping[str, Any]] = None,
         run_id: Optional[str] = None,
         resume: bool = True,
+        model_storage: str = "parameters",
+        shard_objects: int = 128,
+        shard_bytes: int = 64 * 1024**2,
     ) -> "RunStore":
+        if model_storage not in {"parameters", "arrays"}:
+            raise ValueError("model_storage must be parameters or arrays")
+        if shard_objects < 1 or shard_bytes < 1:
+            raise ValueError("Shard limits must be positive")
         root = Path(path).expanduser()
         root.mkdir(parents=True, exist_ok=True)
         manifest_path = root / "manifest.json"
@@ -959,6 +978,8 @@ class RunStore:
                 )
             if not resume:
                 raise FileExistsError(f"Run already exists: {root}")
+            if str(manifest.get("schema_version")) == SCHEMA_VERSION and manifest.get("model_storage") != model_storage:
+                raise ValueError("Cannot change model_storage when resuming; convert to a new run")
             store = cls(root, manifest)
             store._ensure_directories()
             return store
@@ -969,6 +990,10 @@ class RunStore:
         )
         manifest = {
             "schema_version": SCHEMA_VERSION,
+            "model_storage": model_storage,
+            "shard_objects": shard_objects,
+            "shard_bytes": shard_bytes,
+            "indexed_storage": True,
             "measurement_vocabulary_version": (
                 MEASUREMENT_VOCABULARY_VERSION
             ),
@@ -1011,7 +1036,7 @@ class RunStore:
     @staticmethod
     def _require_current_schema(manifest: Mapping[str, Any]) -> None:
         found = str(manifest.get("schema_version", "missing"))
-        if found not in ("5", "6", SCHEMA_VERSION):
+        if found not in ("5", "6", "7", SCHEMA_VERSION):
             raise ValueError(
                 "Unsupported qsospec run schema "
                 f"{found!r}; this version requires schema {SCHEMA_VERSION}. "
@@ -1163,6 +1188,15 @@ class RunStore:
                 pass
             handle.close()
 
+    def read_asset(self, token):
+        from .indexed_store import read_asset
+        return read_asset(self, token)
+
+    @coordinator
+    def compact(self):
+        from .indexed_store import compact
+        return compact(self)
+
     def completed_keys(self) -> set[str]:
         table = self.read_table("objects")
         return set(table.column("object_key").to_pylist()) if table.num_rows else set()
@@ -1172,6 +1206,11 @@ class RunStore:
         return set(table.column("object_key").to_pylist()) if table.num_rows else set()
 
     def clear_failure(self, object_key: str) -> None:
+        if self.manifest.get("indexed_storage"):
+            from .indexed_store import connection
+            with connection(self, write=True) as db:
+                db.execute("DELETE FROM locations WHERE table_name=? AND object_key=?", ("failures", object_key))
+            return
         path = self.object_shard_path("failures", object_key)
         if path.exists():
             path.unlink()
@@ -1181,6 +1220,10 @@ class RunStore:
 
         if table_name not in SCHEMAS:
             raise ValueError(f"Unknown run table: {table_name!r}")
+        from .indexed_store import locations
+        indexed = locations(self, table_name, object_key)
+        if indexed:
+            return self.path / indexed[0][1]
         digest = hashlib.sha256(str(object_key).encode("utf-8")).hexdigest()[:20]
         return self._table_path(table_name) / f"part-{digest}.parquet"
 
@@ -1193,6 +1236,10 @@ class RunStore:
     ) -> pa.Table:
         """Read and validate only one object's permanent shard."""
 
+        from .indexed_store import read_object
+        indexed = read_object(self, table_name, object_key, columns)
+        if indexed is not None:
+            return indexed
         path = self.object_shard_path(table_name, object_key)
         if not path.exists():
             table = _empty_table(table_name)
@@ -1269,9 +1316,54 @@ class RunStore:
             rows = list(payload.get(name, ()))
             if not rows:
                 continue
+            if name == "models":
+                from ..model_evaluation import compact_row
+                from .indexed_store import write_asset
+                assets = {}
+                processed = []
+                for row in rows:
+                    row = dict(row)
+                    row["components"] = [dict(c) for c in row["components"]]
+                    states = row.pop("_evaluation_states", {})
+                    metadata = _from_key_values(row["workflow_metadata"])
+                    if self.manifest.get("model_storage") == "parameters":
+                        # Transient evaluation state can contain template objects.
+                        row["workflow_metadata"] = _key_values(metadata)
+                        row["_evaluation_states"] = states
+                        row = compact_row(row, assets, self.read_asset)
+                    else:
+                        from ..model_evaluation import restore_row
+                        row = restore_row(row, self.read_asset)
+                        for component in row["components"]:
+                            component["definition"] = None
+                        metadata.pop("model_storage_root_definitions", None)
+                        metadata['model_storage_components'] = [dict(section=c['section'], recipe_id=c['recipe_id'], component=c['name'], storage='arrays', reason='explicit_array_storage') for c in row['components']]
+                        row['workflow_metadata'] = _key_values(metadata)
+                    processed.append(row)
+                rows = processed
+                referenced = set()
+                def collect_assets(value):
+                    if isinstance(value, dict):
+                        if set(value) == {'asset'}:
+                            referenced.add(value['asset'])
+                        else:
+                            for item in value.values():
+                                collect_assets(item)
+                    elif isinstance(value, list):
+                        for item in value:
+                            collect_assets(item)
+                for row in rows:
+                    for component in row['components']:
+                        if component.get('definition'):
+                            collect_assets(json.loads(component['definition']))
+                    collect_assets(_from_key_values(row['workflow_metadata']).get('model_storage_root_definitions', {}))
+                for token, array in assets.items():
+                    if token in referenced:
+                        write_asset(self, token, array)
             table = pa.Table.from_pylist(rows, schema=SCHEMAS[name])
             output = staging / f"{name}.parquet"
-            pq.write_table(table, output, compression="zstd")
+            from .indexed_store import write_parquet
+            write_parquet(table, output)
             checksums[output.name] = hashlib.sha256(output.read_bytes()).hexdigest()
         (staging / "staging.json").write_text(
             json.dumps(
@@ -1285,8 +1377,14 @@ class RunStore:
             ),
             encoding="utf-8",
         )
+        from .indexed_store import sync_directory
+        with (staging / "staging.json").open("rb") as handle:
+            os.fsync(handle.fileno())
+        sync_directory(staging)
+        sync_directory(staging.parent)
         return staging
 
+    @coordinator
     def promote(
         self,
         staging: Union[str, Path],
@@ -1307,6 +1405,23 @@ class RunStore:
             actual = hashlib.sha256((source / filename).read_bytes()).hexdigest()
             if actual != expected:
                 raise ValueError(f"Staged shard checksum mismatch: {filename}")
+        if self.manifest.get("indexed_storage"):
+            from .indexed_store import publish, compact_pending
+            tables = {}
+            for file_path in sorted(source.glob("*.parquet")):
+                name = file_path.stem
+                if name not in SCHEMAS:
+                    raise ValueError(f"Unknown staged table: {name}")
+                table = pq.read_table(file_path)
+                if not table.schema.equals(SCHEMAS[name], check_metadata=False):
+                    table = pa.Table.from_pylist(table.to_pylist(), schema=SCHEMAS[name])
+                tables[name] = table
+            promoted = publish(self, tables, {name: object_keys for name in replace_tables})
+            shutil.rmtree(source)
+            compact_pending(self)
+            if update_manifest:
+                self._write_manifest()
+            return promoted
         if len(object_keys) == 1:
             digest = hashlib.sha256(
                 object_keys[0].encode("utf-8")
@@ -1356,6 +1471,17 @@ class RunStore:
     ) -> pa.Table:
         if name not in SCHEMAS:
             raise ValueError(f"Unknown run table: {name!r}")
+        from .indexed_store import read_table
+        indexed = read_table(self, name, None if filter_expression is not None else columns)
+        if indexed is not None:
+            if filter_expression is not None:
+                indexed = pads.dataset(indexed).to_table(filter=filter_expression)
+                if columns is not None:
+                    indexed = indexed.select(columns)
+            return indexed
+        if self.manifest.get("indexed_storage") and (self.path / "object-index.sqlite").exists():
+            table = _empty_table(name)
+            return table.select(columns) if columns else table
         files = sorted(self._table_path(name).glob("*.parquet"))
         if not files:
             table = _empty_table(name)
@@ -1450,6 +1576,7 @@ def _archived_host_masks(
     return None, None, "unavailable"
 
 
+@snapshot_read
 def load_model_by_key(
     run: Union[str, RunStore], object_key: str
 ) -> WorkflowResult:
@@ -1457,6 +1584,8 @@ def load_model_by_key(
 
     store = open_run(run) if isinstance(run, str) else run
     row = store.object_row_by_key("models", object_key)
+    from ..model_evaluation import restore_row
+    row = restore_row(row, store.read_asset)
     object_row = store.object_row_by_key("objects", object_key)
     measurement_rows = canonicalize_measurement_table(
         store.read_object_table("measurements", object_key)
@@ -1575,13 +1704,13 @@ def load_model_by_key(
     workflow_metadata["covariance_status"] = "available" if blocks else "unavailable_legacy_run"
     continuum = GlobalContinuumResult(
         success=bool(object_row["continuum_success"]),
-        status=1 if object_row["continuum_success"] else -1,
-        message="Loaded from Parquet model archive.",
+        status=int(workflow_metadata.get("continuum_fit_statistics", {}).get("status", 1 if object_row["continuum_success"] else -1)),
+        message=str(workflow_metadata.get("continuum_fit_statistics", {}).get("message", "Loaded from Parquet model archive.")),
         param_values=continuum_values,
         param_errors=continuum_errors,
         covariance=restore_covariance(blocks.get("continuum"), continuum_values),
-        chi2=np.nan,
-        dof=0,
+        chi2=float(workflow_metadata.get("continuum_fit_statistics", {}).get("chi2", np.nan)),
+        dof=int(workflow_metadata.get("continuum_fit_statistics", {}).get("dof", 0)),
         reduced_chi2=float(object_row["continuum_reduced_chi2"]),
         wave_rest=spectrum.wave_rest.copy(),
         model=continuum_model,
@@ -1800,7 +1929,7 @@ def finalize_run(
     if duplicates:
         raise ValueError(f"Duplicate object keys in run: {duplicates[:10]}")
     for name in TABLE_NAMES:
-        store.read_table(name)
+        store.read_table(name, columns=["object_key"])
         table_path = store._table_path(name)
         if table_path.exists():
             outputs[name] = str(table_path)
@@ -1817,6 +1946,8 @@ def finalize_run(
         )
     if staging.exists():
         staging.rmdir()
+    if store.manifest.get("indexed_storage") or compact_models:
+        store.compact()
     store.manifest["status"] = "complete"
     store.manifest["finalized_at"] = _now()
     store.manifest["datasets"] = outputs

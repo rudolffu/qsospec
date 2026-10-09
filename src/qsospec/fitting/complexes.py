@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .performance import performance_scope
+
+from functools import cached_property
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -10,7 +13,7 @@ import numpy as np
 
 from .. import lines
 from ..complex_recipes import ComponentRecipe, ComplexRecipe
-from ..config import LyaNVComplexConfig
+from ..config import LyaNVComplexConfig, FitPerformanceConfig
 from ..global_result import EmissionComplexResult, GlobalContinuumResult
 from ..spectrum import Spectrum, require_rest_frame_flux
 from ..warnings import FitWarning
@@ -804,6 +807,19 @@ class GenericComplexContext:
         self.upper = np.asarray(self.upper, dtype=float)
         self.index = {name: index for index, name in enumerate(self.names)}
         self.pivot = 0.5 * sum(recipe.fit_window)
+        by_flux = {}
+        for instance in self.instances:
+            ident, component = instance[:2]
+            key = f"{component.fixed_ratio_to}.flux" if component.fixed_ratio_to is not None else f"{ident}.flux"
+            by_flux.setdefault(key, []).append(instance)
+        self._speed_definition = self.linear_names, self.nonlinear_names, by_flux
+        self._compiled_instances = {
+            instance[0]: (instance[1].profile,
+                tuple(lines.get(line_id).vacuum_wavelength for line_id in instance[2]),
+                instance[1].fixed_ratio if instance[1].fixed_ratio_to is not None else 1.0,
+                instance[3]+".velocity_kms", instance[4]+".fwhm_kms")
+            for instance in self.instances
+        }
 
     def _add(self, name, value, lower, upper):
         self.names.append(name)
@@ -811,14 +827,14 @@ class GenericComplexContext:
         self.lower.append(float(lower))
         self.upper.append(float(upper))
 
-    @property
+    @cached_property
     def linear_names(self):
         return [
             name for name in self.names
             if name.endswith(".flux") or name.startswith("continuum.")
         ]
 
-    @property
+    @cached_property
     def nonlinear_names(self):
         linear = set(self.linear_names)
         return [name for name in self.names if name not in linear]
@@ -852,71 +868,49 @@ class GenericComplexContext:
         return self.line_lsf.profile(wave, rest_center, velocity, width, profile, integrated=integrated)
 
     def _instance_basis(self, instance, nonlinear_values, wave):
-        _, component, line_ids, velocity_group, width_group = instance
-        velocity_name = f"{velocity_group}.velocity_kms"
-        width_name = f"{width_group}.fwhm_kms"
+        profile, centers, ratio, velocity_name, width_name = self._compiled_instances[instance[0]]
         basis = np.zeros_like(wave)
         d_velocity = np.zeros_like(wave)
         d_width = np.zeros_like(wave)
-        for line_id in line_ids:
-            line = lines.get(line_id)
-            values = self.profile(
-                wave, line.vacuum_wavelength,
-                nonlinear_values[velocity_name], nonlinear_values[width_name],
-                component.profile,
-            )
+        for center in centers:
+            values = self.profile(wave, center, nonlinear_values[velocity_name],
+                                  nonlinear_values[width_name], profile)
             basis += values[0]
             d_velocity += values[1]
             d_width += values[2]
-        ratio = component.fixed_ratio if component.fixed_ratio_to is not None else 1.0
         return basis / ratio, d_velocity / ratio, d_width / ratio
 
     def separable_design(self, nonlinear, wave, need_derivatives):
-        nonlinear_values = dict(zip(self.nonlinear_names, map(float, nonlinear)))
+        # Same accumulation order, parameter definitions, and profile arithmetic.
+        linear, names, by_flux = self._speed_definition
+        values = dict(zip(names, map(float, nonlinear)))
+        zero = np.zeros_like(wave)
         columns = []
-        derivative_columns = [[] for _ in self.nonlinear_names] if need_derivatives else None
-        by_flux: Dict[str, List[Tuple[Any, ...]]] = {}
-        for instance in self.instances:
-            instance_id, component, _, _, _ = instance
-            flux_name = (
-                f"{component.fixed_ratio_to}.flux"
-                if component.fixed_ratio_to is not None
-                else f"{instance_id}.flux"
-            )
-            by_flux.setdefault(flux_name, []).append(instance)
-        for linear_name in self.linear_names:
-            if linear_name == "continuum.constant":
+        derivative_columns = [[] for _ in names] if need_derivatives else None
+        for name in linear:
+            derivatives = {}
+            if name == "continuum.constant":
                 basis = np.ones_like(wave)
-                derivatives = {}
-            elif linear_name == "continuum.slope":
+            elif name == "continuum.slope":
                 basis = wave - self.pivot
-                derivatives = {}
             else:
                 basis = np.zeros_like(wave)
-                derivatives: Dict[str, np.ndarray] = {}
-                for instance in by_flux.get(linear_name, ()):
-                    values = self._instance_basis(instance, nonlinear_values, wave)
-                    basis += values[0]
-                    velocity_group = instance[3]
-                    width_group = instance[4]
-                    velocity_name = f"{velocity_group}.velocity_kms"
-                    width_name = f"{width_group}.fwhm_kms"
-                    derivatives[velocity_name] = derivatives.get(
-                        velocity_name, np.zeros_like(wave)
-                    ) + values[1]
-                    derivatives[width_name] = derivatives.get(
-                        width_name, np.zeros_like(wave)
-                    ) + values[2]
+                for instance in by_flux.get(name, ()):
+                    profile = self._instance_basis(instance, values, wave)
+                    basis += profile[0]
+                    if need_derivatives:
+                        for key, derivative in (
+                            (instance[3] + ".velocity_kms", profile[1]),
+                            (instance[4] + ".fwhm_kms", profile[2]),
+                        ):
+                            derivatives[key] = derivatives.get(key, zero) + derivative
             columns.append(basis)
-            if derivative_columns is not None:
-                for index, name in enumerate(self.nonlinear_names):
-                    derivative_columns[index].append(
-                        derivatives.get(name, np.zeros_like(wave))
-                    )
-        design = np.column_stack(columns)
-        if derivative_columns is None:
-            return design, None
-        return design, tuple(np.column_stack(items) for items in derivative_columns)
+            if need_derivatives:
+                for i, key in enumerate(names):
+                    derivative_columns[i].append(derivatives.get(key, zero))
+        return np.column_stack(columns), None if not need_derivatives else tuple(
+            np.column_stack(c) for c in derivative_columns
+        )
 
     def components(self, theta, wave):
         out: Dict[str, np.ndarray] = {}
@@ -976,11 +970,13 @@ def _failed_result(
     )
 
 
+@performance_scope()
 def fit_generic_complex(
     spectrum: Spectrum,
     continuum: GlobalContinuumResult,
     recipe: ComplexRecipe,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
     coverage_override: Optional[RecipeCoverage] = None,
     fit_mask_override: Optional[np.ndarray] = None,
@@ -994,6 +990,7 @@ def fit_generic_complex(
     optimizer_config=None,
     forward_resolution=False,
     measure_metrics=True,
+    _allow_warm_start=False,
 ) -> Optional[EmissionComplexResult]:
     """Fit one generic recipe; return ``None`` only when it is not covered."""
 
@@ -1041,13 +1038,25 @@ def fit_generic_complex(
     if n_starts > 1 and any(c.selection_rule for c in context.components_config):
         raise ValueError("Multistart selection requires explicit candidate recipes")
     from .multistart import solve_multistart
+    from .performance import current_session, line_seed_key
+    session = current_session()
+    seed_key = None
+    warm_values = None
+    if session and session.config.warm_starts and n_starts > 1 and (
+        _allow_warm_start or (initial_values is None and start_values is None)
+    ):
+        seed_key = line_seed_key(spectrum, context, mask, optimizer_config)
+        warm_values = session.seeds.get(seed_key)
     result, optimizer_used, fallback_reason, multistart = solve_multistart(
         context, spectrum.wave_rest[mask], fit_flux[mask], spectrum.err[mask],
         optimizer_config, n_starts=n_starts, max_starts=max_starts,
         seed=random_seed, initial_values=initial_values, start_values=start_values,
+        warm_values=warm_values,
         expand_search=(lambda solution, starts: expand_search(context, solution, starts, mask))
             if expand_search else None,
     )
+    if seed_key is not None and result.success:
+        session.seeds[seed_key] = dict(zip(context.names, map(float, result.x)))
     residual = (
         fit_flux[mask] - context.model(result.x, spectrum.wave_rest[mask])
     ) / spectrum.err[mask]
@@ -1298,6 +1307,7 @@ def fit_generic_complex(
     metadata = spectrum.metadata.to_dict()
     metadata.update({
         "multistart": multistart,
+        "local_continuum_pivot": float(context.pivot),
         "line_lsf": lsf_metadata,
         "recipe_id": recipe.id,
         "recipe_label": recipe.label,
@@ -1380,12 +1390,14 @@ def _lya_skipped_result(
     return result
 
 
+@performance_scope()
 def fit_lya_nv_complex(
     spectrum: Spectrum,
     continuum: GlobalContinuumResult,
     recipe: ComplexRecipe,
     config: Optional[LyaNVComplexConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
 ) -> EmissionComplexResult:
     """Fit Lyα/N V with coverage classification and one absorption refit."""

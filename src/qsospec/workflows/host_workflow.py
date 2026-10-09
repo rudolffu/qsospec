@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
+from ..templates.balmer_cache import cache_scope
 
 from ..fitting.local import fit_local
 from ..config import (
@@ -777,6 +778,7 @@ def _run_host_refit_mc(
     return summary
 
 
+@cache_scope
 def _run_global_fit_with_optional_host(
     spectrum_data: Any,
     *,

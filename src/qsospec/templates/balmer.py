@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from ..warnings import FitWarning
+from .balmer_cache import cached_series
 
 C_KMS = 299792.458
 FWHM_TO_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
@@ -234,6 +235,7 @@ def evaluate_balmer_series_with_derivative(
     return basis, derivative
 
 
+@cached_series
 def evaluate_balmer_series_with_derivatives(
     template: BalmerSeriesTemplate,
     wave_rest: np.ndarray,

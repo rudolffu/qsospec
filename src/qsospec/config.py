@@ -480,6 +480,25 @@ DEFAULT_GLOBAL_MODEL_ID = "global_v2"
 
 
 @dataclass(frozen=True)
+class FitPerformanceConfig:
+    """Exact evaluation reuse and conservative workflow-local line seeds."""
+
+    cache_evaluations: bool = True
+    warm_starts: bool = True
+    evaluation_cache_max_bytes: int = 16 * 1024 * 1024
+
+    def __post_init__(self):
+        if not isinstance(self.cache_evaluations, bool) or not isinstance(self.warm_starts, bool):
+            raise ValueError("Performance switches must be booleans.")
+        if (
+            isinstance(self.evaluation_cache_max_bytes, bool)
+            or not isinstance(self.evaluation_cache_max_bytes, int)
+            or self.evaluation_cache_max_bytes < 0
+        ):
+            raise ValueError("evaluation_cache_max_bytes must be a non-negative integer.")
+
+
+@dataclass(frozen=True)
 class GlobalContinuumConfig:
     """Configuration for the first qsospec global AGN continuum."""
 
@@ -518,6 +537,7 @@ class GlobalContinuumConfig:
     jacobian_method: str = "semi_analytic"
     max_nfev: Optional[int] = 1000
     model_id: str = DEFAULT_GLOBAL_MODEL_ID
+    performance: FitPerformanceConfig = field(default_factory=FitPerformanceConfig)
 
     @classmethod
     def legacy_v1(cls, **changes) -> "GlobalContinuumConfig":
@@ -560,6 +580,8 @@ class GlobalContinuumConfig:
         return cls(uv_iron=None, optical_iron=None, full_iron=iron, **changes)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.performance, FitPerformanceConfig):
+            raise TypeError("performance must be a FitPerformanceConfig instance")
         if self.iron_width_coupling not in ("independent", "soft"):
             raise ValueError("iron_width_coupling must be independent or soft")
         if not np.isfinite(self.iron_width_prior_scatter_dex) or self.iron_width_prior_scatter_dex <= 0:

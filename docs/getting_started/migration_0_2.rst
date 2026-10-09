@@ -92,7 +92,7 @@ Matched draws and summaries use ``measurement_key_schema="qualified_v1"``:
    line:mgii:mgii_broad_flux_input
 
 Native ``fit.metrics``, ``fit.metric_errors`` and continuum sample names are
-unchanged. Run schema 7 persists the qualified draw namespace. Readers retain
-schemas 5 and 6, convert older qualified entries explicitly, and discard
+unchanged. Run schema 8 persists the qualified draw namespace and compact model recipes. Readers retain
+schemas 5, 6 and 7, convert older qualified entries explicitly, and discard
 ambiguous historical bare line aliases. Older point estimates and recorded
 models are preserved; loading never refits them.

@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from .performance import performance_scope, count_statistic
+
 from dataclasses import replace
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+from ..templates.balmer_cache import cache_scope
+from ..model_evaluation import continuum_state
 from scipy.optimize import least_squares, lsq_linear
 
 from ..config import (
     GlobalContinuumConfig,
+    FitPerformanceConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
     LyaNVComplexConfig,
@@ -749,7 +754,7 @@ class _ContinuumContext:
         except Exception:
             pass
 
-    @property
+    @cached_property
     def linear_names(self) -> List[str]:
         return [
             name
@@ -759,7 +764,7 @@ class _ContinuumContext:
             or name.startswith("polynomial.c")
         ]
 
-    @property
+    @cached_property
     def nonlinear_names(self) -> List[str]:
         linear = set(self.linear_names)
         return [name for name in self.names if name not in linear]
@@ -780,6 +785,8 @@ class _ContinuumContext:
             [] for _ in self.nonlinear_names
         ] if need_derivatives else None
 
+        zero = np.zeros_like(wave)
+
         def append_column(
             basis: np.ndarray,
             derivatives: Optional[Dict[str, np.ndarray]] = None,
@@ -790,7 +797,7 @@ class _ContinuumContext:
             derivatives = derivatives or {}
             for index, name in enumerate(self.nonlinear_names):
                 derivative_columns[index].append(
-                    np.asarray(derivatives.get(name, np.zeros_like(wave)), dtype=float)
+                    np.asarray(derivatives.get(name, zero), dtype=float)
                 )
 
         if "power_law.norm" in self.index:
@@ -1059,6 +1066,13 @@ def _solve_separable_once(context, wave, flux, err, start, max_nfev, jacobian_me
             tuple(item / scales for item in derivatives)
             if derivatives is not None else None
         )
+    from .performance import ExactEvaluationCache
+    def definition_token():
+        return (id(getattr(context, "recipe", None)), id(getattr(context, "config", None)),
+                id(getattr(context, "line_lsf", None)), tuple(context.names),
+                tuple(sorted(getattr(context, "fixed_parameters", {}).items())))
+    evaluator = ExactEvaluationCache(evaluator, wave, state_token=definition_token,
+                                    derivatives=jacobian_method == "semi_analytic")
     result = solve_variable_projection(
         flux,
         err,
@@ -1168,6 +1182,7 @@ def _solve_legacy_once(context, wave, flux, err, start, max_nfev):
     for name, norm in zip(context.linear_names, norms):
         if isinstance(context, _ContinuumContext) and norm > 0:
             scales[context.index[name]] = 1.0 / norm
+    count_statistic("optimizer_calls")
     result = least_squares(
         lambda theta: np.concatenate(((flux - context.model(theta * scales, wave)) / err,
             context.prior_residuals(theta * scales) if hasattr(context, "prior_residuals") else [])),
@@ -1538,6 +1553,7 @@ def _fit_global_continuum_fixed(
         warnings=warnings,
         metadata=metadata,
         optimizer_result=result,
+        evaluation_state=continuum_state(context),
     )
 
 
@@ -1663,6 +1679,19 @@ def _fit_global_continuum_with_fixed_balmer_amplitude(
         }
     )
     result.metadata.update(balmer_metadata)
+    if result.evaluation_state is not None:
+        state = dict(result.evaluation_state)
+        state['fixed_parameters'] = {**state['fixed_parameters'],
+            'balmer_pseudocontinuum.amp': float(amplitude),
+            'balmer_pseudocontinuum.fwhm_kms': float(fwhm_kms),
+            'balmer_pseudocontinuum.velocity_kms': float(velocity_kms)}
+        state['balmer_template'] = _cached_balmer_template(
+            config.balmer_pseudocontinuum.log10_ne,
+            config.balmer_pseudocontinuum.n_min,
+            config.balmer_pseudocontinuum.provenance)
+        state['config'] = replace(state['config'], balmer_pseudocontinuum=replace(
+            config.balmer_pseudocontinuum, enabled=True, fit_fwhm=False, fwhm_kms=float(fwhm_kms)))
+        result.evaluation_state = state
     return result
 
 
@@ -1821,10 +1850,13 @@ def _fit_global_continuum_power_law_selection(
     return selected
 
 
+@cache_scope
+@performance_scope()
 def fit_global_continuum(
     spectrum: Spectrum,
     config: Optional[GlobalContinuumConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
 ) -> GlobalContinuumResult:
     """Fit a physical baseline, then assess a slope-anchored small correction.
@@ -2149,11 +2181,11 @@ class _HbetaContext:
         components = self.components(theta, wave)
         return sum((components[f"Hb_broad{i}"] for i in range(1, len(self.config.broad_fwhm_bands_kms) + 1)), np.zeros_like(wave))
 
-    @property
+    @cached_property
     def linear_names(self) -> List[str]:
         return [name for name in self.names if name.endswith(".flux")]
 
-    @property
+    @cached_property
     def nonlinear_names(self) -> List[str]:
         linear = set(self.linear_names)
         return [name for name in self.names if name not in linear]
@@ -2173,13 +2205,15 @@ class _HbetaContext:
             [] for _ in self.nonlinear_names
         ] if need_derivatives else None
 
+        zero = np.zeros_like(wave)
+
         def append_column(basis: np.ndarray, derivatives: Dict[str, np.ndarray]) -> None:
             columns.append(np.asarray(basis, dtype=float))
             if derivative_columns is None:
                 return
             for index, name in enumerate(self.nonlinear_names):
                 derivative_columns[index].append(
-                    np.asarray(derivatives.get(name, np.zeros_like(wave)), dtype=float)
+                    np.asarray(derivatives.get(name, zero), dtype=float)
                 )
 
         for index in range(1, len(self.config.broad_fwhm_bands_kms) + 1):
@@ -2329,11 +2363,11 @@ class _SeparableLineContext:
     def shifted(center, velocity):
         return center * np.exp(float(velocity) / C_KMS)
 
-    @property
+    @cached_property
     def linear_names(self) -> List[str]:
         return [name for name in self.names if name.endswith(".flux")]
 
-    @property
+    @cached_property
     def nonlinear_names(self) -> List[str]:
         linear = set(self.linear_names)
         return [name for name in self.names if name not in linear]
@@ -2425,12 +2459,14 @@ class _MgIIContext(_SeparableLineContext):
         columns = []
         derivative_columns = [[] for _ in self.nonlinear_names] if need_derivatives else None
 
+        zero = np.zeros_like(wave)
+
         def append_column(basis, derivatives):
             columns.append(basis)
             if derivative_columns is not None:
                 for derivative_index, name in enumerate(self.nonlinear_names):
                     derivative_columns[derivative_index].append(
-                        derivatives.get(name, np.zeros_like(wave))
+                        derivatives.get(name, zero)
                     )
 
         for index in range(1, 3):
@@ -2579,12 +2615,14 @@ class _HalphaContext(_SeparableLineContext):
         columns = []
         derivative_columns = [[] for _ in self.nonlinear_names] if need_derivatives else None
 
+        zero = np.zeros_like(wave)
+
         def append_column(basis, derivatives):
             columns.append(basis)
             if derivative_columns is not None:
                 for derivative_index, name in enumerate(self.nonlinear_names):
                     derivative_columns[derivative_index].append(
-                        derivatives.get(name, np.zeros_like(wave))
+                        derivatives.get(name, zero)
                     )
 
         for index in range(1, self.n_broad_components + 1):
@@ -3150,11 +3188,13 @@ def _fit_separable_emission_complex(
     )
 
 
+@performance_scope()
 def fit_mgii_complex(
     spectrum: Spectrum,
     continuum_result: GlobalContinuumResult,
     config: Optional[MgIIComplexConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
 ) -> EmissionComplexResult:
     """Fit two broad Mg II components plus one narrow component."""
@@ -3176,11 +3216,13 @@ def fit_mgii_complex(
     )
 
 
+@performance_scope()
 def fit_halpha_complex(
     spectrum: Spectrum,
     continuum_result: GlobalContinuumResult,
     config: Optional[HalphaComplexConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
 ) -> EmissionComplexResult:
     """Fit broad H-alpha plus tied narrow H-alpha/[N II]/[S II]."""
@@ -3348,11 +3390,13 @@ def _fit_hbeta_candidate(
     )
 
 
+@performance_scope()
 def fit_hbeta_complex(
     spectrum: Spectrum,
     continuum_result: GlobalContinuumResult,
     config: Optional[HbetaComplexConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     compute_covariance: bool = True,
     defer_peaks: bool = False,
 ) -> HbetaComplexResult:
@@ -3551,6 +3595,8 @@ def _optional_complex_for_workflow(
     return result, warnings
 
 
+@cache_scope
+@performance_scope(workflow=True)
 def fit_global_lines(
     spectrum: Spectrum,
     global_config: Optional[GlobalContinuumConfig] = None,
@@ -3559,6 +3605,7 @@ def fit_global_lines(
     halpha_config: Optional[HalphaComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     lya_nv_config: Optional[LyaNVComplexConfig] = None,
     host_model_on_grid: Optional[np.ndarray] = None,
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
@@ -4689,12 +4736,14 @@ def _fit_selected_recipe(
     return result
 
 
+@performance_scope()
 def fit_global_hbeta(
     spectrum: Spectrum,
     global_config: Optional[GlobalContinuumConfig] = None,
     hbeta_config: Optional[HbetaComplexConfig] = None,
     uncertainty_config: Optional[UncertaintyConfig] = None,
     *,
+    performance: Optional[FitPerformanceConfig] = None,
     host_model_on_grid: Optional[np.ndarray] = None,
 ) -> WorkflowResult:
     """Compatibility wrapper for :func:`fit_global_lines`."""
@@ -4707,6 +4756,7 @@ def fit_global_hbeta(
         None,
         uncertainty_config,
         host_model_on_grid=host_model_on_grid,
+        performance=performance,
         complexes=("hbeta_oiii",),
     )
     result.metadata["compatibility_hbeta_mode"] = True
@@ -4917,6 +4967,7 @@ def _joint_hgamma_refinement(spectrum, config, continuum, hgamma, compute_covari
     n = problem.n
     retained = problem.retained
     names = problem.names
+    count_statistic("optimizer_calls")
     fit = least_squares(
         lambda t: np.r_[data(t), prior(t)],
         np.clip(problem.start, problem.lower, problem.upper),
@@ -4982,7 +5033,7 @@ def _joint_hgamma_refinement(spectrum, config, continuum, hgamma, compute_covari
     meta["balmer_pseudocontinuum_edge_flux_density_input"] = float(sum(value[0] for name,value in edge_components.items() if name.startswith("balmer_")))
     meta["balmer_pseudocontinuum_implied_hbeta_flux_input"] = float(ct[ctx.index["balmer_pseudocontinuum.amp"]])
     meta["balmer_pseudocontinuum_implied_hbeta_flux_cgs"] = float(ct[ctx.index["balmer_pseudocontinuum.amp"]])*(spectrum.flux_scale if spectrum.flux_scale is not None else np.nan)
-    continuum = replace(continuum, param_values=dict(zip(ctx.names, map(float, ct))),
+    continuum = replace(continuum, evaluation_state=continuum_state(ctx), param_values=dict(zip(ctx.names, map(float, ct))),
         param_errors={name: float(np.sqrt(covariance[i,i])) if covariance is not None else np.nan for i,name in enumerate(ctx.names)},
         covariance=covariance, model=sum(components.values(),np.zeros_like(spectrum.flux)), component_models=components,
         fit_mask=union, clip_mask=union, metadata=meta, warnings=continuum.warnings+warnings, optimizer_result=fit)

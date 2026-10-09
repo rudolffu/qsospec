@@ -192,7 +192,7 @@ def fit_adaptive_hbeta(spectrum, continuum, config, *, compute_covariance=True, 
         fit=fit_generic_complex(spectrum,continuum,recipe,coverage_override=coverage,
             compute_covariance=True,defer_peaks=True,n_starts=6,max_starts=24,
             random_seed=config.oiii_random_seed,initial_values=starts[0],start_values=starts,
-            expand_search=expand,optimizer_config=config,forward_resolution=True,measure_metrics=False)
+            expand_search=expand,optimizer_config=config,forward_resolution=True,measure_metrics=False,_allow_warm_start=True)
         if fit is None:raise RuntimeError('Adaptive candidate unexpectedly lacked coverage')
         raw_names=list(fit.param_values)
         if not raw_names:

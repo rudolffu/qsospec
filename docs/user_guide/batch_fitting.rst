@@ -71,5 +71,7 @@ Finalize after all shards complete:
 Batch fitting does not render all QA by default. Select objects afterward with
 :func:`qsospec.render_qa`. See :doc:`../reference/run_bundles`.
 
-``compact_models=True`` is rejected in schema v5 because it was a misleading
-no-op.  Per-object permanent shards remain the crash-safe authoritative layout.
+Schema-8 runs use compact parameter models and indexed shards by default.
+``model_storage="arrays"`` retains explicit model arrays. Finalization packs all
+result tables; ``compact_models=True`` is supported as an explicit compaction
+request. See :doc:`../reference/run_bundles` for portability and copy conversion.

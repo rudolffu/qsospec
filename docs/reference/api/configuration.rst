@@ -8,6 +8,7 @@ Configuration API
 
    GalacticExtinctionConfig
    GlobalContinuumConfig
+   FitPerformanceConfig
    PowerLawConfig
    PolynomialContinuumConfig
    IronTemplateConfig

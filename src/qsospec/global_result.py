@@ -33,6 +33,7 @@ class GlobalContinuumResult:
     warnings: List[FitWarning] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     optimizer_result: Optional[Any] = None
+    evaluation_state: Optional[Dict[str, Any]] = None
 
     def warning_codes(self) -> List[str]:
         return [warning.code for warning in self.warnings]
@@ -83,6 +84,7 @@ class EmissionComplexResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     optimizer_result: Optional[Any] = None
     excluded_mask: Optional[np.ndarray] = None
+    evaluation_state: Optional[Dict[str, Any]] = None
 
     def warning_codes(self) -> List[str]:
         return [warning.code for warning in self.warnings]

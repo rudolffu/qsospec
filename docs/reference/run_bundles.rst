@@ -10,6 +10,8 @@ adding a new Parquet column.
 
    run_directory/
      manifest.json
+     object-index.sqlite
+     assets/
      data/
        inputs/
        objects/
@@ -21,9 +23,11 @@ adding a new Parquet column.
      qa/
      .staging/
 
-The datasets contain canonical, collision-free object shards. Finalization
-validates them without creating duplicate compact copies and removes empty
-staging state. JSON is used only for concise run-level provenance.
+New schema-8 runs use indexed multi-object shards, compact parameter recipes,
+and content-addressed template assets. Readers still return populated model
+arrays. Schemas 5--7 remain readable. Finalization packs pending records,
+validates the index and collects obsolete generations; original historical runs
+are never converted automatically.
 
 Single object
 -------------
@@ -239,3 +243,82 @@ Notebook display
 
 These methods return open Matplotlib figures and do not create additional
 files. ``model.qa_path`` points to the primary saved QA image when available.
+
+Compact models and conversion
+-----------------------------
+
+New runs default to ``model_storage="parameters"``. Gaussian and other supported
+line profiles, local continua, power laws, polynomials, iron and Balmer models
+are reconstructed from saved fitted coordinates and a versioned evaluation
+recipe. pPXF models retain fitted weights, kinematics, polynomial coefficients,
+preprocessing and template-transform settings. Reloading does not invoke an
+optimizer or perform a new spectral fit.
+
+Required template arrays are saved once per content hash under ``assets/``.
+Runs can be moved without the original template installation. Hash verification
+fails explicitly for missing or corrupted assets; unsupported evaluator versions
+also fail explicitly. Unsupported custom models and unverifiable older models
+retain arrays with a reason in ``model_storage_components`` metadata.
+
+Before omitting an array, the writer checks reconstruction with ``rtol=1e-10``
+and ``atol=1e-12`` in stored flux units, including identical NaN/Inf locations.
+Observed inputs, errors, wavelengths, parameters and covariance retain float64
+precision. Metadata and measurements remain available without reconstruction.
+
+Use ``model_storage="arrays"`` in :func:`qsospec.fit_object_to_store`,
+:func:`qsospec.fit_batch`, or :meth:`qsospec.RunStore.create` for explicit array
+storage. The storage policy cannot be changed when resuming a schema-8 run.
+Lossless Zstandard level 3 and byte-stream-split encoding are used for floating
+array columns in both modes.
+
+The index commits all tables of a promoted object together. Workers write
+private durable staging directories; coordinators serialize publication. Shards
+hold up to 128 objects or 64 MiB of uncompressed table data by default (an
+indivisible larger object occupies its own shard). Set ``shard_objects`` and
+``shard_bytes`` on ``RunStore.create`` to override these limits. Readers hold a
+snapshot while loading a model. Replacements create immutable generations;
+collection waits for snapshot readers before removing superseded files.
+``store.compact()`` explicitly repacks all tables. Measurement-only reads never
+open template assets.
+
+Copy an existing run into a new destination without refitting:
+
+.. code-block:: python
+
+   compact = qsospec.convert_run("runs/original", "runs/compact")
+   result = qsospec.load_model(compact, "object-key")
+
+Or use the CLI:
+
+.. code-block:: console
+
+   python -m qsospec.io.convert_run runs/original runs/compact
+
+The destination must not exist. Conversion preserves scientific object keys,
+input redshifts, measurements, covariance and configuration identity. Existing
+parameter recipes are retained; older line definitions are recovered only after
+validation against archived arrays. Missing historical continuum/host evaluation
+state remains an explicit array fallback. Failed conversions retain a marked
+incomplete destination for inspection and do not edit the source.
+
+Balmer cache
+------------
+
+Fitting uses an exact workflow-local LRU cache for Balmer-series bases and
+FWHM/velocity derivatives, shared across prefit, final fitting and uncertainty
+trials in the same workflow. Default limits are 128 entries and 16 MiB of cached
+array data. Keys include template/grid content hashes and exact floating-point
+arguments; no rounding or interpolation is introduced. Cached arrays have
+immutable backing storage. Each independent spectrum starts a fresh cache.
+
+For controlled comparisons or custom cache limits:
+
+.. code-block:: python
+
+   from qsospec.templates.balmer_cache import balmer_cache
+
+   with balmer_cache(enabled=False):
+       result = qsospec.fit_global_lines(spectrum, config)
+
+   with balmer_cache(max_entries=128, max_bytes=16 * 1024**2):
+       result = qsospec.fit_global_lines(spectrum, config)

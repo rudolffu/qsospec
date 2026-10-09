@@ -118,6 +118,7 @@ class PPXFHostFitResult:
     closure_metrics: Dict[str, Any] = field(default_factory=dict)
     host_reconstruction_state: Dict[str, Any] = field(default_factory=dict)
     ppxf_result: Any = None
+    evaluation_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1346,6 +1347,7 @@ def run_ppxf_host_fit(
         ppxf_high_agn_fraction_warning=high_agn_fraction,
         closure_metrics=closure_metrics,
         ppxf_result=result,
+        evaluation_state=_capture_evaluation(preprocessed, templates, result, agn_matrix, agn_bundle, strategy, active_slopes),
     )
 
 
@@ -1936,3 +1938,48 @@ def write_host_decomp_outputs(
     if qsospec_model.exists():
         files["qsospec_model"] = str(qsospec_model)
     return files, summary
+
+
+def _capture_evaluation_impl(preprocessed, templates, result, agn_matrix, bundle, strategy, active_slopes):
+    """Capture inputs and fitted coordinates of the pPXF forward operator."""
+    from dataclasses import replace
+    groups = []
+    categories = {'agn_powerlaw': 'powerlaw', 'agn_feii_optical': 'feii_optical',
+                  'agn_feii_uv': 'feii_uv', 'agn_feii_middle': 'middle_iron',
+                  'agn_feii_full': 'feii_full', 'agn_balmer_continuum': 'balmer_continuum',
+                  'agn_balmer_high_order': 'balmer_high_order'}
+    if bundle is not None:
+        for group, column in bundle.group_column_indices.items():
+            groups.append({'column': column, 'items': [dict(name=categories[item.category], values=item.values)
+                           for item in bundle.components if item.linear_group == group]})
+    sol = result.sol if isinstance(result.sol, list) else [result.sol]
+    pars = []
+    for coordinates in sol:
+        x = np.asarray(coordinates, dtype=float).copy()
+        x[:2] /= result.velscale
+        pars.extend(x.tolist())
+    # Flux/noise/masks are not required by the reconstruction operator.
+    unused = ('wave_obs', 'flux', 'error', 'fit_mask', 'emission_mask', 'log_wave',
+              'flux_log', 'noise_log', 'emission_mask_log', 'validity_mask_log', 'artifact_mask_log')
+    prep = replace(preprocessed, metadata=dict(preprocessed.metadata), warnings=[], ivar=None,
+                   **{key: np.empty(0, dtype=getattr(preprocessed, key).dtype) for key in unused})
+    return dict(preprocessed=prep, templates=templates,
+                agn_recipe=bundle.evaluation_state if bundle is not None else None,
+                powerlaw_slopes=np.asarray(active_slopes).tolist(),
+                agn_matrix=None,
+                groups=[] if bundle is not None else groups, weights=np.asarray(result.weights).tolist(),
+                additive_coefficients=np.asarray(result.polyweights).tolist() if strategy == 'agn_pseudocontinuum_masked' and result.degree >= 0 else [],
+                bestfit_additive_coefficients=np.asarray(result.polyweights).tolist() if result.degree >= 0 else [],
+                transform=dict(pars=pars, moments=np.asarray(result.moments).tolist(),
+                    npad=int(result.npad), npix=int(result.npix), ncomp=int(result.ncomp),
+                    vsyst=float(result.vsyst), velscale_ratio=int(result.velscale_ratio),
+                    sigma_diff=float(result.sigma_diff), component=np.asarray(result.component).tolist(),
+                    mpoly_coefficients=None if result.mpoly is None else np.asarray(result.mpolyweights).tolist()))
+
+
+def _capture_evaluation(*args):
+    try:
+        return _capture_evaluation_impl(*args)
+    except (AttributeError, TypeError, ValueError):
+        # Unsupported third-party pPXF result adapters retain array fallbacks.
+        return None

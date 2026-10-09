@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from .performance import performance_scope
+
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..config import LineComplexConfig, LocalFitConfig
+from ..config import FitPerformanceConfig, LineComplexConfig, LocalFitConfig
 from ..solvers.least_squares import run_least_squares
 from ..parameters import pack_line_complex_parameters
 from ..residuals import iron_basis_vector, model_and_residual, model_components, model_vector
@@ -92,10 +94,13 @@ def _fit_pixel_mask(spectrum: Spectrum, config: LineComplexConfig) -> np.ndarray
     return fit_mask
 
 
+@performance_scope()
 def fit_line_complex(
     spectrum: Spectrum,
     config: LineComplexConfig,
     jacobian: Optional[str] = None,
+    *,
+    performance: Optional[FitPerformanceConfig] = None,
 ) -> FitResult:
     """Fit one local Gaussian line complex on the spectrum rest-frame grid."""
 
@@ -323,7 +328,8 @@ def _validate_local_window(
     return True, warnings
 
 
-def fit_local(spectrum: Spectrum, config: LocalFitConfig) -> LocalFitResult:
+@performance_scope()
+def fit_local(spectrum: Spectrum, config: LocalFitConfig, *, performance: Optional[FitPerformanceConfig] = None) -> LocalFitResult:
     """Fit one or more local line-complex windows independently."""
 
     require_rest_frame_flux(spectrum)

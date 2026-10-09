@@ -110,6 +110,7 @@ class HostAgnTemplateBundle:
     group_column_indices: dict[str, int]
     support_mask: np.ndarray
     metadata: dict[str, Any]
+    evaluation_state: dict[str, Any] = field(default_factory=dict)
 
 
 def _normalization_interval(wave: np.ndarray, valid_mask: np.ndarray) -> tuple[float, float]:
@@ -223,10 +224,22 @@ def build_host_agn_template_bundle(
     config: HostAgnPseudoContinuumConfig | None = None,
     redshift: float = 0.0,
     spectral_resolution: Any = None,
+    template_overrides: dict | None = None,
+    balmer_template_override: Any = None,
 ) -> HostAgnTemplateBundle:
     """Build the non-negative linear AGN basis on the pPXF log grid."""
 
     cfg = config or HostAgnPseudoContinuumConfig()
+    used_templates = {}
+    def get_template(name):
+        value = template_overrides[name] if template_overrides is not None else _cached_builtin_iron_template(name)
+        used_templates[name] = value
+        return value
+    def iron_basis(name):
+        if template_overrides is None:
+            return _cached_iron_basis(name, float(selected_fwhm_kms), wave_size, wave_bytes)
+        return evaluate_iron_basis(get_template(name), wave, selected_fwhm_kms)
+    used_balmer = None
     wave = np.asarray(wave_rest, dtype=float)
     valid = np.ones_like(wave, dtype=bool) if valid_mask is None else np.asarray(valid_mask, dtype=bool).copy()
     valid &= np.isfinite(wave) & (wave > 0)
@@ -239,8 +252,8 @@ def build_host_agn_template_bundle(
     hybrid = cfg.regional_iron_enabled and cfg.full_feii_template is None and cfg.uv_feii_template == "vw01" and cfg.optical_feii_template == "park22"
     intervals = None
     if hybrid:
-        intervals = resolve_regional_intervals(_cached_builtin_iron_template("vw01"),
-            _cached_builtin_iron_template("park22"), 10000., 10000.)
+        intervals = resolve_regional_intervals(get_template("vw01"),
+            get_template("park22"), 10000., 10000.)
         hybrid = bool(np.any(valid & (regional_weights(wave,*intervals)[1] > 0)))
 
     def append_iron(
@@ -251,7 +264,7 @@ def build_host_agn_template_bundle(
         linear_group: str,
         fallback_reference: str,
     ) -> None:
-        template = _cached_builtin_iron_template(template_name)
+        template = get_template(template_name)
         support = (
             (wave >= float(template.coverage[0]))
             & (wave <= float(template.coverage[1]))
@@ -268,16 +281,14 @@ def build_host_agn_template_bundle(
             if template_name == "verner09":
                 raw = untapered*weights
             else:
-                tapered = _cached_iron_basis(
-                    template_name,float(selected_fwhm_kms),wave_size,wave_bytes)
+                tapered = iron_basis(template_name)
                 outer = wave < intervals[0][0] if index == 0 else wave > intervals[1][1]
                 raw = np.where(outer,tapered,untapered)*weights
             support &= weights > 0
             if not np.any(support):
                 return
         else:
-            raw = _cached_iron_basis(
-                template_name,float(selected_fwhm_kms),wave_size,wave_bytes)
+            raw = iron_basis(template_name)
         values, normalization = _normalize(raw, support)
         normalization_interval = _normalization_interval(wave, support)
         native_fwhm = float(template.native_fwhm_kms)
@@ -342,19 +353,19 @@ def build_host_agn_template_bundle(
                     linear_group="middle_iron", fallback_reference="Verner et al. 2009")
 
     if cfg.balmer_enabled:
-        balmer = load_balmer_template(
+        balmer = balmer_template_override or load_balmer_template(
             log10_ne=cfg.balmer_log10_ne,
             n_min=6,
             provenance="sh95_k13full_ext",
         )
-        combined, bound_free, high_order = _cached_balmer_basis(
-            int(cfg.balmer_log10_ne),
-            float(selected_fwhm_kms),
-            float(cfg.balmer_temperature_k),
-            float(cfg.balmer_tau_edge),
-            wave_size,
-            wave_bytes,
-        )
+        used_balmer = balmer
+        if balmer_template_override is None:
+            combined, bound_free, high_order = _cached_balmer_basis(
+                int(cfg.balmer_log10_ne), float(selected_fwhm_kms),
+                float(cfg.balmer_temperature_k), float(cfg.balmer_tau_edge), wave_size, wave_bytes)
+        else:
+            combined, bound_free, high_order, _, _ = evaluate_balmer_pseudocontinuum_with_derivatives(
+                balmer, wave, selected_fwhm_kms, 0., temperature_k=cfg.balmer_temperature_k, tau_edge=cfg.balmer_tau_edge)
         combined_values, balmer_norm = _normalize(combined, valid & (combined != 0))
         common = {
             "physical_broadening_applied_once": True,
@@ -512,4 +523,7 @@ def build_host_agn_template_bundle(
         group_column_indices=group_column_indices,
         support_mask=support,
         metadata=metadata,
+        evaluation_state=dict(config=cfg, selected_fwhm_kms=float(selected_fwhm_kms),
+            valid_mask=valid, redshift=float(redshift), spectral_resolution=spectral_resolution,
+            template_overrides=used_templates, balmer_template_override=used_balmer),
     )

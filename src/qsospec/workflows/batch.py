@@ -689,6 +689,7 @@ def fit_object_to_store(
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
     run_id: Optional[str] = None,
     resume: bool = True,
+    model_storage: str = "parameters",
     write_qa: bool = True,
     qa_plot_config: Optional[GlobalQAPlotConfig] = None,
     overview_yscale: Optional[str] = None,
@@ -726,6 +727,7 @@ def fit_object_to_store(
         configuration_summary=_configuration_overrides(configuration),
         run_id=run_id,
         resume=resume,
+        model_storage=model_storage,
     )
     if isinstance(input_data, SpectrumInput):
         descriptor = input_data
@@ -946,6 +948,7 @@ def fit_batch(
     complexes: Optional[Sequence[Union[str, ComplexRecipe]]] = None,
     run_id: Optional[str] = None,
     resume: bool = True,
+    model_storage: str = "parameters",
     retry_failures: bool = True,
     finalize: bool = True,
     compact_models: bool = False,
@@ -965,11 +968,6 @@ def fit_batch(
         raise ValueError("manifest_update_interval must be positive.")
     if resume_planning not in {"auto", "lightweight", "legacy"}:
         raise ValueError("resume_planning must be 'auto', 'lightweight', or 'legacy'")
-    if compact_models:
-        raise ValueError(
-            "compact_models is not implemented for schema-v5 per-object shards; "
-            "the misleading no-op has been disabled."
-        )
     hbeta_config = hbeta_config or HbetaComplexConfig()
     mgii_config = mgii_config or MgIIComplexConfig()
     halpha_config = halpha_config or HalphaComplexConfig()
@@ -1000,6 +998,7 @@ def fit_batch(
         configuration_summary=_configuration_overrides(configuration),
         run_id=run_id,
         resume=resume,
+        model_storage=model_storage,
     )
     startup_started = time.perf_counter()
     authoritative = None

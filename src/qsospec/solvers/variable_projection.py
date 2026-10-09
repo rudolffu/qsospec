@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Callable, Optional, Sequence, Tuple
 
+from ..fitting.performance import count_statistic
+
 import numpy as np
 from scipy.optimize import least_squares, lsq_linear
 
@@ -121,6 +123,7 @@ class _VariableProjectionProblem:
             derivatives = None
 
         weighted_design = design / self.err[:, None]
+        count_statistic("linear_solves")
         linear_result = lsq_linear(
             weighted_design,
             self.weighted_flux,
@@ -234,6 +237,7 @@ def solve_variable_projection(
     )
 
     if nonlinear_initial.size:
+        count_statistic("optimizer_calls")
         nonlinear_result = least_squares(
             problem.residual,
             nonlinear_initial,

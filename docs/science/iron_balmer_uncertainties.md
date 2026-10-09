@@ -94,8 +94,8 @@ than assigned uncertainties from a different profile.
 
 ## Schema and recovery
 
-Run schema 7 stores compact named covariance blocks and matched draws in the
-existing model archive's structured metadata. It reads schemas 5 and 6 bundles;
+Run schema 8 stores compact model recipes, named covariance blocks and matched draws in the
+existing model archive's structured metadata. It reads schemas 5, 6 and 7 bundles;
 missing covariance remains unavailable. Free parameter ordering is explicit,
 including legacy fixed-parameter exclusions and conditional polynomial blocks.
 Joint Hγ covariance remains a joint block; independent fit blocks do not acquire

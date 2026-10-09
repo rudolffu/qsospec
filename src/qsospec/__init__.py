@@ -17,6 +17,7 @@ from .config import (
     GalacticExtinctionConfig,
     GaussianComponent,
     GlobalContinuumConfig,
+    FitPerformanceConfig,
     HalphaComplexConfig,
     HbetaComplexConfig,
     IronTemplateConfig,
@@ -83,6 +84,7 @@ from .io.readers import (
 )
 from .plotting import plot_line_result, plot_local_result, save_local_window_plots
 from .result import FitResult, LocalFitResult
+from .io.conversion import convert_run
 from .io.run_store import (
     RunStore,
     build_science_catalog,
@@ -123,6 +125,7 @@ __all__ = [
     "GaussianComponent",
     "GalacticExtinctionConfig",
     "GlobalContinuumConfig",
+    "FitPerformanceConfig",
     "GlobalContinuumResult",
     "GlobalQAPlotConfig",
     "HostAgnPseudoContinuumConfig",
@@ -147,6 +150,7 @@ __all__ = [
     "PowerLawConfig",
     "PolynomialContinuumConfig",
     "RunStore",
+    "convert_run",
     "Spectrum",
     "SpectrumInput",
     "SpectrumMetadata",

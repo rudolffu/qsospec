@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 from scipy.optimize import least_squares
 
+from ..fitting.performance import count_statistic
 from ..jacobian import residual_jacobian_dense, residual_jacobian_sparse
 from ..parameters import PackedParameters
 from ..residuals import weighted_residual
@@ -36,6 +37,7 @@ def run_least_squares(
     def _residual(theta):
         return weighted_residual(theta, packed, wave, flux, err)
 
+    count_statistic("optimizer_calls")
     return least_squares(
         _residual,
         packed.initial,

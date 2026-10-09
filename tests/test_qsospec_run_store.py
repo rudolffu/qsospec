@@ -396,14 +396,14 @@ def test_host_masks_round_trip_and_old_schema_rejection(tmp_path):
     assert qsospec.io.run_store.load_host_reconstruction_state(
         store, "host-mask-object"
     ) == result.host_reconstruction_state
-    assert store.manifest["schema_version"] == "7"
+    assert store.manifest["schema_version"] == "8"
 
     manifest_path = run_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["schema_version"] = "4"
     manifest_path.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="requires schema 7"):
+    with pytest.raises(ValueError, match="requires schema 8"):
         qsospec.open_run(str(run_path))
 
 
@@ -728,7 +728,7 @@ def test_object_index_rejects_ambiguous_display_ids(tmp_path):
         qsospec.open_run(str(run)).build_object_index()
 
 
-def test_batch_records_storage_timings_and_rejects_noop_compaction(tmp_path):
+def test_batch_records_storage_timings_and_compacts(tmp_path):
     source = tmp_path / "timings.parquet"
     _parquet_input(source, count=2)
     run = tmp_path / "timings-run"
@@ -743,13 +743,15 @@ def test_batch_records_storage_timings_and_rejects_noop_compaction(tmp_path):
     manifest = qsospec.open_run(str(run)).manifest
     assert "performance_timings_last_invocation" in manifest
 
-    with pytest.raises(ValueError, match="compact_models is not implemented"):
-        qsospec.fit_batch(
-            str(source), str(tmp_path / "compact-noop"), n_workers=1,
-            compact_models=True,
-            galactic_extinction_config=_extinction_config(),
-            global_config=_continuum_config(), complexes=[],
-        )
+    compact_path = tmp_path / "compact"
+    qsospec.fit_batch(
+        str(source), str(compact_path), n_workers=1,
+        compact_models=True,
+        galactic_extinction_config=_extinction_config(),
+        global_config=_continuum_config(), complexes=[],
+    )
+    assert len(list((compact_path / "data" / "models").glob("*.parquet"))) == 1
+    assert len(qsospec.open_run(str(compact_path)).completed_keys()) == 2
 
 
 def test_covariance_order_and_matched_draw_round_trip(tmp_path):
