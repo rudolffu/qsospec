@@ -2,7 +2,7 @@ Run-bundle reference
 ====================
 
 |project_name| uses one Parquet-backed run format for a single spectrum and for a
-large sample. Scalar science fields remain long-form and provisional; model
+large sample. Science measurements are stored in long-form tables; model
 components are nested records, so adding a future line recipe does not require
 adding a new Parquet column.
 
@@ -23,11 +23,11 @@ adding a new Parquet column.
      qa/
      .staging/
 
-New schema-8 runs use indexed multi-object shards, compact parameter recipes,
-and content-addressed template assets. Readers still return populated model
-arrays. Schemas 5--7 remain readable. Finalization packs pending records,
-validates the index and collects obsolete generations; original historical runs
-are never converted automatically.
+Schema-8 runs use indexed multi-object shards, compact parameter recipes,
+and content-addressed template assets. Readers return populated model arrays.
+Schemas 5--7 are also readable. Finalization packs pending records, validates
+the index and collects obsolete generations. Existing runs are never converted
+automatically.
 
 Single object
 -------------
@@ -43,7 +43,7 @@ Single object
    )
 
 The main QA is written by default. Set ``write_qa=False`` to defer plotting or
-``write_legacy_products=True`` to request the former loose CSV/JSON products.
+``write_legacy_products=True`` to request per-object CSV/JSON products.
 
 Batch fitting
 -------------
@@ -86,7 +86,7 @@ After every job completes:
 
 Partitioning is deterministic from the internal source-and-row object key.
 Workers write checksummed private staging shards; only the coordinator promotes
-validated shards.  Promotion updates in-memory authoritative key sets and writes
+validated shards.  Promotion updates in-memory object-key sets and writes
 only lightweight manifest counters at ``manifest_update_interval`` (128 objects
 by default).  Exact shard counts are reconciled at startup and finalization,
 not after every promoted object.  A stale counter in an interrupted manifest is
@@ -101,8 +101,8 @@ rejected; use a new run directory or run ID.
 
 Schema-v5 object and failure filenames are deterministic hashes of
 ``object_key``. Fast resume therefore combines a scalar-only Parquet identity
-scan with direct existence checks for those authoritative shards. Completed
-rows never reach the spectrum-vector decoder. Use
+scan with direct existence checks for the saved shards. Completed
+rows are skipped before loading spectrum arrays. Use
 ``qsospec.plan_batch_resume(...)`` to inspect expected, completed,
 failed-terminal, retry-failed, and unfinished counts without fitting.
 
@@ -132,7 +132,7 @@ ambiguous.
 Catalogs, derived quantities, and QA
 ------------------------------------
 
-Wide science catalogs are views over the authoritative long-form
+Wide science catalogs are views over the long-form
 ``measurements`` table. Inspect available quantities before defining a catalog:
 
 .. code-block:: python
@@ -144,7 +144,7 @@ Wide science catalogs are views over the authoritative long-form
    )
 
 ``read_measurements()`` returns the canonical measurement vocabulary. For a
-forensic view of strings exactly as stored in a historical shard, use
+view of names exactly as stored in an archived shard, use
 ``run.read_table("measurements")`` or
 ``run.read_measurements(canonical=False)``. Canonicalization never rewrites the
 Parquet files.
@@ -189,7 +189,7 @@ fracHost_pPXF_<wave>``.
 
 Each host-sample row records its definition identifier, component sources,
 rest wavelength, direct-coverage requirement, host strategy, method, and unit
-in measurement metadata. Historical ``host_sample`` names such as
+in measurement metadata. Archived ``host_sample`` names such as
 ``fHostFit_5100`` and ``fracHost_5100`` are mapped using their section context;
 the final ``continuum_sample/fracHost_5100`` name is not changed.
 An existing schema-v5 run without vocabulary version 2 remains readable, but
@@ -255,9 +255,9 @@ preprocessing and template-transform settings. Reloading does not invoke an
 optimizer or perform a new spectral fit.
 
 Required template arrays are saved once per content hash under ``assets/``.
-Runs can be moved without the original template installation. Hash verification
-fails explicitly for missing or corrupted assets; unsupported evaluator versions
-also fail explicitly. Unsupported custom models and unverifiable older models
+Runs can be moved without the original template installation. Missing or
+corrupted assets and unsupported evaluator versions
+raise errors during reload. Unsupported custom models and unverifiable older models
 retain arrays with a reason in ``model_storage_components`` metadata.
 
 Before omitting an array, the writer checks reconstruction with ``rtol=1e-10``
@@ -278,8 +278,8 @@ indivisible larger object occupies its own shard). Set ``shard_objects`` and
 ``shard_bytes`` on ``RunStore.create`` to override these limits. Readers hold a
 snapshot while loading a model. Replacements create immutable generations;
 collection waits for snapshot readers before removing superseded files.
-``store.compact()`` explicitly repacks all tables. Measurement-only reads never
-open template assets.
+``store.compact()`` repacks all tables. Measurement-only reads load
+tables without opening template assets.
 
 Copy an existing run into a new destination without refitting:
 
@@ -297,8 +297,8 @@ Or use the CLI:
 The destination must not exist. Conversion preserves scientific object keys,
 input redshifts, measurements, covariance and configuration identity. Existing
 parameter recipes are retained; older line definitions are recovered only after
-validation against archived arrays. Missing historical continuum/host evaluation
-state remains an explicit array fallback. Failed conversions retain a marked
+validation against archived arrays. Missing saved continuum/host evaluation
+state requires an array fallback. Failed conversions retain a marked
 incomplete destination for inspection and do not edit the source.
 
 Balmer cache

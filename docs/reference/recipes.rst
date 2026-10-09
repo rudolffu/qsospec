@@ -91,9 +91,8 @@ replaces ``paschen_nir`` with the compact NIR set:
        spectrum, complexes=qsospec.recipes.extended_quasar()
    )
 
-The historical ``paschen_nir`` umbrella is unchanged for
-``complexes=None`` reproducibility. Requesting it together with the compact
-NIR recipes raises ``overlapping_complex_recipes``.
+``complexes=None`` selects the ``paschen_nir`` umbrella for NIR coverage.
+Requesting it together with the compact NIR recipes raises ``overlapping_complex_recipes``.
 
 Coverage policy
 ---------------

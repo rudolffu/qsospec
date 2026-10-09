@@ -35,8 +35,8 @@ performs a continuum-only fit. An explicit sequence limits fitting:
        complexes=["lya_nv", "civ", "ciii", "mgii"],
    )
 
-Inspect ``result.complex_statuses`` before assuming a requested complex was
-fitted. Scientific measurements are stored in each successful
+``result.complex_statuses`` lists the outcome for each requested complex.
+Scientific measurements are stored in each successful
 ``result.line_complexes[recipe_id].metrics`` mapping.
 
 Continuum configuration
@@ -53,7 +53,7 @@ See :doc:`../science/continuum_model`, :doc:`../reference/recipes`, and
 Alternative iron and polynomial choices
 ---------------------------------------
 
-The default split iron model remains VW01 in the UV plus Park22 in the
+The default split iron model uses VW01 in the UV plus Park22 in the
 optical. To use the single Verner et al. (2009) theoretical template across
 its approximately 2000–10000 Å support:
 
@@ -62,8 +62,8 @@ its approximately 2000–10000 Å support:
    config = qsospec.GlobalContinuumConfig.with_single_iron("verner09")
 
 Polynomial correction is disabled by default, including for SDSS FITS,
-SDSS Parquet, and arrays declared with ``survey="sdss"``. No candidate is
-assessed unless requested. To opt into BIC-gated SDSS assessment:
+SDSS Parquet, and arrays declared with ``survey="sdss"``. To enable polynomial
+selection by BIC for SDSS spectra:
 
 .. code-block:: python
 
@@ -77,7 +77,7 @@ assessed unless requested. To opt into BIC-gated SDSS assessment:
 This assesses a small quadratic after the polynomial-free baseline and retains
 it only if it passes improvement and safety checks. Its baseline slopes are
 preserved exactly. Use ``mode="on"`` to attempt correction for any survey
-without the improvement-score gate (safety checks still apply), or
+without requiring this improvement score (numerical checks still apply), or
 ``mode="off"`` to keep the baseline only.
 The default correction and normalization-change limits are both 10%.
 
@@ -91,7 +91,7 @@ derivatives; oversized evaluations are not retained. This applies to the
 continuum, generic line recipes, and Hβ, Mg II, Hα, and Lyα adapters. It preserves
 the variable-projection Jacobian arithmetic and fitting rules.
 
-Conservative warm starts are enabled by default after the six-source validation.
+Warm starts are enabled by default.
 They seed only the first start of repeated compatible
 multistart line fits, leaving the other alternatives unchanged. Single-start
 fits and continuum searches retain their original initialization. Failed or
@@ -125,8 +125,6 @@ cache size is the largest single solver cache observed in that session, rather
 than a measurement of process RSS. Candidate ``multistart`` records preserve
 warm-attempt starts, provenance, retry reasons and cold retry starts.
 
-Cached cold fits must agree exactly with uncached cold fits. Warm starts can
-change optimizer paths, so performance and scientific agreement require matched
-validation. They never reuse a fit in place of optimization, alter the adopted
-redshift, or add uncertainty refits. Saved bundles retain these diagnostics;
-older bundles without them remain readable.
+Caching preserves the results of cold fits exactly. Warm starts provide an
+initial solution for a new optimization. Saved bundles include performance
+diagnostics, and older bundles without these fields are also readable.

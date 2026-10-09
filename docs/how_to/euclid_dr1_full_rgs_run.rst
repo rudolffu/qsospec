@@ -80,8 +80,8 @@ versioned product name, and a non-gold output location:
      --workers 8 --chunk-size 128
 
 Generic mode validates exact IDs, stable keys, count, source-run sample
-provenance, and membership order. It does not use the synthetic-test-only
-``--allow-noncanonical-gold-count`` escape hatch. Existing part files are
+provenance, and membership order. The ``--allow-noncanonical-gold-count``
+option is reserved for synthetic tests. Existing part files are
 resumed when their fingerprints match, and chunk progress includes reused
 parts.
 
@@ -108,8 +108,8 @@ is retained explicitly; an object absent from both the successful archive and
 failure table is a hard error.
 
 ``--allow-partial-measurements`` applies only to the optional broad/narrow
-second pass. Source-run completeness remains strict unless the separately named
-development override is supplied.
+second pass. The source run must be complete unless the development override is
+supplied.
 
 Gold compatibility
 ------------------

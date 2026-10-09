@@ -4,8 +4,8 @@ Reading QA plots
 The main QA figure combines a continuous model view with explicit shading and
 residual masks that show which pixels constrained the fit.
 
-Overview semantics
-------------------
+Overview
+--------
 
 - Thin grey: all input pixels with finite wavelength and flux, including
   excluded pixels. Milky Way extinction correction is identified in the
@@ -16,8 +16,7 @@ Overview semantics
 - Darker grey: input spectrum smoothed for display when the input has more
   than 4,000 wavelength pixels.
 - Solid near-black: total model across the complete input grid wherever its
-  evaluation is finite, including excluded pixels. This is evaluation of the
-  fitted model, without interpolation of the data, new optimization or refits.
+  evaluation is finite, including excluded pixels.
 - Grey shading: pixels masked during the earlier pPXF host fit.
 - Hatched blue-grey: selected but failed, truncated, or explicitly unmodelled
   regions.
@@ -41,11 +40,10 @@ covered. Red-side-only Lyα panels are labeled limited and
 continuum-extrapolated.
 
 Excluded input pixels also appear in the normal zoom traces, with the total
-model drawn across them. Optional red markers are included in both views. Previously fitted or reloaded full-grid model arrays are
-used directly; unsupported historical model gaps remain gaps. A model drawn
-through an excluded pixel does not mean that pixel constrained the fit.
-Fit-window selection, continuum clipping and the separately labeled Lyα
-absorption masks retain their existing meanings.
+model drawn across them. Optional red markers are included in both views.
+Fitted or reloaded full-grid model arrays are used directly; missing model
+values are left as gaps. Residuals and fit statistics use fitted valid pixels
+only. Lyα absorption masks are labeled separately.
 
 Scaling
 -------

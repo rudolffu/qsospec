@@ -51,3 +51,9 @@ Documentation policy
 Each public workflow or configuration type has one canonical prose location.
 Exact signatures/defaults belong in generated API pages. Examples must run
 without private data, using synthetic arrays or explicit ``ebv_override=0``.
+
+Use ``$...$`` for inline math and ``$$...$$`` for display math in Markdown
+and chat. In reStructuredText pages, use the ``:math:`` role and
+``.. math::`` directive; dollar delimiters are not parsed as math there.
+Check balanced LaTeX braces and inspect the rendered equations. A Sphinx
+build can succeed even when MathJax cannot render an expression.

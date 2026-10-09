@@ -2,8 +2,8 @@ Use the AGN-aware masked pPXF host mode
 ========================================
 
 The default host strategy, ``masked_simple``, fits E-MILES stellar templates,
-a small power-law basis, and the historical additive polynomial while masking
-emission lines. It remains the production default.
+a small power-law basis, and an additive polynomial while masking emission
+lines.
 
 The optional ``agn_pseudocontinuum_masked`` strategy reduces the chance that
 optical Fe II or the Balmer pseudo-continuum is assigned to the stellar host.
@@ -18,7 +18,7 @@ published broad-line width, and fits pPXF with:
 * the qsospec KD13/Storey-Hummer Balmer continuum and high-order series at the
   same width.
 
-Native E-MILES remains the default stellar profile. Native XSL and exact,
+Native E-MILES is the default stellar profile. Native XSL and exact,
 object-specific preconvolved XSL are optional alternatives; see
 :doc:`stellar_template_resolution_profiles`. In every profile, qsospec keeps
 the native science spectrum unchanged and convolves only a template that is
@@ -100,9 +100,10 @@ precedence over this inheritance.
 ``ppxf_agn_fraction_flux_global`` is the wavelength-integrated AGN
 pseudo-continuum fraction over valid, non-emission-line pPXF pixels. Its
 wavelength support is recorded with the fit. Values above 0.8 produce a
-warning, not an automatic reliability veto. Direct local pPXF samples use
-names such as ``fAGN_pPXF_5100`` and ``fracHost_pPXF_5100``. In contrast,
-``fAGN_5100`` is the final qsospec AGN-continuum flux density, not a fraction,
+warning; reliability is assessed from the full set of host diagnostics. Direct
+local pPXF samples use
+names such as ``fAGN_pPXF_5100`` and ``fracHost_pPXF_5100``. ``fAGN_5100`` is
+the final qsospec AGN-continuum flux density,
 and ``fracHost_5100`` is the final fraction using that continuum with the pPXF
 stellar host. See :ref:`host-fraction-vocabulary`.
 
@@ -117,20 +118,18 @@ but carry ``limited_wavelength_leverage``; insufficient coverage is not marked
 reliable.
 
 The physical pPXF components are summed and compared with ``ppxf_bestfit``.
-The default new mode has no additive or multiplicative polynomial, so closure
-should be numerical. An unexplained closure mismatch makes the host fit
-unreliable.
+With the default ``agn_pseudocontinuum_masked`` configuration, no additive or
+multiplicative polynomial is fitted, so closure should be numerical. An
+unexplained closure mismatch makes the host fit unreliable.
 
 Provenance and limitations
 --------------------------
 
-This mode is inspired by `Aydar et al. (2026)
-<https://ui.adsabs.harvard.edu/abs/2026A%26A...710A.141A>`__, but it is not an
-exact reproduction. It reuses qsospec's bundled BG92 and KD13/Storey-Hummer
-templates because the paper's private Fe II/Balmer template arrays are not
-distributed. Emission lines are masked rather than fitted as pPXF gas
-components. The result therefore records
-``host_pseudocontinuum_exact_replication=False``.
+This mode implements an AGN-aware pPXF host-decomposition method similar to
+that used by `Aydar et al. (2026)
+<https://ui.adsabs.harvard.edu/abs/2026A%26A...710A.141A>`__. Stellar and AGN
+pseudo-continuum templates are fitted jointly, with strong emission lines
+masked during the host fit.
 
 The stellar templates and AGN templates receive separate pPXF
 components: stellar velocity and dispersion are fitted, while the physically
@@ -141,8 +140,8 @@ libraries are cached, while object-specific runtime convolution remains per
 object unless an exact preconvolved XSL product is selected. HostSED
 reconstruction always uses the native source SSP library.
 
-The historical :math:`z<1.2` request gate is retained. Actual wavelength
-coverage still determines reliability. Monte Carlo is off by default; a
-configured host-refit Monte Carlo uses the selected strategy but can be
-expensive. Compare both strategies on a bounded validation sample before
-changing a production pipeline.
+Host decomposition runs only when requested and the input redshift is finite
+and below 1.2. Actual wavelength coverage determines reliability. Monte Carlo
+is off by default; a configured host-refit Monte Carlo uses the selected strategy but can be
+expensive. Compare both strategies on representative spectra before choosing one
+for a sample.

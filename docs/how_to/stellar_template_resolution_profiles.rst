@@ -16,7 +16,7 @@ Profiles
 --------
 
 ``emiles_native``
-   The public default, using ``spectra_emiles_9.0.npz``. It retains E-MILES
+   The default, using ``spectra_emiles_9.0.npz``. It retains E-MILES
    where the library is coarser than the data and records the mismatch.
 
 ``xsl_native``
@@ -36,9 +36,9 @@ Profiles
 One-sided resolution matching
 ------------------------------
 
-qsospec always preserves the native science wavelength, flux, error/inverse
-variance, mask, sampling, and object-specific LSF. It never smooths the data
-merely to match a stellar library. For native template products it evaluates
+qsospec preserves the input wavelength, flux, error/inverse variance, mask,
+sampling, and object-specific LSF. It matches the template resolution to the
+data using
 
 .. math::
 
@@ -49,17 +49,17 @@ merely to match a stellar library. For native template products it evaluates
 
 Templates sharper than the data receive this additional convolution. A
 coarser template is left unchanged, and the pixel remains in the pPXF fit.
-The mismatch is stored as a warning and resolution diagnostic rather than a
-pixel mask or blanket decomposition veto. Host continuum and host fractions
-can therefore remain usable while narrow stellar absorption subtraction,
-stellar kinematics, or population interpretation carries a
-``template_resolution_limited`` caveat. No ``native_data_sigma_floor`` or
+The mismatch is recorded in the resolution diagnostics, and these pixels
+are included in the fit. Host continuum and host fractions can remain usable,
+while narrow absorption features, stellar kinematics, or population estimates
+may be limited by the template resolution (``template_resolution_limited``). No
+``native_data_sigma_floor`` or
 deconvolution is applied.
 
 Configuration
 -------------
 
-The historical call remains the E-MILES default:
+The default configuration uses E-MILES:
 
 .. code-block:: python
 
@@ -93,9 +93,8 @@ Profile, family, product kind, and canonical filenames must agree. Setting
 Build an exact XSL product
 --------------------------
 
-Preconvolved XSL is not a universal ``DESI-convolved`` library because DESI
-LSFs are object-specific and wavelength-dependent. Build it under an external,
-user-supplied cache root:
+A preconvolved XSL library is specific to the object and its
+wavelength-dependent LSF. Choose a cache directory when building it:
 
 .. code-block:: bash
 
@@ -111,7 +110,7 @@ The builder hashes the native-XSL source, source ordering, target object,
 redshift, fit range, exact pPXF grid, rest-frame target sigma, valid-resolution
 mask, algorithm, and normalization convention. It writes atomically and
 validates the product after reading it back. Products for another object, LSF,
-grid, source hash, or template order are rejected rather than silently reused.
+grid, source hash, or template order are rejected.
 Automatic cache generation is not enabled by default.
 
 HostSED and final fitting
@@ -119,12 +118,12 @@ HostSED and final fitting
 
 Fit-time and source-template matrices are separate. pPXF stellar weights are
 applied to the native source SSP matrix, together with the fitting-time scales,
-to reconstruct the broad optical/NIR HostSED used by Euclid host transfer. A
-preconvolved or data-grid matrix is never treated as the intrinsic SSP SED.
+to reconstruct the broad optical/NIR HostSED used by Euclid host transfer. The
+intrinsic SSP SED is reconstructed from the native source library.
 
 After pPXF, qsospec subtracts only the stellar model evaluated on the native
-input grid. It does not subtract the AGN power law, Fe II, Balmer
-pseudo-continuum, or emission lines. The final continuum and line fit uses the
+input grid. The AGN components remain in the spectrum. The final continuum and
+line fit uses the
 native host-subtracted flux with the original errors, mask, sampling, and LSF.
 
 Inspect diagnostics
@@ -144,17 +143,16 @@ and separate science assessments:
    print(result.metadata["host_continuum_reliable"])
    print(result.metadata["stellar_kinematics_resolution_status"])
 
-The pPXF QA panel displays the same distinction between a fitting warning, an
-actual pixel mask, and a science-reliability caveat. Coarser-template regions
-are not shaded as excluded because they were fitted.
+The pPXF QA panel shows resolution diagnostics and pixel masks separately.
+Coarser-template regions are included in the fit and are shown as fitted pixels.
 
 Current limitations
 -------------------
 
 Exact preconvolution currently requires a sigma-like object-specific LSF;
-banded resolution matrices are not yet supported. A missing data LSF remains a
-separate reliability limitation. Template choice does not replace S/N,
-coverage, AGN-fraction, clipping, boundary, or repeatability checks. E-MILES
-remains the adopted default pending a later explicit scientific decision from
-bounded E-MILES/XSL validation.
+banded resolution matrices are not supported. A missing data LSF is a
+separate reliability limitation. Host reliability also depends on S/N,
+coverage, AGN fraction, clipping, parameter bounds, and repeatability. E-MILES
+is the default. Compare E-MILES and XSL on representative spectra before
+adopting a different template profile.
 

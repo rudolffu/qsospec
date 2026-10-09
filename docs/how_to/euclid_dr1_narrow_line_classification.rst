@@ -13,7 +13,7 @@ narrow/broad boundary is therefore 1352.8 km/s in fitted observed width.  It
 does not derive an effective resolution or a new FWHM from object morphology.
 For an extended source the point-source instrumental width under-corrects
 morphological broadening, so the inferred intrinsic width is larger and the
-narrow-width gate is conservative.
+narrow-width criterion is conservative.
 
 Run the real 64-object smoke test first::
 
@@ -28,9 +28,8 @@ Then resume or start the current archived production sample::
      scripts/classify_euclid_dr1_narrow_lines.py \
      --mode production --workers 2
 
-``--mode`` is mandatory.  During method development, run only smoke mode; do
-not launch the several-thousand-object production target merely to test code.
-The production command above is retained for the later frozen analysis.
+``--mode`` is required. Use smoke mode during development and production
+mode for the full sample.
 
 The command uses 32-object resumable parts and exact gold-membership order.  It
 writes under::
@@ -42,21 +41,21 @@ writes under::
 object/complex pair. ``narrow_line_evidence.parquet`` always contains all
 8,530 gold objects in input order; objects without an archived completed fit
 are ``not_available``. ``provisional_narrow_candidates.parquet`` is an
-analysis product, not a physical-class catalogue.
+table of provisional candidates.
 
-Model contracts
----------------
+Line models
+-----------
 
 H-alpha N0 contains the tied narrow H-alpha, [N II], and [S II] components;
 B1 adds one broad H-alpha component.  The dedicated He I/Pa-gamma recipe fits
 rest 10550--11150 Angstrom.  In N0, narrow He I and Pa-gamma share velocity and
 width but have independent non-negative fluxes.  B1 adds broad He I and
 Pa-gamma with shared broad kinematics and independent non-negative fluxes.
-Pa-gamma S/N is diagnostic and is never required: a secure narrow He I fit can
+Pa-gamma S/N is recorded as a diagnostic: a secure narrow He I fit can
 provide the He I-branch evidence by itself.  The existing broad-only
 ``paschen_nir`` production recipe is unchanged.
 
-The locked provisional complex rule requires:
+Provisional narrow-line evidence requires:
 
 * both N0 and B1 to succeed;
 * narrow-line S/N at least 5 (narrow He I for the He I branch);
@@ -75,8 +74,8 @@ complex may supply provisional narrow evidence.  The possible statuses are
 ``fit_failed``, ``not_covered``, and ``not_available``.  ``physical_class``
 remains null.
 
-Calibration boundary
---------------------
+Calibration
+-----------
 
 Use the real-pattern injection command for a smoke test and then a larger
 calibration::
@@ -91,13 +90,12 @@ calibration::
 It spans He I S/N, intrinsic narrow width, broad width and fraction,
 Pa-gamma/He I ratio, redshift, and true effective resolving power using real
 RGS wavelength/error/mask patterns.  The varied true resolution tests the
-fixed-R=480 classifier under source extension; it is never supplied as a
-per-object fit input.  Threshold sweeps and stratified completeness, purity,
+fixed-R=480 classifier under source extension. The fit uses R=480
+for every injected spectrum.  Threshold sweeps and stratified completeness, purity,
 and broad-source false-narrow rates are diagnostic.  Injection purity
-must reach at least 95 percent, but injection results alone never promote the
-label.  Independent higher-resolution decompositions must quantify broad-line
-contributions.  VI and PCF are post-selection audit references only; no VI or
-PCF field enters a fit or selection expression.
+must reach at least 95 percent. Before adopting a physical classification,
+compare broad-line contributions with independent higher-resolution
+decompositions. VI and PCF are used for comparison after spectral selection.
 
 After finalization, render only the selected QA rows (failures, decision
 boundaries, high residuals, broad-evidence cases, and deterministic provisional

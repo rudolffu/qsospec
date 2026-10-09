@@ -28,8 +28,8 @@ Complex fitting
    quality and consider simplifying the model.
 
 ``covariance_rank_deficient`` (warning)
-   Statistical covariance is not fully constrained. Do not rely on missing or
-   unstable covariance errors.
+   Some parameter combinations are not constrained. Covariance errors for
+   those parameters may be unavailable or unstable.
 
 Lyα/N V
 -------
@@ -53,8 +53,8 @@ Continuum and templates
 -----------------------
 
 ``balmer_components_disabled_short_coverage`` (info)
-   Maximum valid rest wavelength is at or below 3600 Å. Balmer emission was
-   intentionally disabled.
+   Maximum valid rest wavelength is at or below 3600 Å, so the Balmer
+   component was disabled.
 
 ``balmer_high_n_extension_model_dependent`` (info)
    The n=51–400 extension contributes to the Balmer model. Preserve template
@@ -68,12 +68,13 @@ Workflow and uncertainty
 ------------------------
 
 ``host_decomp_skipped_redshift`` (info)
-   Host fitting was requested but failed the :math:`z<1.2` gate.
+   Host fitting requires a finite redshift below 1.2. The spectrum was fitted
+   without host subtraction.
 
 ``statistical_uncertainty_excludes_continuum_host`` (info)
    Reported statistical errors omit some continuum, host, calibration, or
-   model-choice systematics. Do not interpret them as total uncertainty.
+   model-choice systematics. These contributions require a separate estimate.
 
 Additional low-level codes may appear for invalid pixels, insufficient window
 pixels, missing line centers, fixed ratios, optional components, or backend
-availability. Always preserve warning context in archived products.
+availability. Warning context is stored with archived products.

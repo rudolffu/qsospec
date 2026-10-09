@@ -1,12 +1,11 @@
 Euclid DR1 broad+narrow measurements
 ====================================
 
-The measurement-first workflow reuses the immutable spectrum, global
-continuum, uncertainty, mask, and adopted redshift archived by the 8,530-row
-identified-gold run.  It does not rerun Galactic dereddening, the global
-continuum, Fe II, or host decomposition, and it does not assign a physical
-type.  VI, PCF, morphology, and photometry are copied only as audit metadata
-after the spectral fit.
+This workflow fits broad and narrow line components using the spectrum,
+global continuum, uncertainty, mask, and adopted redshift saved by the
+8,530-row identified-gold run. VI, PCF, morphology, and photometry are
+added as metadata after fitting. The output contains line measurements
+without physical-type assignments.
 
 Scientific model
 ----------------
@@ -44,7 +43,7 @@ single FWHM interval is ambiguous.
 Run and resume
 --------------
 
-A bounded smoke run is mandatory during development and is capped at 100
+During development, use smoke mode, which is capped at 100
 objects.  It samples redshift coverage for every complex that is already
 present in the source archive.  An active source run requires an explicit
 override; part fingerprints include current object availability, so a
@@ -80,7 +79,7 @@ After the source run is finalized:
 
 Repeating the same command validates and skips compatible atomic part files.
 Use ``--selection`` for an explicit Parquet/CSV object list, ``--max-chunks``
-for bounded server tests, ``--finalize-only`` to rebuild catalogue views, and
+for short server tests, ``--finalize-only`` to rebuild catalogue views, and
 ``--force`` only for an intentional rebuild.  A changed model or source
 configuration is rejected instead of mixing rows.
 
@@ -91,7 +90,7 @@ The default directory is
 ``$GOLD_ROOT/measurements/broad_narrow_r480_v1``.  It contains:
 
 * atomic ``parts/part-*.parquet`` files and timing sidecars;
-* authoritative ``broad_narrow_line_measurements.parquet`` with one explicit
+* ``broad_narrow_line_measurements.parquet`` with one explicit
   status per selected object/complex;
 * ``broad_narrow_measurement_ledger.parquet`` in exact membership/complex
   order, including post-fit audit columns;
@@ -101,13 +100,13 @@ The default directory is
 
 ``complete``, ``not_covered``, ``continuum_unavailable``, ``fit_failed``, and
 ``not_available`` are explicit statuses.  Failed and uncovered fluxes are
-missing, never zero.  No product contains a physical-class count.
+reported as missing values.
 
 A finalized source run may contain terminal upstream fit failures as well as
 successful archives.  Such objects remain in the measurement ledger with
 ``not_available`` status and their source exception recorded.  An object that
-is neither archived nor present in the source failure table remains a hard
-provenance error.
+is neither archived nor present in the source failure table raises an error
+because its source status is missing.
 
 Exploration and selected QA
 ---------------------------

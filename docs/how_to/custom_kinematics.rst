@@ -27,9 +27,9 @@ lines, including [O III] 4960 when measuring 5008. Negative or nonfinite fluxes
 invalidate the profile; zero-flux components contribute nothing.
 
 The generic engine also accepts optional ``initial_values``, ``n_starts``, and
-``random_seed`` keyword arguments. The default remains one unmodified start.
+``random_seed`` keyword arguments. The default is one unmodified start.
 Statistical model selection, MC refits, and the choice of velocity reference
-are analysis policies, not new default scientific assumptions in QSOSpec.
+are explicit analysis policies and do not change QSOSpec defaults.
 
 ``select_nested_candidates`` implements explicit nested comparisons with
 configurable BIC and summed-component significance thresholds. Free doublet

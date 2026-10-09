@@ -19,8 +19,8 @@ tier and Euclid redshift provenance from the MLSpecZ science ledger.
 The input spectra must contain exact integer ``object_id``, wavelength and
 flux arrays, and ``ivar``, ``variance``, or ``var``. Declare
 ``--galactic-extinction-corrected`` only when it is true for the supplied
-arrays. Do not report a line or continuum measurement outside actual spectral
-coverage; the normal recipe coverage gates remain authoritative.
+arrays. The recipe coverage requirements determine which line and continuum
+measurements are available.
 
 Fit the result with :func:`qsospec.fit_batch`. Reusing the same run directory
 and scientific configuration resumes completed objects. Build scalar science
@@ -35,8 +35,8 @@ The initial Euclid RGS line-measurement run has a separate, snapshot-checked
 workflow.  It keeps all 8,530 strict-gold rows selected with production QC:
 QSO-prefixed final class, finite positive ``z_final``, ``med_snr > 3``,
 ``n_invalid <= 15``, ``p_uncertain < 0.1``, and ``flag_uncertain == 0``.
-The production ``n_invalid`` is authoritative and is not recomputed from raw
-flux.  The 12 newly classified galaxies and four ``LIKELY_Q`` rows remain in
+The workflow uses the saved ``n_invalid`` count.  The 12 newly classified
+galaxies and four ``LIKELY_Q`` rows remain in
 the input as explicit VI-class audit flags.
 
 Large products are written outside Git under
@@ -111,9 +111,8 @@ Luminosities
 ``f_lambda`` to ``L_lambda``, ``lambda L_lambda``, and ``L_nu`` with an explicit
 Astropy cosmology. It propagates flux and optional host-fraction uncertainty.
 :func:`qsospec.luminosity.bolometric_luminosity` requires a named correction prescription;
-there is intentionally no universal default correction.
+Select the correction prescription for your analysis.
 
-Host subtraction remains object-level until the external-to-Euclid aperture,
-synthetic-photometry scaling, and variability transfer is validated. A pPXF
-host fraction from an external fibre spectrum must not be copied directly into
-Euclid slitless flux space.
+Transferring an external-fibre host measurement to Euclid slitless spectra
+requires aperture corrections, synthetic-photometry scaling, and an assessment
+of variability.

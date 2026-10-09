@@ -1,10 +1,10 @@
 Adaptive [O III] profiles
 ========================================
 
-New Hβ/[O III] fits use ``HbetaComplexConfig(oiii_profile_mode="adaptive")``.
+Hβ/[O III] fits use ``HbetaComplexConfig(oiii_profile_mode="adaptive")``.
 The adopted redshift remains exactly the supplied value, including a DR20Q
-``z_sys``. The narrowest fitted gas component is a reference for relative
-velocities; it is not automatically the systemic velocity.
+``z_sys``. Relative velocities use the narrowest fitted gas component as a reference.
+This gas component can have an offset from the systemic velocity.
 
 .. code-block:: python
 
@@ -52,7 +52,7 @@ continuum terms and Hβ components.
 One- and two-component candidates are compared using convergence, a BIC
 improvement of at least 20, and added-component flux S/N of at least 5. Missing
 flux uncertainty fails the S/N check. Width contrast and centroid separation
-are diagnostics, not acceptance gates. Initial core bounds are 70–1200 km/s
+are recorded as diagnostics. Initial core bounds are 70–1200 km/s
 and ±1000 km/s; additional components span 70–6000 km/s and ±4000 km/s.
 Centered and redshifted components are allowed.
 
@@ -72,7 +72,7 @@ mean squared residual in both lines, measured on the same local pixels.
 Adequacy is recorded separately from acceptance. Remaining matched residuals,
 three-pixel same-sign 3σ structure in either line, local mean squared residual
 above four, incomplete doublet coverage, boundary solutions, or an unsuccessful
-candidate search prevent an adequate verdict. These diagnostics do not add
+candidate search set ``profile_adequate=False``. These diagnostics do not add
 components beyond the specified doublet trigger. In particular, a real feature
 visible only in 5008 can require a targeted custom model.
 
@@ -125,8 +125,8 @@ uses the ratio-weighted fractions of both lines and records this distinction.
 The gas reference is flagged unreliable for flux S/N below 5, flux fraction
 below 5%, velocity error above 100 km/s or unavailable, or an uncertainty that
 permits exchange of the two narrowest width labels. Core-relative measurements
-are withheld in that case; input-frame quantiles remain available. These are
-measurement-reliability definitions, not changes to any external proposal cuts.
+are withheld in that case; input-frame quantiles remain available. The flags
+describe the reliability of the core-relative measurements.
 
 Uncertainties propagate the full fitted covariance, including uncertainty in
 the moving core reference. Unidentified coordinates produce unavailable errors.
@@ -135,29 +135,29 @@ requested bootstrap trials supply matched errors through the usual workflow;
 these measurements never launch additional bootstrap fits. Measurement errors
 do not replace intrinsic line-velocity scatter in a redshift calibration.
 
-Compatibility and audit
+Saved components and diagnostics
 ----------------------------------------
 
 ``result.hbeta``, existing centroid measurements, broad-Hβ summary fields, and
 the existing ``OIII5007_core``/``OIII5007_wing`` component keys remain available.
 A third component uses ``OIII5007_wing2`` (and corresponding 4959 key).
-``narrow.*`` now describes the [O III] gas reference; adaptive narrow Hβ uses
+``narrow.*`` describes the [O III] gas reference; adaptive narrow Hβ uses
 ``Hb_narrow.velocity_kms`` and ``Hb_narrow.fwhm_kms``. Iterate the explicit
 ``metadata["oiii_components"]`` list instead of assuming one wing.
 
 Labels are sorted by width after fitting, with parameters, covariance,
 component arrays and reconstruction definitions permuted together. Bounds
 remain attached to the originally fitted component in the saved recipe, even
-when its display label changes. Labels do not classify the physical origin.
+when its display label changes. The labels describe component width.
 ``metadata["candidate_selection"]`` records every candidate's definition,
 parameters, covariance and status, start history, BIC, S/N, residuals and
 acceptance reasons. The selected model and quality flags are stored separately.
 
-Old bundles retain their recorded models. Reading a run never reselects
+Saved bundles preserve their recorded models. Reading a run never reselects
 components or changes its adopted redshift. Explicit peak recovery uses saved
 model definitions and validates reconstruction against archived arrays.
 The optional ``qsospec.systemic_redshift.estimate_systemic_redshift(result, method="ws22")``
-remains a separate diagnostic and does not trigger a refit or adopt its result.
+is a separate diagnostic and does not trigger a refit or adopt its result.
 
 Validation artifacts
 ----------------------------------------
@@ -165,6 +165,5 @@ Validation artifacts
 ``validation/oiii_adaptive_v1/`` contains reproducible synthetic checks,
 fixed-continuum comparisons for all 11 QSOFEED objects plus J1242 and J1743,
 full-workflow comparisons, and a deterministic 100-object control manifest.
-The source archives, frozen parent statistics, proposal membership and
-manuscripts are untouched. See its ``REPORT.md`` for measured limitations,
+See its ``REPORT.md`` for measured limitations,
 runtimes and the final test results.

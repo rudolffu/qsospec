@@ -1,7 +1,7 @@
 Inspect a run bundle
 ====================
 
-Open the run and read its authoritative tables:
+Open the run and read its saved tables:
 
 .. code-block:: python
 

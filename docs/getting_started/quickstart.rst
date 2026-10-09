@@ -6,8 +6,7 @@ emission-line models. This example uses
 `spec-1198-52669-0040.fits
 <https://sas.sdss.org/sas/dr17/sdss/spectro/redux/26/spectra/lite/1198/spec-1198-52669-0040.fits>`_,
 classified by the SDSS pipeline as a quasar at :math:`z=0.5764288`, with
-``ZWARNING=0``. That SDSS flag describes the input redshift; it does not
-certify the subsequent QSOSpec fit.
+``ZWARNING=0``.
 
 Prerequisites
 -------------
@@ -48,7 +47,7 @@ To use a file already on disk, replace the download with:
 
 The SDSS reader converts ``loglam`` to vacuum observed wavelength in
 Angstrom via ``10**loglam``. Flux density is supplied in units of
-:math:`10^{-17}\,\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}`;
+:math:`10^{-17}\,\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}}`;
 ``flux_scale=1e-17`` records that scale without multiplying the input array.
 ``ivar`` is inverse variance in the matching supplied flux units. Non-positive
 or non-finite inverse variance is excluded from fitting. Pixels with a
@@ -77,16 +76,15 @@ Fit the continuum and covered lines
 The file workflow applies Planck Galactic dereddening with the F99 law at
 observed wavelengths, converts wavelength and flux density to the rest-frame
 convention, and automatically fits the covered complexes. It retains the
-input redshift. Do not declare this raw SDSS file already dereddened.
+input redshift from the FITS file.
 
 For this file, the verified run has a converged continuum and ``fit`` status
 for ``mgii``, ``oii_nev_neiii_hgamma`` and ``hbeta_oiii``. Hα and the UV
 complexes are ``not_covered``; the rest wavelength range is approximately
 2413–5825 Å.
-A fit status should be considered alongside warnings and the residuals.
 
-Inspect preprocessing, warnings and QA
---------------------------------------
+Inspect preprocessing and plot the fit
+---------------------------------------
 
 .. code-block:: python
 
@@ -102,19 +100,12 @@ Inspect preprocessing, warnings and QA
    # To highlight excluded pixels with red crosses:
    # result.plot_qa(mark_excluded_pixels=True)
 
-The verified run reports parameters at bounds, model dependence of the
-high-order Balmer extension, fixed line ratios, incomplete usable [O III]
-doublet coverage, unavailable instrumental resolution for the [O III]
-observed-profile fit, and statistical line uncertainties that exclude
-continuum/host uncertainty.
-These are diagnostic limitations to inspect, not reasons to alter the input
-redshift automatically.
+The QA figure shows the continuum, individual line components, total model
+and residuals. The printed warning codes provide additional measurement
+diagnostics; see :doc:`../reference/warnings` for their meanings.
 
-The SDSS FITS reader currently does not translate ``wdisp`` into an
-instrumental resolution model. The line profiles in this example are
-observed profiles, without instrumental-width deconvolution. Inspect any
-resolution warnings when using a recipe that emits them; an absent warning
-does not establish an intrinsic-width measurement.
+The line widths in this example include instrumental broadening: the SDSS
+reader does not use ``wdisp`` to construct an instrumental resolution model.
 
 .. figure:: ../_static/sdss_quasar_qa.png
    :alt: Real SDSS quasar continuum and emission-line fit at redshift 0.5764288, with Mg II, blue optical and Hβ/[O III] zooms and fitted-pixel residuals
@@ -130,9 +121,7 @@ does not establish an intrinsic-width measurement.
 
 The :download:`figure provenance <../_static/sdss_quasar_provenance.json>`
 records the source URL, input SHA-256, package version, preprocessing,
-complex statuses and warning codes. Numerical results can vary with package
-versions; this example illustrates the workflow rather than certifying all
-measurements.
+complex statuses and warning codes.
 
 Run the companion script
 ------------------------

@@ -3,10 +3,10 @@ Compare RGS H-alpha narrow and broad models
 
 .. note::
 
-   This command remains the H-alpha-only compatibility entry point.  New DR1
-   work should use :doc:`euclid_dr1_narrow_line_classification`, which combines
+   This command fits H-alpha only. For joint DR1 line evidence, use
+   :doc:`euclid_dr1_narrow_line_classification`, which combines
    H-alpha with the dedicated He I 10833 + Pa-gamma N0/B1 comparison and writes
-   the complete gold-sample evidence ledger.
+   the gold-sample line-evidence table.
 
 The DR1 gold workflow fits observed line widths.  For the opt-in physical-type
 analysis, ``qsospec`` converts intrinsic width bounds to observed bounds with a
@@ -39,32 +39,29 @@ upper bound, and the same-line fraction
         {F_{\mathrm{broad},\mathrm{H}\alpha}+
          F_{\mathrm{narrow},\mathrm{H}\alpha}}.
 
-The fraction deliberately excludes [N II] and [S II], which would dilute the
-denominator in a whole-complex fraction.
+The fraction uses H-alpha flux only; [N II] and [S II] are excluded.
 
-Interpretation boundary
------------------------
+Interpretation
+--------------
 
-This first pass is a measurement and model-comparison workflow, not a frozen
-type-2 classifier.  It does not assign ``physical_class`` and it does not write
-a narrow-line candidate catalogue.  In particular, it does not adopt a broad
-fraction threshold or treat a BIC anchor as a purity criterion.  VI classes
-are copied only for post-hoc auditing; they never enter fitting or selection.
+The output contains line measurements and model comparisons. It leaves
+``physical_class`` unassigned and reports broad fractions and BIC values
+without a physical-type threshold. VI classes are included for comparison
+after fitting and selection.
 
 Before publication selection, calibrate completeness and contamination with
 injection/recovery spanning redshift, S/N, source extent, intrinsic narrow
 width, and broad fraction.  Compare the result with independent
-higher-resolution decompositions.  Classification deliberately retains a
-fixed conservative ``R=480`` LSF for resolved sources rather than deriving an
-object-specific width from morphology; source extension is evaluated as a
-calibration stratum.
+higher-resolution decompositions.  The fit uses the same ``R=480`` LSF for
+resolved sources. Calibration
+results are grouped by source extent to assess morphological broadening.
 
-The default uses eight bounded worker processes and 32 input rows per resumable
+The default uses eight worker processes and 32 input rows per resumable
 chunk.  Use ``--workers 1`` for a deterministic serial diagnostic.  For a short
 smoke run, use ``--max-chunks 1``.  Omit it to finalize all current
 H-alpha-covered objects.  Re-running after the production fit has gained more
 objects updates only changed input-row chunks.  ``--force`` is required to
-recompute already aligned parts deliberately.
+recompute existing compatible parts.
 
 The more complex ``B2`` and ``B3`` alternatives remain available for selected
 objects with asymmetric residuals through ``--broad-component-counts 1 2 3``.

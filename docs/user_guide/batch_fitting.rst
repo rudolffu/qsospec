@@ -38,9 +38,8 @@ With the default ``resume_planning="auto"``, Parquet inputs are scanned first
 using only scalar identity columns.  Completed objects are classified from
 their deterministic run-store shard paths.  A fully completed batch returns
 before spectrum vectors, workers, or templates are loaded; a partial batch
-reads only the unfinished or retried rows.  ``retry_failures=True`` retains the
-historical default of retrying failures, while ``False`` treats them as
-terminal skips.
+reads only the unfinished or retried rows.  ``retry_failures=True`` (the
+default) retries failed objects, while ``False`` treats them as terminal skips.
 
 ``resume_planning="lightweight"`` requires this optimized behavior and raises
 when row identity cannot be preserved. ``"legacy"`` retains the vector-first

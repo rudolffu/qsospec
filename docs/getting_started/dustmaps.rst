@@ -18,8 +18,7 @@ Configure the external ``dustmaps`` directory after installation:
    sfd.fetch()
 
 The configured directory should contain ``planck/`` and ``sfd/``. If
-correction is enabled, missing map files or missing RA/Dec fail fast rather
-than silently fitting uncorrected data.
+correction is enabled, missing map files or missing RA/Dec raise an error.
 
 Common alternatives
 -------------------
@@ -43,7 +42,7 @@ beyond the F99 implementation range:
 
    extinction = qsospec.GalacticExtinctionConfig(law="wang2019")
 
-Disable the step explicitly:
+Disable the correction:
 
 .. code-block:: python
 
@@ -71,11 +70,10 @@ The F99 implementation used by ``dust-extinction`` is valid only over its
 supported wavelength range. By default, if an enabled correction encounters an
 observed wavelength grid outside that range, qsospec records
 ``status="skipped_wavelength_out_of_range"`` in the Galactic-extinction
-provenance, leaves the flux and uncertainty un-dereddened, and still performs
-the rest-frame wavelength and :math:`F_\lambda` conversion. This keeps long
-wavelength spectra fit-able while making the skipped correction explicit.
+provenance, leaves the flux and uncertainty uncorrected, and performs
+the rest-frame wavelength and :math:`F_\lambda` conversion.
 
-For stricter behavior, request a hard failure:
+To raise an error instead:
 
 .. code-block:: python
 

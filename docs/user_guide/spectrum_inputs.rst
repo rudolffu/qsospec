@@ -68,7 +68,7 @@ Units and metadata
 Every array spectrum must declare physical ``"cgs"`` or arbitrary
 ``"relative"`` :math:`f_\lambda`. For cgs arrays, ``flux_scale`` converts the
 supplied values to
-:math:`\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}` and defaults to one.
+:math:`\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}}` and defaults to one.
 Relative spectra cannot set a scale. A DESI or SDSS survey preset counts as
 unit confirmation and supplies
 :math:`10^{-17}\,\mathrm{erg\,s^{-1}\,cm^{-2}\,\mathring{A}^{-1}}`.

@@ -22,7 +22,7 @@ For reproduction of the previous default model, use:
 
    config = qsospec.GlobalContinuumConfig.legacy_v1()
 
-This ``global_v1`` preset disables the regional bridge and uses historical
+This ``global_v1`` preset disables the regional bridge and uses
 automatic hard Hγ synchronization. It reproduces prior continuum defaults
 within the current implementation; it does not restore every old line fitter.
 
@@ -45,7 +45,7 @@ these quantities remain in measurement metadata.
    polynomial = qsospec.PolynomialContinuumConfig(mode="auto")
 
 Polynomial modes are ``off`` (default), ``auto`` (existing SDSS eligibility and
-BIC gate), and ``on`` (bypass the BIC gate, retain numerical/fractional safeguards).
+BIC selection), and ``on`` (skip BIC selection while keeping numerical and fractional checks).
 The unreleased tri-state ``enabled`` field has been removed. Hγ modes are
 ``off``, ``soft``, ``hard``, and ``require``; aliases ``none``/``never`` normalize
 to ``off`` and ``auto``/``hard_legacy`` to ``hard``. Hβ policies are unchanged.
@@ -62,7 +62,7 @@ Recipes and specialist modules
 name and identifies ``extended_quasar_v1``. It preserves the same full-spectrum
 inventory, including standard UV/optical recipes and compact NIR regions.
 ``complexes=None`` keeps the normal auto-enabled inventory, including the
-historical ``paschen_nir`` umbrella. Overlapping umbrella/compact regions
+``paschen_nir`` umbrella. Overlapping umbrella/compact regions
 remain rejected.
 
 Specialist functions introduced in this release use their modules:
@@ -94,5 +94,5 @@ Matched draws and summaries use ``measurement_key_schema="qualified_v1"``:
 Native ``fit.metrics``, ``fit.metric_errors`` and continuum sample names are
 unchanged. Run schema 8 persists the qualified draw namespace and compact model recipes. Readers retain
 schemas 5, 6 and 7, convert older qualified entries explicitly, and discard
-ambiguous historical bare line aliases. Older point estimates and recorded
+ambiguous unqualified line aliases. Older point estimates and recorded
 models are preserved; loading never refits them.

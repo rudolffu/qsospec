@@ -13,17 +13,15 @@ from `micappe/ppxf_data <https://github.com/micappe/ppxf_data>`__:
        template_file="spectra_emiles_9.0.npz",
    )
 
-Object-level gate
------------------
+Redshift range
+--------------
 
-``run_host_decomp=True`` is a request. pPXF runs only for finite
-``redshift < 1.2``. At higher or missing redshift, fitting continues without
+Set ``run_host_decomp=True`` to fit the host when the redshift is finite
+and ``redshift < 1.2``. At higher or missing redshift, fitting continues without
 host subtraction and records ``host_decomp_skip_reason``.
 
-Host fitting masks emission-line regions before fitting the stellar
-continuum. Later successful |project_name| line fits take precedence in QA,
-so pPXF masking does not imply that the line was omitted from the final
-spectral model.
+Host fitting masks emission-line regions while fitting the stellar
+continuum. The final line fits model these regions and appear in the QA plot.
 
 Results
 -------
@@ -39,8 +37,9 @@ Inspect:
 Host fractions are shown only where the rest-frame data constrain the
 requested wavelength. ``fracHost_5100`` is the final/adopted fraction formed
 from the pPXF stellar host and final qsospec AGN continuum;
-``fracHost_pPXF_5100`` is the direct pPXF host/total fraction. These are related
-but not interchangeable. See :ref:`the run-bundle host-fraction vocabulary
+``fracHost_pPXF_5100`` is the direct pPXF host/total fraction. The two
+fractions use different AGN continuum models. See :ref:`the run-bundle
+host-fraction vocabulary
 <host-fraction-vocabulary>` for definitions and archived names. Host-refit
 Monte Carlo is available through
 ``UncertaintyConfig(refit_host_in_mc=True)`` and runs only when host
@@ -49,8 +48,8 @@ decomposition was enabled.
 Host strategies
 ---------------
 
-``HostDecompConfig(strategy="masked_simple")`` preserves the historical
-masked pPXF model and is the default. The explicit
+``HostDecompConfig(strategy="masked_simple")`` is the default masked pPXF
+host model. The explicit
 ``agn_pseudocontinuum_masked`` strategy adds width-matched Fe II and Balmer
 pseudo-continuum templates while determining the stellar weights, then
 subtracts only the stellar model. See
@@ -67,7 +66,7 @@ strategy is unaffected.
 Stellar-template resolution profiles
 ------------------------------------
 
-E-MILES remains the default. Native XSL and exact object-specific preconvolved
+E-MILES is the default. Native XSL and exact object-specific preconvolved
 XSL are optional profiles. All preserve the native input spectrum, and a
 stellar template that is coarser than the data is retained with diagnostics
 rather than excluded. See

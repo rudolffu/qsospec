@@ -51,11 +51,11 @@ refines every candidate maximum. Boundary maxima, absent profiles, and competing
 maxima within 1% in height are flagged. Their local covariance peak errors are
 unavailable. Finite-difference derivatives are checked at two step sizes.
 Non-identifiable coordinates, missing covariance, and unstable or zero
-propagated errors are not replaced with zero uncertainties.
+propagated errors are reported as unavailable.
 
 Errors use the full covariance of the relevant fitted parameters, including
 ties. They condition on the chosen model, component selection, continuum, host,
-and input frame. They are not a measure of model-choice systematics. Existing
+and input frame. Model-choice systematics require a separate assessment. Existing
 bootstrap trials automatically collect peak measurements; their matched draws
 can supply uncertainties and cross-line correlations without extra refits.
 
@@ -92,9 +92,8 @@ Mg II and C IV redshift peaks discard Gaussian components below 5% of the line
 flux. The ordinary unfiltered peaks remain available; filtered keys end in
 `_full_ws22`. Selection is recomputed in existing bootstrap trials. [Ne V] and
 He II do not enter the final estimate. Missing compatible profiles are skipped;
-there is no additional Ca II fit or substitution of a generic stellar velocity.
-Resolved doublet profiles are recorded but are not silently substituted for the
-unresolved calibration selections.
+Ca II requires an existing compatible line measurement. Resolved doublet
+profiles are recorded separately from the unresolved calibration selections.
 
 Eligible lines require detection above 2σ, at least half the expected complex
 pixels, and a usable peak error. Corrected line redshifts use

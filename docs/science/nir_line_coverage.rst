@@ -78,17 +78,16 @@ Feature coverage
 Laboratory wavelengths
 ----------------------
 
-The recipes use numerical vacuum wavelengths, not the measured
-object-specific measured ``lambda_obs`` values. The
-newly activated transitions are He I 5877.25 Å, O I 8448.68 Å,
+The recipes use laboratory vacuum wavelengths. Object-specific
+``lambda_obs`` values are measured wavelengths. The additional transitions are He I 5877.25 Å, O I 8448.68 Å,
 [S III] 9071.1 Å and 9533.2 Å, Paη (n=10→3) 9017.384 Å, and
-Paε (n=8→3) 9548.588 Å. Repeated 1200 km/s FWHM entries in the table are
-not a universal width prescription and are not imposed.
+Paε (n=8→3) 9548.588 Å. The repeated 1200 km/s FWHM entries in the
+source table are not used as fitted-width constraints.
 
 The [Ne III] line is labeled 3868.58 Å in the originating line table while the registry
 uses 3869.86 Å, the SDSS MaNGA vacuum wavelength. The offset is a
-documented referencing difference, not a second transition; the registry
-value is retained.
+difference between the reference tables for the same transition. The
+recipes use the registry value.
 
 NIR blends and nuisance lines
 -----------------------------
@@ -113,10 +112,9 @@ Local-support recipes decide coverage per fitting window using the actual
 valid pixels after masks: a missing distant window cannot reject a line
 that is locally covered. Peak support and both half-maximum crossings are
 reported, and measured-window fluxes are distinguished from
-model-extrapolated total fluxes. Legacy recipes such as ``hbeta_oiii`` and
-``mgii`` keep their strict full-window coverage policy.
+model-extrapolated total fluxes. Recipes such as ``hbeta_oiii`` and ``mgii``
+use strict full-window coverage.
 
-The umbrella ``paschen_nir`` recipe is unchanged and remains the historical
-``complexes=None`` selection. Do not request it together with the compact
-NIR recipes; conflicting requests raise ``overlapping_complex_recipes``
-instead of silently double counting the same emission.
+``complexes=None`` selects the ``paschen_nir`` umbrella recipe. Do not request
+it together with the compact NIR recipes; conflicting requests raise ``overlapping_complex_recipes``
+because the recipes contain overlapping lines.

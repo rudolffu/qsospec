@@ -8,7 +8,7 @@ File and batch workflows process each object in this order:
 3. Convert wavelength and flux density to the rest frame:
    :math:`\lambda_{\rm rest}=\lambda_{\rm obs}/(1+z)` and
    :math:`F_{\lambda,\rm rest}=(1+z)F_{\lambda,\rm obs}`.
-4. Apply the object-level host-decomposition gate.
+4. Check the redshift range for host decomposition.
 5. Optionally fit and subtract the pPXF stellar host.
 6. Fit the global continuum.
 7. Select and fit emission complexes from rest-frame coverage.
@@ -41,7 +41,7 @@ should instead abort the workflow.
 
 The subsequent rest-frame conversion multiplies flux and one-sigma
 uncertainty by :math:`1+z` and divides inverse variance by
-:math:`(1+z)^2`. It is also idempotent and still occurs when Galactic
+:math:`(1+z)^2`. It is idempotent and also applies when Galactic
 correction is disabled or the input was declared already corrected.
 
 For arrays, :meth:`qsospec.Spectrum.from_arrays` defaults to
@@ -70,5 +70,5 @@ Array APIs
 external maps and require rest-frame-normalized :math:`F_\lambda`. Prepare
 ordinary observed-frame arrays first with :func:`qsospec.prepare_spectrum`.
 Rest-frame composite or model arrays may instead be constructed with
-``wave_frame="rest"``. :func:`qsospec.correct_spectrum` remains available as
+``wave_frame="rest"``. :func:`qsospec.correct_spectrum` is available as
 a compatibility helper.

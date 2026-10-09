@@ -15,8 +15,8 @@ Profiles and roles
 - Broad components represent the summed broad-line profile used for flux,
   centroid, dispersion, numerical FWHM, and EW.
 - Narrow components use narrower FWHM and velocity bounds.
-- Additional components (legacy ``wing`` keys) describe profile structure;
-  selection does not classify a physical outflow.
+- Additional components (legacy ``wing`` keys) describe profile structure.
+  Physical outflow classification requires a separate analysis.
 - Fixed ratios and shared kinematics are encoded in recipe metadata.
 
 Adaptive [O III] fitting is the default. Added components require convergence,
@@ -26,7 +26,7 @@ in both lines. Narrow Hβ is independent of [O III], and a residual linear
 continuum is fitted jointly. See :doc:`../how_to/adaptive_oiii` for resolution,
 multistart, adequacy and uncertainty definitions.
 
-``HbetaComplexConfig(oiii_profile_mode="legacy")`` retains the former tied
+``HbetaComplexConfig(oiii_profile_mode="legacy")`` uses the tied
 Hβ/[O III] model, initialization and rejection rules, including a factor-of-two
 width contrast and centroid separation of at least 150 km/s.
 

@@ -57,10 +57,10 @@ Optional additive polynomial (disabled by default for all surveys):
    config = qsospec.GlobalContinuumConfig(polynomial=polynomial)
 
 The polynomial has no constant term and is additive to the global continuum.
-The default ``mode="off"`` skips assessment, including for SDSS inputs.
-Explicit ``mode="auto"`` opts into assessment with ``survey="sdss"`` provenance;
-survey metadata or a filename alone never activates it. The polynomial-free baseline slope is fixed,
-and the candidate must pass the improvement score and numerical safeguards.
+The default ``mode="off"`` disables the correction for all inputs.
+``mode="auto"`` enables assessment for spectra with ``survey="sdss"`` provenance.
+The polynomial-free baseline slope is fixed, and the candidate must pass the
+improvement score and numerical checks.
 ``mode="on"`` bypasses only the score requirement, not fractional bounds or
 conditioning checks. ``mode="off"`` retains polynomial-free fitting.
 See :doc:`../science/continuum_model` for the staged fit and covariance policy.
@@ -135,7 +135,7 @@ See :doc:`../user_guide/preprocessing` for workflow order.
 Host strategy preset
 --------------------
 
-The backward-compatible default is ``strategy="masked_simple"``. Enable the
+The default is ``strategy="masked_simple"``. Enable the
 AGN-aware masked pseudo-continuum basis explicitly:
 
 .. code-block:: python
@@ -145,9 +145,8 @@ AGN-aware masked pseudo-continuum basis explicitly:
    )
 
 The nested prefit, pseudo-continuum, and coverage configurations are included
-in run hashing. ``use_regularization=True`` and historical
-``n_iterations != 1`` are rejected because they otherwise represented silent
-no-op settings. See
+in run hashing. ``use_regularization=True`` and ``n_iterations != 1`` are
+not supported and raise errors. See
 :doc:`../how_to/agn_aware_ppxf_host_decomposition`.
 
 Stellar-template profile preset

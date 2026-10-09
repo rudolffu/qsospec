@@ -14,9 +14,8 @@ Global workflow
 - host arrays and masks when requested.
 - warnings, Monte Carlo summaries, metadata, and output paths.
 
-Check ``continuum_success`` and per-complex ``success`` separately. The
-workflow deliberately does not collapse heterogeneous complex outcomes into
-one scientific verdict.
+``continuum_success`` reports the continuum fit status. Each line complex
+has its own ``success`` flag.
 
 Complex measurements
 --------------------
