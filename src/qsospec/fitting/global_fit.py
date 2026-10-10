@@ -2036,6 +2036,7 @@ def _gaussian_unit_profile_with_derivatives(
 class _HbetaContext:
     def __init__(self, config: HbetaComplexConfig, include_wing: bool, flux_scale: float):
         self.config = config
+        self.n_broad_components = len(config.broad_fwhm_bands_kms)
         self.include_wing = include_wing
         self.names: List[str] = []
         self.initial: List[float] = []
@@ -2051,6 +2052,10 @@ class _HbetaContext:
 
     def _configure(self, scale):
         fractions = (0.55, 0.30, 0.15)
+        if self.n_broad_components != 3:
+            fractions = fractions[:self.n_broad_components]
+            total = sum(fractions)
+            fractions = tuple(fraction / total for fraction in fractions)
         for i, ((fwhm_lo, fwhm_hi), fraction) in enumerate(
             zip(self.config.broad_fwhm_bands_kms, fractions), start=1
         ):
@@ -2099,7 +2104,7 @@ class _HbetaContext:
 
     def components(self, theta, wave):
         out = {}
-        for i in range(1, 4):
+        for i in range(1, self.n_broad_components + 1):
             prefix = f"Hb_broad{i}"
             center = self.shifted(HBETA_WAVE, self.get(theta, f"{prefix}.velocity_kms"))
             out[prefix] = _gaussian_area_profile(
@@ -2150,7 +2155,10 @@ class _HbetaContext:
 
     def broad_profile(self, theta, wave):
         components = self.components(theta, wave)
-        return components["Hb_broad1"] + components["Hb_broad2"] + components["Hb_broad3"]
+        profile = components["Hb_broad1"].copy()
+        for index in range(2, self.n_broad_components + 1):
+            profile += components[f"Hb_broad{index}"]
+        return profile
 
     @property
     def linear_names(self) -> List[str]:
@@ -2185,7 +2193,7 @@ class _HbetaContext:
                     np.asarray(derivatives.get(name, np.zeros_like(wave)), dtype=float)
                 )
 
-        for index in range(1, 4):
+        for index in range(1, self.n_broad_components + 1):
             prefix = f"Hb_broad{index}"
             velocity_name = f"{prefix}.velocity_kms"
             width_name = f"{prefix}.fwhm_kms"
@@ -3302,6 +3310,7 @@ def _fit_hbeta_candidate(
     metadata.update(
         {
             "oiii_ratio_5007_4959": config.oiii_ratio_5007_4959,
+            "n_broad_components": context.n_broad_components,
             "continuum_at_hbeta": continuum_at_hbeta,
             "line_flux_cgs_conversion": "flux_density_scale_to_cgs",
             "optimizer_requested": config.optimizer_method,

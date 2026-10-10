@@ -675,7 +675,11 @@ class LyaNVComplexConfig:
 
 @dataclass(frozen=True)
 class HbetaComplexConfig:
-    """Configuration for the constrained H-beta/[O III] model."""
+    """Configuration for the constrained H-beta/[O III] model.
+
+    ``broad_fwhm_bands_kms`` supplies one, two, or three broad Gaussians.
+    Its default preserves the original three-component model.
+    """
 
     window: Window = (4640.0, 5100.0)
     broad_fwhm_bands_kms: Tuple[Tuple[float, float], ...] = (
@@ -699,6 +703,11 @@ class HbetaComplexConfig:
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
+        if not 1 <= len(self.broad_fwhm_bands_kms) <= 3:
+            raise ValueError("HbetaComplexConfig requires one to three broad FWHM bands.")
+        for lower, upper in self.broad_fwhm_bands_kms:
+            if not np.isfinite([lower, upper]).all() or not 0 < lower < upper:
+                raise ValueError("HbetaComplexConfig broad FWHM bands must be finite, positive, and increasing.")
         for value, name in (
             (self.wing_bic_delta, "wing_bic_delta"),
             (self.wing_min_snr, "wing_min_snr"),
