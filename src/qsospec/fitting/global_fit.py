@@ -4795,10 +4795,24 @@ def _build_joint_hgamma_problem(spectrum, config, continuum, hgamma, coverage, c
     ratio = load_balmer_anchor_ratios(
         log10_ne=config.balmer_pseudocontinuum.log10_ne
     ).hgamma_rel_hbeta
+    if not np.isfinite(ratio) or ratio <= 0:
+        raise ValueError("The Balmer Hgamma/Hbeta anchor ratio must be finite and positive.")
     if amplitude_start > 0 and linked_flux_start > 0:
+        denominator = ratio * amplitude_start
+        if denominator == 0.0:
+            # A positive subnormal amplitude can underflow in the product.
+            # Use the equivalent logarithmic ratio only in that case, so
+            # ordinary initializations retain their original arithmetic.
+            log_ratio = (
+                np.log10(linked_flux_start)
+                - np.log10(ratio)
+                - np.log10(amplitude_start)
+            )
+        else:
+            log_ratio = np.log10(linked_flux_start / denominator)
         delta_start = float(
             np.clip(
-                np.log10(linked_flux_start / (ratio * amplitude_start)),
+                log_ratio,
                 -3.0,
                 3.0,
             )
