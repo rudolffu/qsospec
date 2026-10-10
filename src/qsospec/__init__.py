@@ -52,6 +52,7 @@ from .fitting.global_fit import (
     fit_global_lines,
     fit_halpha_complex,
     fit_hbeta_complex,
+    fit_hbeta_local,
     fit_mgii_complex,
 )
 from .halpha_classification import (
@@ -282,6 +283,7 @@ __all__ = [
     "fit_hei_pgamma_model_pair",
     "hei_pgamma_classification_recipe",
     "fit_hbeta_complex",
+    "fit_hbeta_local",
     "fit_mgii_complex",
     "fit_line_complex",
     "fit_local_line_pattern",

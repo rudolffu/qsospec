@@ -29,6 +29,8 @@ def profile_definitions(context):
         'OIII5007': 'oiii_5008', 'OIII4959': 'oiii_4960', 'HeII': 'heii_4687',
         'NII6585': 'nii_6585', 'NII6549': 'nii_6550', 'SII6718': 'sii_6718', 'SII6733': 'sii_6733'}
     for ident in context.components(np.asarray(context.initial), np.array([5000.])):
+        if ident.startswith('local_continuum_'):
+            continue
         base = ident.split('_')[0]
         if base not in mapping:
             raise ValueError(f'Unsupported native peak component: {ident}')

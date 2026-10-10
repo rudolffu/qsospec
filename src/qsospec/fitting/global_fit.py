@@ -2090,6 +2090,9 @@ class _HbetaContext:
             self._add("HeII_broad.flux", scale * 0.05, 0.0, np.inf)
             self._add("HeII_broad.velocity_kms", 0.0, -2000.0, 2000.0)
             self._add("HeII_broad.fwhm_kms", 3000.0, 900.0, 10000.0)
+        if self.config.local_continuum == "linear":
+            self._add("continuum.constant", 0.0, -np.inf, np.inf)
+            self._add("continuum.slope", 0.0, -np.inf, np.inf)
         self.initial = np.asarray(self.initial, dtype=float)
         self.lower = np.asarray(self.lower, dtype=float)
         self.upper = np.asarray(self.upper, dtype=float)
@@ -2148,6 +2151,14 @@ class _HbetaContext:
                 self.shifted(HEII_WAVE, self.get(theta, "HeII_broad.velocity_kms")),
                 self.get(theta, "HeII_broad.fwhm_kms"),
             )
+        if self.config.local_continuum == "linear":
+            out["local_continuum_constant"] = np.full_like(
+                wave, self.get(theta, "continuum.constant")
+            )
+            out["local_continuum_slope"] = (
+                self.get(theta, "continuum.slope")
+                * (wave - 0.5 * sum(self.config.window))
+            )
         return out
 
     def model(self, theta, wave):
@@ -2162,7 +2173,8 @@ class _HbetaContext:
 
     @property
     def linear_names(self) -> List[str]:
-        return [name for name in self.names if name.endswith(".flux")]
+        return [name for name in self.names
+                if name.endswith(".flux") or name.startswith("continuum.")]
 
     @property
     def nonlinear_names(self) -> List[str]:
@@ -2285,6 +2297,10 @@ class _HbetaContext:
                     width_name: derivative_width,
                 },
             )
+
+        if self.config.local_continuum == "linear":
+            append_column(np.ones_like(wave), {})
+            append_column(wave - 0.5 * sum(self.config.window), {})
 
         design = np.column_stack(columns)
         if derivative_columns is None:
@@ -3291,7 +3307,7 @@ def _fit_hbeta_candidate(
             )
         )
     warnings.extend(_active_bound_warnings(result, context.names))
-    if compute_covariance:
+    if compute_covariance and config.local_continuum is None:
         warnings.append(
             FitWarning(
                 code="statistical_uncertainty_excludes_continuum_host",
@@ -3301,8 +3317,15 @@ def _fit_hbeta_candidate(
         )
     continuum_at_hbeta = float(np.interp(HBETA_WAVE, continuum_result.wave_rest, continuum_result.model))
     def metric_function(theta):
+        continuum_level = continuum_at_hbeta
+        if config.local_continuum == "linear":
+            continuum_level += (
+                context.get(theta, "continuum.constant")
+                + context.get(theta, "continuum.slope")
+                * (HBETA_WAVE - 0.5 * sum(config.window))
+            )
         return _hbeta_metrics(
-            theta, context, continuum_at_hbeta, spectrum.z, spectrum.flux_density_scale_to_cgs
+            theta, context, continuum_level, spectrum.z, spectrum.flux_density_scale_to_cgs
         )
     metrics = metric_function(result.x)
     metric_errors = _metric_errors(result.x, covariance, metric_function)
@@ -3312,6 +3335,13 @@ def _fit_hbeta_candidate(
             "oiii_ratio_5007_4959": config.oiii_ratio_5007_4959,
             "n_broad_components": context.n_broad_components,
             "continuum_at_hbeta": continuum_at_hbeta,
+            "local_continuum_mode": config.local_continuum,
+            "local_continuum_pivot_angstrom": 0.5 * sum(config.window),
+            "covariance_parameter_names": list(context.names),
+            "uncertainty_conditioning": (
+                "joint_local_linear_continuum_and_lines" if config.local_continuum == "linear"
+                else "fixed_continuum_and_adopted_host"
+            ),
             "line_flux_cgs_conversion": "flux_density_scale_to_cgs",
             "optimizer_requested": config.optimizer_method,
             "optimizer_used": optimizer_used,
@@ -3358,6 +3388,96 @@ def _fit_hbeta_candidate(
         bounds=config.window,
         measure=not defer_peaks,
     )
+
+
+def fit_hbeta_local(
+    spectrum: Spectrum,
+    config: Optional[HbetaComplexConfig] = None,
+    *,
+    compute_covariance: bool = True,
+    defer_peaks: bool = False,
+) -> Tuple[GlobalContinuumResult, HbetaComplexResult]:
+    """Jointly fit a local affine continuum and Hbeta/[O III] emission.
+
+    This uses the existing native Hbeta variable-projection solver and OIII
+    wing selection. It does not run a global continuum, host decomposition,
+    Balmer pseudo-continuum, or linked Hgamma fit. The returned continuum
+    contains the affine curve, and the returned emission model contains only
+    lines. Its parameters and covariance retain both affine coefficients, so
+    derived line errors include their joint statistical uncertainty.
+
+    The fit window is ``config.window``; the default is 4640--5100 Angstrom.
+    The usual disabled-HeII mask excludes 4660--4715 Angstrom.
+    """
+    require_rest_frame_flux(spectrum)
+    cfg = replace(config or HbetaComplexConfig(), local_continuum="linear")
+    wave = spectrum.wave_rest
+    zero = np.zeros_like(wave)
+    seed_continuum = GlobalContinuumResult(
+        success=True, status=0, message="No fixed continuum for local fitting.",
+        param_values={}, param_errors={}, covariance=None,
+        chi2=np.nan, dof=0, reduced_chi2=np.nan,
+        wave_rest=wave.copy(), model=zero, component_models={},
+        fit_mask=spectrum.valid_mask.copy(), clip_mask=spectrum.valid_mask.copy(),
+    )
+    fitted = fit_hbeta_complex(
+        spectrum, seed_continuum, cfg,
+        compute_covariance=compute_covariance, defer_peaks=defer_peaks,
+    )
+    continuum_names = ["continuum.constant", "continuum.slope"]
+    continuum_components = {
+        name: values for name, values in fitted.component_models.items()
+        if name.startswith("local_continuum_")
+    }
+    continuum_model = sum(continuum_components.values(), zero.copy())
+    parameter_names = list(fitted.param_values)
+    available = all(name in fitted.param_values for name in continuum_names)
+    continuum_covariance = None
+    if available and fitted.covariance is not None:
+        indices = [parameter_names.index(name) for name in continuum_names]
+        continuum_covariance = fitted.covariance[np.ix_(indices, indices)]
+    metadata = {
+        "fit_kind": "joint_local_linear_hbeta_oiii",
+        "continuum_mode": "linear",
+        "continuum_pivot_angstrom": 0.5 * sum(cfg.window),
+        "continuum_coefficient_units": {
+            "continuum.constant": "input_flux_density",
+            "continuum.slope": "input_flux_density_per_rest_angstrom",
+        },
+        "fit_window": tuple(cfg.window),
+        "joint_covariance_parameter_names": parameter_names,
+        "covariance_parameter_names": continuum_names if available else [],
+        "uncertainty_conditioning": "joint_local_linear_continuum_and_lines",
+        "host_subtraction": False,
+        "balmer_pseudocontinuum": False,
+        "hgamma_linked_fit": False,
+        "chi2_scope": "joint_local_continuum_and_emission_lines",
+    }
+    continuum = GlobalContinuumResult(
+        success=bool(fitted.success and available), status=fitted.status,
+        message=fitted.message,
+        param_values={name: fitted.param_values[name] for name in continuum_names if available},
+        param_errors={name: fitted.param_errors.get(name, np.nan) for name in continuum_names if available},
+        covariance=continuum_covariance,
+        chi2=fitted.chi2, dof=fitted.dof, reduced_chi2=fitted.reduced_chi2,
+        wave_rest=wave.copy(), model=continuum_model,
+        component_models=continuum_components,
+        fit_mask=fitted.fit_mask.copy(), clip_mask=fitted.fit_mask.copy(),
+        warnings=list(fitted.warnings), metadata=metadata,
+        optimizer_result=fitted.optimizer_result,
+    )
+    fitted.flux_continuum_subtracted = spectrum.flux - continuum_model
+    fitted.component_models = {
+        name: values for name, values in fitted.component_models.items()
+        if not name.startswith("local_continuum_")
+    }
+    fitted.model = sum(fitted.component_models.values(), zero.copy())
+    fitted.metadata.update(metadata)
+    # The full joint matrix remains on the line result; only its display model
+    # is separated from the local continuum above.
+    fitted.metadata["covariance_parameter_names"] = parameter_names
+    fitted.metadata["continuum_at_hbeta"] = float(np.interp(HBETA_WAVE, wave, continuum_model))
+    return continuum, fitted
 
 
 def fit_hbeta_complex(

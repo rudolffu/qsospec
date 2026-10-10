@@ -698,11 +698,14 @@ class HbetaComplexConfig:
     wing_min_velocity_separation_kms: float = 150.0
     heii_enabled: bool = False
     heii_mask: Window = (4660.0, 4715.0)
+    local_continuum: Optional[str] = None
     optimizer_method: str = "auto"
     jacobian_method: str = "semi_analytic"
     max_nfev: Optional[int] = 1500
 
     def __post_init__(self) -> None:
+        if self.local_continuum not in (None, "linear"):
+            raise ValueError("HbetaComplexConfig.local_continuum must be None or 'linear'.")
         if not 1 <= len(self.broad_fwhm_bands_kms) <= 3:
             raise ValueError("HbetaComplexConfig requires one to three broad FWHM bands.")
         for lower, upper in self.broad_fwhm_bands_kms:
