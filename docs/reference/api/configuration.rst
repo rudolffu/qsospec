@@ -13,6 +13,8 @@ Configuration API
    IronTemplateConfig
    BalmerPseudoContinuumConfig
    HbetaComplexConfig
+   BalmerLocalConfig
+   BandResolutionOperator
    MgIIComplexConfig
    HalphaComplexConfig
    LyaNVComplexConfig

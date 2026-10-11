@@ -55,6 +55,13 @@ from .fitting.global_fit import (
     fit_hbeta_local,
     fit_mgii_complex,
 )
+from .fitting.balmer_local import (
+    BalmerLocalConfig,
+    BandResolutionOperator,
+    evaluate_balmer_local_model,
+    fit_balmer_local,
+    fit_halpha_local,
+)
 from .halpha_classification import (
     HalphaModelGridResult,
     HalphaModelSelectionConfig,
@@ -194,6 +201,11 @@ from .templates import (
 from .warnings import FitWarning
 
 __all__ = [
+    "BalmerLocalConfig",
+    "BandResolutionOperator",
+    "evaluate_balmer_local_model",
+    "fit_balmer_local",
+    "fit_halpha_local",
     "BalmerPseudoContinuumConfig",
     "BalmerAnchorRatios",
     "BalmerSeriesTemplate",

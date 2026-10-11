@@ -7,6 +7,10 @@ Fitting and workflow API
 .. autofunction:: fit_line_complex
 .. autofunction:: fit_global_continuum
 .. autofunction:: fit_hbeta_complex
+.. autofunction:: fit_hbeta_local
+.. autofunction:: fit_balmer_local
+.. autofunction:: fit_halpha_local
+.. autofunction:: evaluate_balmer_local_model
 .. autofunction:: fit_mgii_complex
 .. autofunction:: fit_halpha_complex
 .. autofunction:: fit_global_lines

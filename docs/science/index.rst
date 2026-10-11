@@ -14,4 +14,5 @@ and reliability flags should be interpreted.
    measurements
    ../iron-balmer-uncertainties
    ../line-peaks-systemic-redshift
+   ../local-balmer-evidence
    references

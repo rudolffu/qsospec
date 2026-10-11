@@ -23,7 +23,7 @@ BANDS = {
 }
 
 
-@pytest.mark.parametrize("bands", [(), ((900., 2000.),) * 4,
+@pytest.mark.parametrize("bands", [((900., 2000.),) * 4,
                                   ((0., 2000.),), ((2000., 1000.),),
                                   ((900., np.inf),)])
 def test_invalid_component_contract_is_rejected(bands):

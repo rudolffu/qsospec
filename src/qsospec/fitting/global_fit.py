@@ -2052,7 +2052,9 @@ class _HbetaContext:
 
     def _configure(self, scale):
         fractions = (0.55, 0.30, 0.15)
-        if self.n_broad_components != 3:
+        if self.n_broad_components == 0:
+            fractions = ()
+        elif self.n_broad_components != 3:
             fractions = fractions[:self.n_broad_components]
             total = sum(fractions)
             fractions = tuple(fraction / total for fraction in fractions)
@@ -2166,6 +2168,8 @@ class _HbetaContext:
 
     def broad_profile(self, theta, wave):
         components = self.components(theta, wave)
+        if self.n_broad_components == 0:
+            return np.zeros_like(wave)
         profile = components["Hb_broad1"].copy()
         for index in range(2, self.n_broad_components + 1):
             profile += components[f"Hb_broad{index}"]
@@ -3396,6 +3400,7 @@ def fit_hbeta_local(
     *,
     compute_covariance: bool = True,
     defer_peaks: bool = False,
+    instrumental_response=None,
 ) -> Tuple[GlobalContinuumResult, HbetaComplexResult]:
     """Jointly fit a local affine continuum and Hbeta/[O III] emission.
 
@@ -3409,6 +3414,15 @@ def fit_hbeta_local(
     The fit window is ``config.window``; the default is 4640--5100 Angstrom.
     The usual disabled-HeII mask excludes 4660--4715 Angstrom.
     """
+    from .balmer_local import BalmerLocalConfig, fit_balmer_local
+    if isinstance(config, BalmerLocalConfig):
+        if config.line != "hbeta":
+            raise ValueError("fit_hbeta_local requires an hbeta configuration")
+        return fit_balmer_local(spectrum, config,
+                               instrumental_response=instrumental_response,
+                               compute_covariance=compute_covariance)
+    if instrumental_response is not None:
+        raise ValueError("Explicit instrumental response requires BalmerLocalConfig; legacy Hbeta defaults are unchanged")
     require_rest_frame_flux(spectrum)
     cfg = replace(config or HbetaComplexConfig(), local_continuum="linear")
     wave = spectrum.wave_rest

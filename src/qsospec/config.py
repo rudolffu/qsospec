@@ -677,7 +677,7 @@ class LyaNVComplexConfig:
 class HbetaComplexConfig:
     """Configuration for the constrained H-beta/[O III] model.
 
-    ``broad_fwhm_bands_kms`` supplies one, two, or three broad Gaussians.
+    ``broad_fwhm_bands_kms`` supplies zero, one, two, or three broad Gaussians.
     Its default preserves the original three-component model.
     """
 
@@ -706,8 +706,8 @@ class HbetaComplexConfig:
     def __post_init__(self) -> None:
         if self.local_continuum not in (None, "linear"):
             raise ValueError("HbetaComplexConfig.local_continuum must be None or 'linear'.")
-        if not 1 <= len(self.broad_fwhm_bands_kms) <= 3:
-            raise ValueError("HbetaComplexConfig requires one to three broad FWHM bands.")
+        if not 0 <= len(self.broad_fwhm_bands_kms) <= 3:
+            raise ValueError("HbetaComplexConfig requires zero to three broad FWHM bands.")
         for lower, upper in self.broad_fwhm_bands_kms:
             if not np.isfinite([lower, upper]).all() or not 0 < lower < upper:
                 raise ValueError("HbetaComplexConfig broad FWHM bands must be finite, positive, and increasing.")
