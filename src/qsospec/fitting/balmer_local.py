@@ -300,6 +300,54 @@ class _ResponseContext(GenericComplexContext):
         )
         if self.operators and not np.allclose(fitted_sums, 1.0, rtol=0, atol=OUTPUT_WEIGHT_SUM_ATOL):
             raise ValueError("Resolution output weights must sum to one on every fitted Spectrum row")
+        # Likelihood calls need only the frozen fitted output rows.  Retain
+        # every input column contributing to those rows, regardless of its
+        # wavelength or the sign of its response.  In particular this is not
+        # a wavelength crop, kernel approximation, or response normalization.
+        self.fit_operators = []
+        # Dense BLAS multiplication can change its reduction grouping after
+        # column pruning. Preserve that existing path bit-for-bit; native
+        # banded sparse operators are the expensive intended ROI use case.
+        self.use_sparse_roi = bool(self.operators) and all(sparse.issparse(operator.matrix) for operator in self.operators)
+        evaluation_cards = []
+        for operator in self.operators:
+            band_rows = np.flatnonzero(mask[operator.output_indices])
+            if not self.use_sparse_roi:
+                evaluation_cards.append(dict(name=operator.name,
+                    fitted_output_rows=len(band_rows),
+                    evaluated_input_columns=len(operator.input_wave_obs),
+                    original_output_rows=len(operator.output_indices),
+                    original_input_columns=len(operator.input_wave_obs)))
+                continue
+            if not len(band_rows):
+                evaluation_cards.append(dict(name=operator.name, fitted_output_rows=0,
+                    evaluated_input_columns=0, original_output_rows=len(operator.output_indices),
+                    original_input_columns=len(operator.input_wave_obs)))
+                continue
+            selected = operator.matrix[band_rows, :]
+            # Retain stored zeros too: no summation, sorting, or duplicate
+            # elimination changes the sparse dot-product accumulation.
+            columns = np.unique(selected.indices)
+            matrix = selected[:, columns]
+            output_rows = np.searchsorted(self.fit_indices, operator.output_indices[band_rows])
+            self.fit_operators.append((
+                operator.input_wave_obs[columns] / (1.0 + spectrum.z),
+                output_rows, matrix, operator.input_factor[columns],
+                operator.output_factor[band_rows] * operator.output_weights[band_rows],
+            ))
+            evaluation_cards.append(dict(name=operator.name,
+                fitted_output_rows=len(band_rows), evaluated_input_columns=len(columns),
+                original_output_rows=len(operator.output_indices),
+                original_input_columns=len(operator.input_wave_obs),
+                fitted_band_rows_sha256=_array_hash(band_rows),
+                retained_input_columns_sha256=_array_hash(columns)))
+        self.evaluation_card = dict(
+            likelihood_strategy=("exact_frozen_output_rows_and_all_contributing_native_columns" if self.use_sparse_roi
+                                 else "original_full_domain_dense_or_no_response_compatibility"),
+            sparse_pruning_applied=self.use_sparse_roi,
+            full_grid_final_components=True, signed_response_preserved=True,
+            response_renormalized=False, bands=evaluation_cards,
+        )
 
     def _rows(self, wave):
         if np.array_equal(wave, self.spectrum.wave_rest):
@@ -308,7 +356,21 @@ class _ResponseContext(GenericComplexContext):
             return self.fit_indices
         raise ValueError("Response model evaluation requires the full Spectrum grid or its frozen fitting rows")
 
-    def _apply(self, evaluate):
+    def _apply(self, evaluate, *, fit_only=False):
+        if fit_only:
+            if not self.use_sparse_roi:
+                return self._apply(evaluate)[self.fit_indices]
+            output = None
+            for wave, rows, matrix, input_factor, output_factor in self.fit_operators:
+                values = evaluate(wave)
+                factor_shape = (len(input_factor),) + (1,) * (values.ndim - 1)
+                projected = np.asarray(matrix.dot(values * input_factor.reshape(factor_shape)))
+                out_shape = (len(output_factor),) + (1,) * (values.ndim - 1)
+                projected *= output_factor.reshape(out_shape)
+                if output is None:
+                    output = np.zeros((len(self.fit_indices),) + values.shape[1:])
+                output[rows] += projected
+            return output
         output = None
         for operator in self.operators:
             values = evaluate(operator.input_wave_obs / (1.0 + self.spectrum.z))
@@ -326,10 +388,13 @@ class _ResponseContext(GenericComplexContext):
         if not self.operators:
             return super().separable_design(nonlinear, wave, need_derivatives)
         rows = self._rows(wave)
+        fit_only = not np.array_equal(wave, self.spectrum.wave_rest)
         def native(native_wave):
             design, derivatives = GenericComplexContext.separable_design(self, nonlinear, native_wave, need_derivatives)
             return np.concatenate((design, *derivatives), axis=1) if need_derivatives else design
-        projected = self._apply(native)[rows]
+        projected = self._apply(native, fit_only=fit_only)
+        if not fit_only:
+            projected = projected[rows]
         nlinear = len(self.linear_names)
         design = projected[:, :nlinear]
         derivatives = None
@@ -342,11 +407,16 @@ class _ResponseContext(GenericComplexContext):
         if not self.operators:
             return super().components(theta, wave)
         rows = self._rows(wave)
-        names = list(GenericComplexContext.components(self, theta, self.operators[0].input_wave_obs / (1+self.spectrum.z)))
+        fit_only = not np.array_equal(wave, self.spectrum.wave_rest)
+        # Component names do not depend on wavelength; evaluate an empty grid
+        # rather than building a discarded full-band model on each call.
+        names = list(GenericComplexContext.components(self, theta, self.spectrum.wave_rest[:0]))
         def native(native_wave):
             components = GenericComplexContext.components(self, theta, native_wave)
             return np.column_stack([components[name] for name in names])
-        projected = self._apply(native)[rows]
+        projected = self._apply(native, fit_only=fit_only)
+        if not fit_only:
+            projected = projected[rows]
         return {name: projected[:, index] for index, name in enumerate(names)}
 
 
@@ -484,6 +554,7 @@ def fit_balmer_local(spectrum: Spectrum, config: Optional[BalmerLocalConfig] = N
     scale = float(np.trapezoid(np.clip(spectrum.flux[mask], 0, None), spectrum.wave_rest[mask]))
     context = _ResponseContext(recipe, scale, spectrum, mask, operators)
     metadata["resolution_weight_validation"] = context.weight_validation
+    metadata["resolution_evaluation"] = context.evaluation_card
     attempts, candidates = [], []
     for order, start in enumerate(_starts(context, config)):
         result, optimizer, fallback = _solve_once_with_fallback(context, spectrum.wave_rest[mask],

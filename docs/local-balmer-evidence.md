@@ -55,6 +55,15 @@ output_weights * output_factor * matrix @ (input_factor * intrinsic_rest_Flambda
 
 Contributions from bands add on common output rows. The recorded nonnegative output weights must sum to one on every fitted row; missing or duplicated weight support raises an error. Validation allows an absolute roundoff tolerance of four float32 epsilons (`4.76837158203125e-7`, relative tolerance zero) because original inverse-variance coaddition and division use float32. The actual weights remain unchanged. `resolution_weight_validation` records the tolerance, fitted-row sum range, maximum deviation, and `normalization_applied=False`. Positive-weight band rows require finite positive matrix row sums. The matrix row sums themselves are recorded and left unchanged. `input_factor` and `output_factor` represent a caller-declared wavelength-dependent transformation such as `diag(1/T_output) R diag(T_input)` for an already foreground-corrected spectrum. A spatially constant `(1+z)` F_lambda factor commutes with R; record the rest-frame conversion in the spectrum provenance. No extinction law or band coaddition is inferred here.
 
+For sparse operators, repeated likelihood and Jacobian calls use an exact suboperator: select the frozen fitted output rows and retain every stored native input column contributing to those rows. This includes input wavelengths outside the fitting window, negative coefficients, duplicate sparse entries and stored zeros. Sparse entry accumulation order, foreground factors and overlap weights remain unchanged. Bands with no fitted output rows are not evaluated during optimization. Final full-grid continuum and line components still use the original complete operators. `resolution_evaluation` records the strategy, original and evaluated dimensions, and selected row/column fingerprints. Dense or mixed dense/sparse operator inputs retain the original full-domain path to preserve their BLAS reduction rounding. No starts, parameter bounds, masks, tolerances, solver fallback, or covariance calculation change.
+
+The reproducible synthetic benchmark measures repeated bounded-linear residual and reduced-Jacobian calls, including signed three-band responses and foreground conjugation. It checks bit-identical residuals, Jacobians and linear coefficients against the original full-domain path before reporting timings; it launches no fits and reads no production data:
+
+```sh
+PYTHONPATH=src python benchmarks/benchmark_balmer_response_roi.py \
+  --repeats 25 --rounds 3 --output /tmp/balmer_response_roi_benchmark.json
+```
+
 `require_native_response=True` rejects missing or unverified operators. Verification requires provenance `source`, `is_object_specific=True`, and `is_approximate=False`. With the default `False`, fitting without a response is an explicit observed-profile diagnostic: `resolution_status="missing_not_intrinsic"`, an `instrumental_response_missing` warning, and an observed-profile width definition. A supplied but unverified matrix is labeled `unverified_operator`. It cannot satisfy the strict contract. No σ-only object is accepted by this API.
 
 ## Hypotheses and nuisance models
