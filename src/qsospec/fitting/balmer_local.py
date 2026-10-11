@@ -28,6 +28,11 @@ from .global_fit import (
     _metric_errors, _solve_once_with_fallback,
 )
 
+# The original DESI inverse-variance coaddition is stored and divided in
+# float32.  Permit its roundoff, while preserving the actual weights in every
+# forward-model evaluation.  This is not a missing-support repair tolerance.
+OUTPUT_WEIGHT_SUM_ATOL = 4.0 * float(np.finfo(np.float32).eps)
+
 
 def _array_hash(array):
     array = np.ascontiguousarray(array)
@@ -282,7 +287,18 @@ class _ResponseContext(GenericComplexContext):
             if operator.output_indices.max() >= len(spectrum.flux):
                 raise ValueError("Resolution output index is outside the Spectrum grid")
             self.output_coverage[operator.output_indices] += operator.output_weights
-        if self.operators and not np.allclose(self.output_coverage[mask], 1.0, rtol=0, atol=1e-8):
+        fitted_sums = self.output_coverage[mask]
+        self.weight_validation = dict(
+            required=bool(self.operators),
+            absolute_tolerance=OUTPUT_WEIGHT_SUM_ATOL,
+            relative_tolerance=0.0,
+            precision_basis="four float32 epsilons for recorded inverse-variance coadd weights",
+            fitted_row_sum_min=float(fitted_sums.min()) if len(fitted_sums) else None,
+            fitted_row_sum_max=float(fitted_sums.max()) if len(fitted_sums) else None,
+            fitted_row_max_abs_deviation=float(np.max(np.abs(fitted_sums-1))) if len(fitted_sums) else None,
+            normalization_applied=False,
+        )
+        if self.operators and not np.allclose(fitted_sums, 1.0, rtol=0, atol=OUTPUT_WEIGHT_SUM_ATOL):
             raise ValueError("Resolution output weights must sum to one on every fitted Spectrum row")
 
     def _rows(self, wave):
@@ -467,6 +483,7 @@ def fit_balmer_local(spectrum: Spectrum, config: Optional[BalmerLocalConfig] = N
             np.nan, 0, np.nan, [warning], metadata, None, False, warning.message, -1)
     scale = float(np.trapezoid(np.clip(spectrum.flux[mask], 0, None), spectrum.wave_rest[mask]))
     context = _ResponseContext(recipe, scale, spectrum, mask, operators)
+    metadata["resolution_weight_validation"] = context.weight_validation
     attempts, candidates = [], []
     for order, start in enumerate(_starts(context, config)):
         result, optimizer, fallback = _solve_once_with_fallback(context, spectrum.wave_rest[mask],

@@ -202,6 +202,30 @@ def test_signed_native_response_is_preserved_without_clipping_or_normalization()
     np.testing.assert_allclose(continuum.model+fit.model, signed.dot(intrinsic), atol=1e-12)
 
 
+def test_float32_coadd_weight_roundoff_is_recorded_not_renormalized():
+    spectrum, operator, _, _ = _synthetic(broad_flux=0.0, response=False, noise=False)
+    ivars = np.asarray([0.1, 0.2], dtype=np.float32)
+    denominator = ivars.sum(dtype=np.float32)
+    weights = np.divide(ivars, denominator, out=np.empty(2, dtype=float))
+    assert abs(weights.sum()-1) > 1e-8
+    operators = [replace(operator, name=f"band{i}", output_weights=w) for i, w in enumerate(weights)]
+    data = qsospec.Spectrum(spectrum.wave_obs, operator.matrix.dot(spectrum.flux)*weights.sum(),
+                           spectrum.err, spectrum.z, spectrum.metadata, spectrum.mask)
+    config = _config("hbeta", 0)
+    continuum, fit = qsospec.fit_balmer_local(data, config, instrumental_response=operators)
+    assert fit.success
+    validation = fit.metadata["resolution_weight_validation"]
+    assert validation["absolute_tolerance"] == 4*float(np.finfo(np.float32).eps)
+    assert validation["fitted_row_max_abs_deviation"] == abs(weights.sum()-1)
+    assert validation["normalization_applied"] is False
+    intrinsic = qsospec.evaluate_balmer_local_model(spectrum.wave_rest, fit, config)
+    np.testing.assert_allclose(continuum.model+fit.model, operator.matrix.dot(intrinsic)*weights.sum(), atol=1e-12)
+    for i, operator in enumerate(operators):
+        np.testing.assert_array_equal(operator.output_weights, np.full(len(spectrum.flux), weights[i]))
+    with pytest.raises(ValueError, match="sum to one"):
+        qsospec.fit_balmer_local(data, config, instrumental_response=[replace(operators[0], output_weights=weights[0]+1e-5), operators[1]])
+
+
 def test_response_evaluates_native_grid_before_mapping_to_distinct_output_grid():
     spectrum, operator, _, _ = _synthetic(noise=False)
     center = qsospec.lines.get("hbeta").vacuum_wavelength
