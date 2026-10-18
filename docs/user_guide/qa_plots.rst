@@ -162,6 +162,15 @@ Overview
 A successful emission-line fit takes display precedence over a pPXF emission
 mask. Absorption pixels rejected by the Lyα refit remain marked separately.
 
+The total curve includes the global continuum and, when the original spectrum
+is shown, the host model once. Each emission complex, including its local
+continuum correction, contributes only within its registered fitting windows.
+Overlaps use the narrowest window, then the recipe identifier; contributions
+are not summed twice. Between windows the curve contains only the global
+continuum and applicable host. Excluded pixels do not truncate these model
+curves. Failed-complex regions remain marked as such and do not become valid
+measurements because a curve can be drawn there.
+
 Zoom panels
 ---------------
 
@@ -172,9 +181,13 @@ continuum-extrapolated.
 
 Excluded input pixels also appear in the normal zoom traces, with the total
 model drawn across them. Optional red markers are included in both views.
-Fitted or reloaded full-grid model arrays are used directly; missing model
-values are left as gaps. Residuals and fit statistics use fitted valid pixels
-only. A full-grid model curve does not mean that every displayed pixel
+Fitted or reloaded model arrays are used within their fitting windows;
+missing model values are left as gaps. With host decomposition, zooms compare
+the host-subtracted spectrum with the global continuum and local complexes;
+the host is added only in the original-spectrum overview and host-context
+plot. The legacy full-grid CSV column ``full_model`` retains this
+host-subtracted convention, with ``ppxf_host_model`` supplied separately.
+Residuals and fit statistics use fitted valid pixels only. A full-grid model curve does not mean that every displayed pixel
 constrained the fit. Lyα absorption masks are labeled separately.
 
 Scaling

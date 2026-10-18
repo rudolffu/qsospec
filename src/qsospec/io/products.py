@@ -716,14 +716,15 @@ def _rounded_model_upper_limit(model_values: np.ndarray) -> Optional[float]:
 
 
 def _full_line_model(result: WorkflowResult) -> np.ndarray:
-    return sum(
-        (
-            complex_result.model
-            for complex_result in result.line_complexes.values()
-            if complex_result.success
-        ),
-        np.zeros_like(result.continuum.model),
-    )
+    """Return complexes within their windows, without global continuum or host.
+
+    The shared observed-model reconstruction resolves overlapping windows.
+    Keeping this assembly in native units also supports relative spectra and
+    preserves host-subtracted QA zoom and legacy ``full_model`` CSV semantics.
+    """
+    from ..observed_model import _reconstruct_line_model
+
+    return _reconstruct_line_model(result, result.spectrum)["model"]
 
 
 def _has_host_context(result: WorkflowResult) -> bool:

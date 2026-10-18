@@ -783,15 +783,11 @@ def test_qa_fit_masks_residuals_and_region_precedence(tmp_path, monkeypatch):
     )
     residual_line = residual.lines[0]
     residual_values = residual_line.get_ydata()
+    # Residuals must close against the displayed, window-bounded total curve.
+    # Separate assembly tests check its local windows and overlap ownership.
     expected = (
         result.spectrum.flux[fitted]
-        - (
-            result.continuum.model[fitted]
-            + sum(
-                (fit.model[fitted] for fit in result.line_complexes.values() if fit.success),
-                np.zeros(np.count_nonzero(fitted)),
-            )
-        )
+        - total_model_line.get_ydata()[fitted]
     ) / result.spectrum.err[fitted]
     np.testing.assert_allclose(residual_values[fitted], expected)
     assert np.all(np.isnan(residual_values[~fitted]))

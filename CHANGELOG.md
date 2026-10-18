@@ -22,6 +22,10 @@ requires Python 3.10 or later. See the
 - Rename the unreleased full-spectrum preset to `recipes.extended_quasar()`;
   retain established root APIs and place new specialist utilities in their modules.
 - Restructure science/API documentation and provide portable survey-input examples.
+- Confine QA and legacy full-grid combined models to each line complex's
+  fitting windows. Reuse deterministic overlap ownership, preventing local
+  continua from being extrapolated across unrelated lines; saved fit arrays
+  and measured quantities are unchanged.
 
 ## 0.1.0
 
