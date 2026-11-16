@@ -1,20 +1,15 @@
-/* Keep reference tables readable inside the RTD content column. */
-.wy-table-responsive table {
-  width: 100%;
-}
-
-.wy-table-responsive table th,
-.wy-table-responsive table td {
+/* Furo handles table scrolling; keep long API names inside their cells. */
+.content table.docutils th,
+.content table.docutils td {
   vertical-align: top;
-  white-space: normal;
 }
 
-.wy-table-responsive table code {
+.content table.docutils td code {
   overflow-wrap: anywhere;
   white-space: normal;
 }
 
-/* Cards should remain balanced without forcing a fixed height. */
+/* Match card heights without overriding the theme's light/dark colours. */
 .sd-card {
   height: 100%;
 }

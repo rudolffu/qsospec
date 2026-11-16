@@ -10,3 +10,4 @@ Use the issue tracker for bugs and scientific feature discussions.
    development
    roadmap
    changelog
+   ../benchmarks/FAST_RESUME_BENCHMARK

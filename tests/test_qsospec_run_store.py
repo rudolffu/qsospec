@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as pads
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from astropy.io import fits
 
@@ -139,6 +141,41 @@ def test_single_object_bundle_round_trip_catalog_derived_and_qa(tmp_path):
         overview_yscale="log",
     )
     assert Path(rendered_log["object-1"]["global_plot"]).exists()
+
+
+def test_render_qa_filters_parquet_warning_arrays(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import qsospec.io.qa as qa_module
+
+    # Arrow list columns become NumPy arrays in pandas, including empty lists.
+    table = pa.table({
+        "object_key": ["key-1", "key-2", "key-3", "key-4"],
+        "object_id": ["target-1", "target-2", "target-3", "target-4"],
+        "warning_codes": pa.array(
+            [["wanted", "other"], ["other"], [], None], type=pa.list_(pa.string())
+        ),
+    })
+    saved = tmp_path / "objects.parquet"
+    pq.write_table(table, saved)
+    objects = pq.read_table(saved)
+    assert isinstance(objects.to_pandas().iloc[0]["warning_codes"], np.ndarray)
+    store = SimpleNamespace(
+        path=tmp_path,
+        read_table=lambda name: objects if name == "objects" else pa.table({}),
+    )
+    loaded = []
+
+    def load_model(run, key):
+        loaded.append(key)
+        return None
+
+    monkeypatch.setattr(qa_module, "load_model", load_model)
+    monkeypatch.setattr(qa_module, "_plot_qa", lambda *args: {"png": "selected.png"})
+    outputs = qsospec.render_qa(store, warning_codes=["wanted"])
+    assert loaded == ["key-1"]
+    assert set(outputs) == {"target-1"}
+    assert outputs["target-1"]["main_qa"] == "selected.png"
+    assert qsospec.render_qa(store, warning_codes=["absent"]) == {}
 
 
 def test_fit_object_to_store_accepts_direct_overview_yscale(tmp_path):

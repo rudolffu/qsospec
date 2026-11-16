@@ -110,7 +110,7 @@ Configuration objects
 ---------------------
 
 Exact fields, types, defaults, and validation are generated from the current
-package:
+source tree:
 
 - :class:`qsospec.GalacticExtinctionConfig`
 - :class:`qsospec.GlobalContinuumConfig`

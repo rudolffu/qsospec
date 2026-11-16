@@ -4,7 +4,13 @@ Global fitting
 The global workflow fits a shared AGN continuum followed by all requested
 emission complexes that pass their coverage policies.
 
+The example assumes ``spectrum`` has been prepared with
+:doc:`../how_to/fit_arrays`. To read and prepare a file automatically, start
+with :doc:`../getting_started/quickstart`.
+
 .. code-block:: python
+
+   import qsospec
 
    result = qsospec.fit_global_lines(
        spectrum,
@@ -40,6 +46,11 @@ performs a continuum-only fit. An explicit sequence limits fitting:
 ``result.complex_statuses`` lists the outcome for each requested complex.
 Scientific measurements are stored in each successful
 ``result.line_complexes[recipe_id].metrics`` mapping.
+
+The selector can also affect continuum refinement: omitting the Hγ complex
+removes its fitted broad-line constraint from the default soft Balmer
+refinement. Compare restricted and full analyses as model choices; see
+:doc:`results` for the worked Hβ example.
 
 Continuum configuration
 -----------------------

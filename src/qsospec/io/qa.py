@@ -50,7 +50,7 @@ def render_qa(
         requested_warnings = set(map(str, warning_codes))
         objects = objects[
             objects["warning_codes"].map(
-                lambda values: bool(requested_warnings.intersection(values or ()))
+                lambda values: bool(requested_warnings.intersection(() if values is None else values))
             )
         ]
     if sample is not None and len(objects) > int(sample):

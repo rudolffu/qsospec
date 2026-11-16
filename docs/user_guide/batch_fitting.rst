@@ -1,55 +1,107 @@
-Batch fitting
-=============
+Fit and resume a sample
+=======================
 
-:func:`qsospec.fit_batch` applies the same scientific configuration to
-Parquet or FITS samples and writes a resumable run bundle.
+``fit_batch`` applies one scientific configuration to a Parquet spectrum
+table or a collection of FITS spectra. Results use the same run-bundle format
+as a saved single-object fit.
+
+Start with representative objects
+---------------------------------
+
+Follow :doc:`../how_to/fit_parquet_batch` to fit a small subset serially.
+Inspect coverage, residuals, warnings and the measurements you plan to use
+before processing the full sample. Configure the
+:doc:`dust map <../getting_started/dustmaps>` before starting.
+
+For FITS, inputs can be files, directories, globs or manifests. Parquet inputs
+contain one spectrum per row, with vector columns; see
+:doc:`spectrum_inputs` and :doc:`../how_to/sdss_parquet_inputs`.
+
+Run in parallel
+---------------
+
+Save the following as ``fit_sample.py`` and replace the input path with your
+spectrum table. Keep the main guard when using multiple processes:
 
 .. code-block:: python
 
-   batch = qsospec.fit_batch(
-       ["spectra-000.parquet", "spectra-001.parquet"],
-       "runs/sample",
-       n_workers="auto",
+   import qsospec
+
+   def main():
+       batch = qsospec.fit_batch(
+           "spectra.parquet",
+           "runs/sample",
+           n_workers="auto",
+       )
+       print("Completed:", batch.n_completed)
+       print("Failed:", batch.n_failed)
+       print("Skipped:", batch.n_skipped)
+       print(batch.timings)
+
+   if __name__ == "__main__":
+       main()
+
+.. code-block:: bash
+
+   python fit_sample.py
+
+``n_workers="auto"`` uses at most eight processes and reserves one CPU.
+Use ``n_workers=1`` for serial execution. Workers inherit your numerical-library
+thread settings. On a cluster, keep processes × numerical threads within the
+CPUs allocated to the job.
+
+Inspect failures and render QA
+------------------------------
+
+.. code-block:: python
+
+   run = qsospec.open_run("runs/sample")
+   failures = run.read_table("failures").to_pandas()
+   print(failures)
+   qsospec.render_qa(run, sample=20, random_seed=12345)
+
+A globally missing dust map stops the run at preflight. Object-specific
+errors are recorded in ``failures`` so other objects can continue. Completed
+objects can still contain line-specific warnings or uncovered complexes.
+Batch fitting defers QA plotting by default. Use :doc:`qa_plots` to assess
+selected objects and :doc:`../how_to/inspect_run` to export measurements.
+
+Resume an interrupted run
+-------------------------
+
+Rerun the same call with the same scientific configuration and stable input
+identities. Completed objects are skipped; failed objects are retried by
+default. Set ``retry_failures=False`` to leave failures as terminal skips.
+A changed configuration or storage policy requires a new run directory.
+Input identity can depend on the source path and row index, so preserve these
+when resuming a run.
+
+For Parquet inputs, default ``resume_planning="auto"`` checks scalar identity
+columns before loading spectrum vectors. A completed sample returns without
+starting fit workers. A partial sample loads unfinished or retried rows.
+Unsupported filters fall back to the established vector-first path.
+
+To inspect the scalar resume plan without fitting:
+
+.. code-block:: python
+
+   plan = qsospec.plan_batch_resume(
+       "spectra.parquet", "runs/sample", retry_failures=True,
    )
+   print(plan.completed_count, plan.unfinished_count, plan.retry_failed_count)
 
-Execution
----------
+Pass ``retry_failures`` explicitly when comparing this plan to a batch call;
+the planner defaults to ``False`` and the fitter to ``True``.
+``resume_planning="lightweight"`` requires scalar planning and raises when
+unsupported; ``"legacy"`` selects vector-first loading. See
+:doc:`../reference/fit_performance` for diagnostics.
 
-- Parquet inputs are scanned with projected columns and bounded record batches.
-- FITS inputs can be files, directories, globs, or manifests.
-- ``n_workers="auto"`` uses at most eight processes and reserves one CPU.
-- Worker processes inherit numerical-library thread settings unchanged.
-- Missing coordinates become per-object failures; globally missing dust maps
-  abort before the run begins.
-- Workers retain a process-local run-store handle.  Parent promotion is
-  decoupled from full manifest reconciliation; lightweight counters default to
-  128-object intervals.
-- The returned ``BatchResult.timings`` separates input loading, numerical fit,
-  staging/serialization, promotion, lightweight manifest updates, and full
-  reconciliation/finalization.
+Partition independent jobs
+--------------------------
 
-Resume and partitioning
------------------------
-
-Reusing a run directory with the identical configuration skips completed
-objects. Configuration changes are rejected because the manifest is immutable.
-
-With the default ``resume_planning="auto"``, Parquet inputs are scanned first
-using only scalar identity columns.  Completed objects are classified from
-their deterministic run-store shard paths.  A fully completed batch returns
-before spectrum vectors, workers, or templates are loaded; a partial batch
-reads only the unfinished or retried rows.  ``retry_failures=True`` (the
-default) retries failed objects, while ``False`` treats them as terminal skips.
-
-``resume_planning="lightweight"`` requires this optimized behavior and raises
-when row identity cannot be preserved. ``"legacy"`` retains the vector-first
-path for regression checks. In particular, arbitrary Arrow filters fall back
-to legacy mode under ``"auto"`` because their physical row offsets are
-ambiguous. :func:`qsospec.plan_batch_resume` exposes the scalar plan without
-fitting. ``BatchResult.timings`` reports identity/reconciliation time and the
-numbers of vector rows loaded and avoided.
-
-For independent cluster jobs:
+For cluster jobs, pass the same inputs, run directory, scientific configuration
+and number of partitions to every job. Each job supplies its own zero-based
+``job_index`` from 0 through 15 in this example:
 
 .. code-block:: python
 
@@ -61,16 +113,13 @@ For independent cluster jobs:
        finalize=False,
    )
 
-Finalize after all shards complete:
+After all jobs have completed, finalize once:
 
 .. code-block:: python
 
    qsospec.finalize_run(run_directory)
 
-Batch fitting does not render all QA by default. Select objects afterward with
-:func:`qsospec.render_qa`. See :doc:`../reference/run_bundles`.
-
-Schema-8 runs use compact parameter models and indexed shards by default.
-``model_storage="arrays"`` retains explicit model arrays. Finalization packs all
-result tables; ``compact_models=True`` is supported as an explicit compaction
-request. See :doc:`../reference/run_bundles` for portability and copy conversion.
+Job partitions are distinct from the storage shards inside a run bundle.
+New schema-8 runs use indexed multi-object storage shards and compact
+parameter models. See :doc:`../reference/run_bundles` for copying, conversion
+and archive compatibility.

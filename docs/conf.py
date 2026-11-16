@@ -1,13 +1,21 @@
 import os
-from importlib.metadata import PackageNotFoundError, version
+import re
+import sys
+from pathlib import Path
+
+# Build the API and version label from this checkout, even if an older
+# editable installation has left stale distribution metadata behind.
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 project = "qsospec"
 copyright = "2026, Yuming Fu"
 author = "Yuming Fu"
-try:
-    release = version("qsospec")
-except PackageNotFoundError:
-    release = "0.1.0"
+release = re.search(
+    r'^version\s*=\s*"([^"]+)"',
+    (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+    re.MULTILINE,
+).group(1)
 version = release
 
 extensions = [
@@ -58,25 +66,28 @@ source_suffix = {
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_theme = "sphinx_rtd_theme"
+html_theme = "furo"
+html_title = f"qsospec {release} documentation"
 html_theme_options = {
-    "navigation_depth": 3,
-    "collapse_navigation": False,
+    "source_repository": "https://github.com/rudolffu/qsospec/",
+    "source_branch": "main",
+    "source_directory": "docs/",
+    "top_of_page_buttons": ["view", "edit"],
+    "light_css_variables": {
+        "color-brand-primary": "#245b83",
+        "color-brand-content": "#245b83",
+    },
+    "dark_css_variables": {
+        "color-brand-primary": "#8ec5ed",
+        "color-brand-content": "#8ec5ed",
+    },
 }
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 
-html_context = {
-    "display_github": True,
-    "github_user": "rudolffu",
-    "github_repo": "qsospec",
-    "github_version": "main",
-    "conf_py_path": "/docs/",
-}
-
 rst_prolog = """
 .. |project_name| replace:: qsospec
-.. |python_versions| replace:: 3.10-3.13
+.. |python_versions| replace:: 3.10 or later
 .. |repository| replace:: https://github.com/rudolffu/qsospec
 .. |issues| replace:: https://github.com/rudolffu/qsospec/issues
 .. |pypi| replace:: https://pypi.org/project/qsospec/

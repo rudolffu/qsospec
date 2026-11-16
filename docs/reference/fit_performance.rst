@@ -46,3 +46,18 @@ warm-attempt starts, provenance, retry reasons and cold retry starts.
 Caching preserves the results of cold fits exactly. Warm starts provide an
 initial solution for a new optimization. Saved bundles include performance
 diagnostics, and older bundles without these fields are also readable.
+
+Balmer basis cache
+------------------
+
+An exact workflow-local LRU cache shares Balmer-series bases and FWHM/velocity
+derivatives across prefit, final fitting and uncertainty trials. Defaults are
+128 entries and 16 MiB of cached array data. Keys include template/grid content
+hashes and exact floating-point arguments; no rounding or interpolation is
+introduced. Cached arrays are immutable, and each spectrum starts a fresh
+cache.
+
+The ``qsospec.templates.balmer_cache.balmer_cache`` context manager accepts
+``enabled=False`` for a controlled comparison, or ``max_entries`` and
+``max_bytes`` for custom limits. These basis-cache controls are separate from
+the solver evaluation cache in ``FitPerformanceConfig``.

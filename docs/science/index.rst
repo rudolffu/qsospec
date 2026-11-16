@@ -1,8 +1,9 @@
-Science Model
-=============
+Models and measurements
+=======================
 
-These pages describe what |project_name| fits and how reported measurements
-and reliability flags should be interpreted.
+Use these pages to decide what a fitted quantity means and which assumptions
+enter your analysis. The default continuum is ``global_v2``; emission-line
+recipes are selected from the usable rest-frame coverage.
 
 .. toctree::
    :maxdepth: 1
@@ -16,3 +17,6 @@ and reliability flags should be interpreted.
    iron_balmer_uncertainties
    line_peaks_systemic_redshift
    references
+
+For output field names, units and archive selectors, use the
+:doc:`measurement dictionary <../reference/measurement_dictionary>`.

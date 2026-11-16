@@ -73,7 +73,8 @@
     "excluded_pixels_in_normal_trace": true,
     "mark_excluded_pixels": false,
     "model_covers_excluded_pixels": true,
-    "residuals_use_fitted_valid_pixels_only": true
+    "residuals_use_fitted_valid_pixels_only": true,
+    "line_complex_models_limited_to_fit_windows": true
   },
   "measurement_verification": {
     "date": "2026-10-09",
@@ -546,6 +547,91 @@
         "model_covers_excluded_pixels": true,
         "residuals_use_fitted_valid_pixels_only": true
       }
+    }
+  },
+  "qa_regeneration": {
+    "date": "2026-11-16",
+    "source_version": "0.2.0",
+    "source_commit": "bfaf4093b988e9091b0b12cfa22e7169e3464a28",
+    "runtime_distribution_version": "0.1.1",
+    "runtime_distribution_note": "Installed distribution metadata predates this source checkout; fitting used the current src/qsospec tree.",
+    "source_sha256": "8fa02a4f9b59aad58e13d31db9f4edd5b77f0496fcbe4812baedfa719d75b08c",
+    "figure_sha256": "bdb8a372a6a1c0a72dc0089a8cdc6c4557d3db31cbd6125254e042a587eb0808",
+    "command": "python examples/fit_sdss_quasar.py --input <local-SDSS-FITS> --output-dir <validation-directory> --write-run",
+    "continuum_success": true,
+    "complex_statuses": {
+      "halpha_nii_sii": "not_covered",
+      "hbeta_oiii": "fit",
+      "mgii": "fit",
+      "lya_nv": "not_covered",
+      "ciii": "not_covered",
+      "civ": "not_covered",
+      "oii_nev_neiii_hgamma": "fit",
+      "paschen_nir": "not_covered"
+    },
+    "broad_hbeta": {
+      "status": "available",
+      "fwhm_kms": 5841.078217500298,
+      "fwhm_error_kms": 241.89988324293074,
+      "Hb_broad_flux_input": 1058.8207296348721,
+      "Hb_broad_flux_input_error": 69.87036700347399,
+      "Hb_broad_flux_cgs": 1.0588207296348722e-14,
+      "Hb_broad_flux_cgs_error": 6.987036700427727e-16,
+      "Hb_broad_sigma_kms": 2914.048691656797,
+      "Hb_broad_sigma_kms_error": 375.0326012109702,
+      "Hb_broad_ew_rest": 93.36846661844707,
+      "Hb_broad_ew_rest_error": 6.152690844589384,
+      "component_ids": [
+        "Hb_broad1",
+        "Hb_broad2",
+        "Hb_broad3"
+      ],
+      "fit_success": true,
+      "selected_model": "wing",
+      "line_lsf": {
+        "status": "observed_profile",
+        "reason": "missing_resolution",
+        "wavelength_frame": "observed",
+        "applied_to": "emission_lines_only"
+      },
+      "warning_codes": [
+        "parameter_at_bound",
+        "parameter_at_bound",
+        "recipe_fixed_ratio_applied",
+        "oiii_incomplete_doublet_coverage",
+        "oiii_observed_profile_resolution_unavailable"
+      ],
+      "parameter_bounds": [
+        {
+          "parameter": "Hb_broad1.fwhm_kms",
+          "bound_side": 1
+        },
+        {
+          "parameter": "Hb_broad3.velocity_kms",
+          "bound_side": 1
+        }
+      ],
+      "covariance_available": true,
+      "covariance_warning_codes": [],
+      "oiii_profile_adequate": false,
+      "oiii_profile_quality_flags": [
+        "incomplete_doublet_coverage",
+        "observed_profile_resolution_unavailable"
+      ],
+      "uncertainty_method": "local covariance propagation",
+      "uncertainty_conditioning": [
+        "selected line model",
+        "fitted global continuum",
+        "input redshift"
+      ],
+      "continuum_model_uncertainty_included": false
+    },
+    "reload_check": {
+      "object_id": "spec-1198-52669-0040",
+      "measurement_and_error_equal": true,
+      "complex_statuses_equal": true,
+      "redshift_equal": true,
+      "reload_seconds": 0.0674277920043096
     }
   }
 }

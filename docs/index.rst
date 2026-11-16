@@ -1,127 +1,84 @@
-qsospec
-=======
+qsospec: quasar spectral fitting
+================================
 
-Fit UV, optical, and near-infrared quasar spectra with reproducible continuum,
-emission-line, host-decomposition, QA, and batch workflows.
+Measure quasar emission lines from UV, optical and near-infrared spectra.
+Fit the continuum, separate blended line profiles, inspect residuals, and
+keep the models and measurements together for your next analysis.
 
-.. grid:: 2 2 4 4
-   :gutter: 2
+.. grid:: 1 1 2 2
+   :gutter: 3
 
-   .. grid-item-card:: Start fitting
+   .. grid-item-card:: Fit your first spectrum
       :link: getting_started/quickstart
       :link-type: doc
 
-      Install |project_name| and fit a spectrum with the default global model.
+      Follow a real SDSS quasar from download to continuum and line fits.
 
-   .. grid-item-card:: Choose a workflow
+   .. grid-item-card:: Use your own data
       :link: getting_started/choose_workflow
       :link-type: doc
 
-      Choose an interface for a first fit, model experiment, archive, or sample.
+      Choose a workflow for arrays, a file, local windows or a sample.
 
-   .. grid-item-card:: Interpret QA
-      :link: user_guide/qa_plots
+   .. grid-item-card:: Read a measurement
+      :link: user_guide/results
       :link-type: doc
 
-      Read fitted, masked, unmodelled, and residual regions correctly.
+      Extract broad-Hβ width, flux and EW, with their uncertainties.
 
-   .. grid-item-card:: Browse recipes
-      :link: reference/recipes
+   .. grid-item-card:: Process a sample
+      :link: user_guide/batch_fitting
       :link-type: doc
 
-      See the built-in line complexes and their current coverage rules.
+      Fit in parallel, resume work and build a catalog from saved results.
 
-Your first analysis
--------------------
+Start an analysis
+-----------------
 
-The :doc:`getting_started/quickstart` downloads a real SDSS quasar spectrum
-and fits its continuum and covered lines. Continue to
-:doc:`user_guide/results` to report broad Hβ and reload a saved analysis.
-For an introduction to flux units, frames, masks, and widths, read
-:doc:`getting_started/spectral_basics`.
+1. :doc:`Install qsospec <getting_started/installation>` and configure the
+   :doc:`Galactic dust map <getting_started/dustmaps>`.
+2. Run the :doc:`SDSS quickstart <getting_started/quickstart>` or
+   :doc:`prepare your own arrays <how_to/fit_arrays>`.
+3. :doc:`Check the QA figure <user_guide/qa_plots>` and the status of the
+   line you need, then :doc:`read and save measurements <user_guide/results>`.
 
-Fit your own arrays
--------------------
+The :doc:`spectral conventions <getting_started/spectral_basics>` explain
+wavelength frames, flux scaling, masks and instrumental broadening.
 
-The following excerpt assumes your own ``wavelength``, ``flux``,
-``uncertainty``, ``redshift``, ``ra``, and ``dec`` variables. It uses physical
-cgs flux density (``flux_scale=1.0``). For scaled survey arrays or relative
-flux, follow :doc:`how_to/fit_arrays`. Array spectra are uncorrected by
-default; prepare them before using the low-level numerical fitters.
+.. figure:: _static/sdss_quasar_qa.png
+   :alt: SDSS quasar spectrum with fitted continuum, emission-line components and residuals.
+   :width: 100%
 
-.. code-block:: python
+   The worked SDSS example. The :doc:`quickstart <getting_started/quickstart>`
+   records the input and fitting assumptions.
 
-   import qsospec
+Find the details you need
+-------------------------
 
-   spectrum = qsospec.Spectrum.from_arrays(
-       wavelength,
-       flux,
-       err=uncertainty,
-       z=redshift,
-       wave_frame="observed",
-       flux_unit="cgs",
-       ra=ra,
-       dec=dec,
-   )
-   result = qsospec.fit_global_lines(
-       qsospec.prepare_spectrum(spectrum)
-   )
+- :doc:`user_guide/index`: prepare data, choose models, assess fits and read results.
+- :doc:`how_to/index`: focused tasks, custom line models and survey workflows.
+- :doc:`science/index`: continuum and line definitions, coverage and uncertainties.
+- :doc:`reference/index`: configuration, recipes, measurement names and Python API.
+- :doc:`getting_started/troubleshooting`: resolve setup and analysis problems.
+- :doc:`contributing/index`: development, validation and release notes.
 
-   print(result.continuum_success)
-   print(result.complex_statuses)
-
-What is included
-----------------
-
-- Global power-law, Fe II, and continuous Balmer pseudo-continuum fitting.
-- Coverage-aware Lyα/N V, C IV, C III], Mg II, Balmer, optical, and NIR recipes.
-- Optional pPXF host decomposition for objects with :math:`z < 1.2`.
-- Galactic dereddening for file and batch workflows.
-- User-friendly preparation of uncorrected in-memory arrays.
-- QA plots that distinguish fitted, pPXF-masked, and unmodelled regions.
-- Resumable Parquet run bundles for single objects and large samples.
+These pages describe the |release| source tree. Check your installation
+against :doc:`getting_started/installation`; PyPI and development versions
+can differ. For changes to existing analyses, read
+:doc:`getting_started/migration_0_2`.
 
 .. toctree::
+   :hidden:
    :maxdepth: 2
-   :caption: Start Here
 
    getting_started/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: User Guide
-
    user_guide/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: How-to Guides
-
    how_to/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Science Model
-
    science/index
-
-.. toctree::
-   :maxdepth: 3
-   :caption: Reference
-
    reference/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Contributing
-
    contributing/index
-   benchmarks/FAST_RESUME_BENCHMARK
 
-Project links
--------------
-
-`GitHub <https://github.com/rudolffu/qsospec>`__ ·
+`Source code <https://github.com/rudolffu/qsospec>`__ ·
+`Issues and support <https://github.com/rudolffu/qsospec/issues>`__ ·
 `PyPI <https://pypi.org/project/qsospec/>`__ ·
-`Issues <https://github.com/rudolffu/qsospec/issues>`__ ·
 `GPLv3 license <https://github.com/rudolffu/qsospec/blob/main/LICENSE>`__

@@ -51,7 +51,7 @@ dev = [
 ]
 docs = [
     "sphinx",
-    "sphinx-rtd-theme",
+    "furo",
     "sphinx-design",
     "sphinx-reredirects",
     "myst-parser",
@@ -59,6 +59,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/rudolffu/qsospec"
+Documentation = "https://qsospec.readthedocs.io/"
 Repository = "https://github.com/rudolffu/qsospec"
 Issues = "https://github.com/rudolffu/qsospec/issues"
 

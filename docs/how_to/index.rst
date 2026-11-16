@@ -1,12 +1,12 @@
 How-to Guides
-=================
+=============
 
 Choose the task you need. For a first analysis with a supplied real spectrum,
 start with :doc:`../getting_started/quickstart` and continue to
 :doc:`../user_guide/results`.
 
 Prepare and fit spectra
----------------------------
+-----------------------
 
 .. toctree::
    :maxdepth: 1
@@ -16,7 +16,7 @@ Prepare and fit spectra
    sdss_parquet_inputs
 
 Choose continuum and host models
-------------------------------------
+--------------------------------
 
 See :doc:`../science/continuum_model` for the default continuum and its
 optional alternatives.
@@ -29,7 +29,7 @@ optional alternatives.
    stellar_template_resolution_profiles
 
 Measure emission lines
---------------------------
+----------------------
 
 Definitions and errors are listed in
 :doc:`../reference/measurement_dictionary` and :doc:`../science/uncertainties`.
@@ -43,7 +43,7 @@ Definitions and errors are listed in
    signed_line_diagnostics
 
 Save, inspect, and process samples
---------------------------------------
+----------------------------------
 
 .. toctree::
    :maxdepth: 1
@@ -54,7 +54,7 @@ Save, inspect, and process samples
    render_qa
 
 Euclid workflows
---------------------
+----------------
 
 These guides describe the Euclid sample analyses and their specific input and
 selection requirements.

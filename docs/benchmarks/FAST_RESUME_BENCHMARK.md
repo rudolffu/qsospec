@@ -2,12 +2,16 @@
 
 Date: 2026-09-03. Environment: local macOS conda base, Python 3.12.
 
+This is a historical schema-5 benchmark. For current schema-8 storage and
+resume behavior, see the [run-bundle reference](../reference/run_bundles.rst)
+and [batch guide](../user_guide/batch_fitting.rst).
+
 The pre-change production observation was approximately 5.5 minutes to scan
 and skip one completed shard. That path projected spectral vectors and built a
 `SpectrumData` object for every completed row before testing its object key.
 
 `benchmarks/benchmark_fast_resume.py` exercises a production-shaped synthetic
-Parquet shard with 224 rows, 4,000 pixels per row, seven row groups, explicit
+Parquet shard with 224 rows, 4000 pixels per row, seven row groups, explicit
 object keys/input row indices/shard IDs, and deterministic schema-v5 product
 paths. It runs no numerical fit. Empty placeholder product files are used only
 to measure the deterministic membership lookup; strict completion-marker

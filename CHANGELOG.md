@@ -14,7 +14,10 @@ requires Python 3.10 or later. See the
 - Expand UV/optical/NIR recipes and adaptive [O III] fitting, with Gaussian
   resolution forward modeling, line peaks and separate systemic-redshift diagnostics.
 - Add native covariance propagation and matched bootstrap products with
-  collision-free qualified keys; run schema 7 reads earlier schemas 5 and 6.
+  collision-free qualified keys.
+- Write schema-8 run bundles with compact parameter models, portable template
+  assets and indexed multi-object shards. Read schemas 5, 6 and 7 without
+  refitting; convert existing runs explicitly into a new destination.
 - Improve AGN-aware host decomposition, template/resolution reliability,
   HostSED reconstruction and explicit configuration precedence.
 - Add resumable survey-scale runs, direct model-key loading, scalar resume
@@ -22,6 +25,9 @@ requires Python 3.10 or later. See the
 - Rename the unreleased full-spectrum preset to `recipes.extended_quasar()`;
   retain established root APIs and place new specialist utilities in their modules.
 - Restructure science/API documentation and provide portable survey-input examples.
+- Fix warning-based QA selection for Parquet list columns returned as NumPy arrays.
+- Reorganize documentation around spectrum preparation, fit assessment,
+  measurements and sample processing; adopt the Furo theme.
 - Confine QA and legacy full-grid combined models to each line complex's
   fitting windows. Reuse deterministic overlap ownership, preventing local
   continua from being extrapolated across unrelated lines; saved fit arrays

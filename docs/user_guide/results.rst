@@ -1,5 +1,31 @@
-Results and measurements
-========================
+Read and reuse measurements
+===========================
+
+Start with a fitted ``result`` from the :doc:`../getting_started/quickstart`
+or :doc:`../how_to/fit_arrays`. Check the complex status and QA before
+reporting a quantity.
+
+.. list-table:: Where to find a result
+   :header-rows: 1
+   :widths: 38 62
+
+   * - What you need
+     - Where to look
+   * - Continuum completion and model
+     - ``result.continuum_success`` and ``result.continuum``
+   * - Coverage and fit outcome per complex
+     - ``result.complex_statuses``
+   * - A line's value and statistical error
+     - ``result.line_complexes[recipe_id].metrics`` and ``.metric_errors``
+   * - Diagnostics to inspect
+     - ``result.warning_codes()`` and :doc:`qa_plots`
+   * - Definition, unit and archive selector
+     - :doc:`../reference/measurement_dictionary`
+   * - A table for your sample
+     - :doc:`../how_to/inspect_run`
+
+The worked example below follows broad Hβ from its component definition to
+a reported width, flux and EW, then reloads the saved analysis.
 
 .. _read-first-measurement:
 

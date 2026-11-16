@@ -10,10 +10,11 @@ Supported features
 - Global power-law, Fe II, and continuous Balmer pseudo-continuum fitting.
 - Coverage-aware UV, optical, and NIR emission recipes.
 - Dedicated Lyα absorption masking and reliability flags.
-- Optional pPXF host decomposition with an redshift requirement.
+- Optional pPXF host decomposition with a redshift requirement.
 - Galactic dereddening before file and batch workflows.
 - Covariance and Monte Carlo uncertainty summaries.
-- Resumable schema-v5 Parquet run bundles and QA regeneration.
+- Resumable schema-8 Parquet run bundles, compact models, portable template
+  assets and QA regeneration. Readers retain support for schemas 5–7.
 
 Near-term priorities
 --------------------

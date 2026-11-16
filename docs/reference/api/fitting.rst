@@ -16,3 +16,4 @@ Fitting and workflow API
 .. autofunction:: fit_with_optional_host_decomp
 .. autofunction:: fit_object_to_store
 .. autofunction:: fit_batch
+.. autofunction:: plan_batch_resume

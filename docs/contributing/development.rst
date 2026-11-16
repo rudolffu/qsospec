@@ -1,24 +1,26 @@
 Development guide
-=====================
+=================
 
 Environment
----------------
+-----------
 
 .. code-block:: bash
 
    git clone https://github.com/rudolffu/qsospec.git
    cd qsospec
-   python -m pip install -e ".[dev,host,docs]"
+   python -m pip install -e ".[dev,docs]"
 
 Validation
---------------
+----------
+
+Add the ``host`` extra when changing pPXF integration.
 
 Run tests and lint:
 
 .. code-block:: bash
 
-   pytest
-   ruff check src tests
+   python -m pytest
+   python -m ruff check src tests
 
 Run the offline examples and math checks, then build documentation:
 
@@ -42,7 +44,7 @@ Build distributions:
    python -m twine check dist/*
 
 Design principles
----------------------
+-----------------
 
 - Explicit spectrum, configuration, and result objects.
 - Pure array models and residual functions inside optimizers.
@@ -53,7 +55,18 @@ Design principles
   round-trip tests.
 
 Documentation policy
-------------------------
+--------------------
+
+Documentation is built with Furo using the ``docs`` extra in
+``pyproject.toml``. Read the Docs and the CI documentation job install that
+same extra. ``docs/conf.py`` imports the current source tree and reads its
+version from ``pyproject.toml``, so an older installed package cannot set the
+site's version label or API signatures.
+
+Check the landing page, tutorial, a measurement table and an API page in light
+and dark modes after changing the theme. Verify search and navigation, as well
+as narrow-screen table scrolling. Preserve old page paths or add redirects
+when moving material.
 
 Each public workflow or configuration type has one canonical prose location.
 Exact signatures/defaults belong in generated API pages. Core tutorials use
@@ -68,7 +81,7 @@ Check balanced LaTeX braces and inspect the rendered equations. A Sphinx
 build can succeed even when MathJax cannot render an expression.
 
 Scientific example comparisons
-----------------------------------
+------------------------------
 
 The iron/Balmer examples compare model choices and resampling on synthetic
 test inputs. A short bootstrap run checks execution; use more trials when
@@ -89,7 +102,7 @@ by the example scripts and write results to a new directory:
    python examples/plot_iron_balmer_comparison.py --source /tmp/new-real-comparison --output /tmp/new-real-comparison-plots
 
 Reader check
-----------------
+------------
 
 For a future session with a student unfamiliar with QSOSpec, ask them to:
 

@@ -4,9 +4,14 @@ Spectrum inputs
 In-memory arrays
 ----------------
 
+For an end-to-end example, follow :doc:`../how_to/fit_arrays`. The variables
+below represent your own data and a boolean good-pixel mask.
+
 Create :class:`qsospec.Spectrum` from observed- or rest-frame wavelengths:
 
 .. code-block:: python
+
+   import qsospec
 
    spectrum = qsospec.Spectrum.from_arrays(
        wave,
@@ -46,8 +51,14 @@ redshift, object-ID, RA, and Dec aliases.
    )
 
 Supported paths include DESI/SPARCL-like vector-row Parquet, SDSS/LAMOST/IRAF
-FITS, and input manifests. Inspect reader selection with
-:func:`qsospec.detect_fits_reader`.
+FITS. Inspect FITS reader selection with :func:`qsospec.detect_fits_reader`;
+explicit FITS readers are ``"sdss"``, ``"lamost"`` and ``"iraf"``.
+
+Batch input manifests are separate scalar tables listing spectrum paths and
+optional row indices, redshifts, object IDs and reader choices. Use
+:func:`qsospec.read_input_manifest` to inspect them, or pass a manifest to
+``fit_batch``. A manifest is not itself a vector-spectrum table. The
+:doc:`../how_to/sdss_parquet_inputs` guide explains normalized survey inputs.
 
 DESI/SPARCL, SDSS, and LAMOST readers infer cgs :math:`f_\lambda` with the
 usual :math:`10^{-17}` scale. IRAF inputs default to relative

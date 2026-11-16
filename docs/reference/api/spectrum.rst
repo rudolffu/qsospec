@@ -17,4 +17,3 @@ Spectrum and metadata API
 .. autofunction:: read_input_manifest
 .. autofunction:: scan_parquet_spectra
 .. autofunction:: qsospec.io.readers.scan_parquet_spectrum_inputs
-.. autofunction:: plan_batch_resume

@@ -1,5 +1,5 @@
 Reading QA plots
-====================
+================
 
 Use the quality-assessment (QA) figure to compare the fitted profile with the
 data, then check the status and diagnostics of the quantity you want to use.
@@ -7,7 +7,7 @@ The figure shows the model across the input grid and marks the pixels used by
 the fit. Start with the :doc:`results` guide if you are reading the SDSS example.
 
 Assess the relevant measurement
------------------------------------
+-------------------------------
 
 Several checks contribute to the assessment; they answer different questions.
 
@@ -46,7 +46,7 @@ useful. The :doc:`../reference/warnings` gives actions for named warnings;
 :doc:`../science/coverage_reliability` explains coverage statuses.
 
 The SDSS worked example
----------------------------
+-----------------------
 
 .. figure:: ../_static/sdss_quasar_qa.png
    :alt: SDSS quasar total spectrum, global continuum and covered line-complex models.
@@ -68,14 +68,14 @@ completion and the observed-profile measurement answer separate questions.
 The :doc:`results` continuation reports broad Hβ and its statistical error.
 
 Diagnose a profile
-----------------------
+------------------
 
 The following situations are hypothetical teaching examples, not features
 attributed to the SDSS figure above. Compare alternatives using the same
 valid pixels and inspect how the desired measurement changes.
 
 Structured residuals under a broad line
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Several adjacent residuals of the same sign suggest a mismatch in profile
 shape, continuum placement or absorption treatment. Inspect the unsmoothed
@@ -85,7 +85,7 @@ the measurement sensitivity. Adding a component has to follow the applicable
 selection rule; it does not by itself identify a physical region.
 
 Broad residual structure near iron emission
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Residuals extending over several iron features may reflect the template,
 its broadening, continuum curvature or flux calibration. Check whether the
@@ -95,7 +95,7 @@ choice before assigning the residual to a new emission line. See
 :doc:`../science/continuum_model`.
 
 A width or velocity at a bound
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A bound warning means the optimizer reached an allowed limit. The data may
 prefer a value beyond it, or several components may trade width and flux
@@ -105,7 +105,7 @@ in a separate fit. A local symmetric covariance error does not measure this
 model sensitivity.
 
 A missing line output
-~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 First check the recipe's coverage and status: the line may be outside the
 range, have a masked core, be omitted by component selection, or belong to a
@@ -115,7 +115,7 @@ zero line flux or supply a calibrated upper limit. Use an upper-limit
 procedure with an explicit assumed profile when that is the required result.
 
 A line close to instrumental resolution
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A narrow observed profile can be dominated by the line-spread function (LSF).
 Inspect the resolution metadata and intrinsic-width/unresolved flags. Use a
@@ -124,7 +124,7 @@ intrinsic width when the data do not separate the two. A precise observed
 width need not imply a precise intrinsic width.
 
 An EW that changes with host treatment
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A large change in equivalent width (EW) can arise from its continuum
 denominator, stellar absorption under the line, or an unstable host
@@ -136,7 +136,7 @@ See :doc:`../science/measurements` and
 :doc:`../science/uncertainties`.
 
 Overview
-------------
+--------
 
 - Thin grey: all input pixels with finite wavelength and flux, including
   excluded pixels. Milky Way extinction correction is identified in the
@@ -145,7 +145,7 @@ Overview
   flagged pixels and pixels with unusable uncertainties. NaN/Inf flux cannot
   be placed on the plot. These points do not enter residuals or fit statistics.
 - Darker grey: input spectrum smoothed for display when the input has more
-  than 4,000 wavelength pixels.
+  than 4000 wavelength pixels.
 - Solid near-black: total model across the complete input grid wherever its
   evaluation is finite, including excluded pixels.
 - Grey shading: pixels masked during the earlier pPXF host fit.
@@ -172,7 +172,7 @@ curves. Failed-complex regions remain marked as such and do not become valid
 measurements because a curve can be drawn there.
 
 Zoom panels
----------------
+-----------
 
 Zooms show only locally relevant broad, narrow, and wing components. The
 optical-blue adaptive complex receives a zoom only when all display lines are
@@ -191,7 +191,7 @@ Residuals and fit statistics use fitted valid pixels only. A full-grid model cur
 constrained the fit. Lyα absorption masks are labeled separately.
 
 Scaling
------------
+-------
 
 Physical spectra are displayed in
 :math:`10^{-17}\,\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,
@@ -212,7 +212,7 @@ percentile of the unsmoothed displayed data rather than an incomplete model.
 Clipped peaks are marked with upward indicators.
 
 Configuration
------------------
+-------------
 
 Use :class:`qsospec.GlobalQAPlotConfig` to select raw-plus-smoothed,
 smoothed-only, or raw-only display; residuals; fitted-region shading; output
